@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+products.json
+agent_enrichment_report.json
+agent_enrichment_report.html
+agent_enrichment_report.pdf

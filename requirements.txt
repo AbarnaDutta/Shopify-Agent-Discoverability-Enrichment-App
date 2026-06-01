@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+python-multipart
+weasyprint
+python-dotenv==1.1.1
+
+# Optional OpenAI mode:
+# openai

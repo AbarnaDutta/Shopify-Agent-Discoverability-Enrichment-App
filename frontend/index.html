@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shopify Store - Agentic Commerce Readiness</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#f7f7f7;color:#111;margin:0;padding:24px}
+    .container{max-width:720px;margin:36px auto;background:#fff;border-radius:12px;padding:28px;box-shadow:0 6px 24px rgba(16,24,40,.08)}
+    h1{margin:0 0 18px;font-size:1.6rem}
+    label{display:block;margin:10px 0 6px;font-weight:700}
+    input{width:100%;padding:12px;border:1px solid #e3e6ea;border-radius:8px;font-size:1rem}
+    button{margin-top:14px;padding:12px 18px;border:0;border-radius:10px;background:#17695b;color:#fff;font-weight:700;cursor:pointer}
+    .status{margin-top:12px;padding:10px;border-radius:8px;background:#fbfbfb;border:1px solid #efeef0;color:#333}
+    .status.error{background:#fff2f2;border-color:#f3c2c2;color:#8a2f24}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Shopify Store - Agentic Commerce Readiness</h1>
+
+    <form id="request-form">
+      <label for="email">Email address</label>
+      <input id="email" name="email" type="email" placeholder="you@example.com" required>
+
+      <label for="store_url">Shopify store URL</label>
+      <input id="store_url" name="store_url" type="url" placeholder="https://your-store.myshopify.com" required>
+
+      <button id="submit-button" type="submit">Submit</button>
+    </form>
+
+    <div id="status" class="status" aria-live="polite">Ready.</div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:8000';
+    const form = document.getElementById('request-form');
+    const status = document.getElementById('status');
+    const submitButton = document.getElementById('submit-button');
+
+    function setStatus(message, isError = false) {
+      status.textContent = message;
+      status.classList.toggle('error', !!isError);
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      submitButton.disabled = true;
+      setStatus('Submitting request...');
+
+      try {
+        const payload = {
+          email: document.getElementById('email').value.trim(),
+          store_url: document.getElementById('store_url').value.trim(),
+        };
+
+        const res = await fetch(`${API_BASE}/api/report-requests`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || data.message || 'Request failed');
+
+        setStatus('Request submitted. You will receive an email when the report is ready.');
+      } catch (err) {
+        setStatus(err.message || 'Submission failed', true);
+      } finally {
+        submitButton.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
