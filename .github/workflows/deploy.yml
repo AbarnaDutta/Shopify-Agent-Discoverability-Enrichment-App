@@ -19,47 +19,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push Docker image
+      # Step 1: Create zip containing all files
+      - name: Create deployment package
         run: |
-          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY=shopify-agent
-          IMAGE_TAG=${{ github.sha }}
+          zip -r app.zip \
+            Dockerfile \
+            requirements.txt \
+            app/ \
+            frontend/
           
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          # List files in zip to verify
+          unzip -l app.zip
 
-      - name: Create Dockerrun.aws.json
-        run: |
-          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
-          cat > Dockerrun.aws.json << EOF
-          {
-            "AWSEBDockerrunVersion": 1,
-            "Image": {
-              "Name": "${ECR_REGISTRY}/shopify-agent:${{ github.sha }}",
-              "Update": "true"
-            },
-            "Ports": [
-              {
-                "ContainerPort": "8000"
-              }
-            ]
-          }
-          EOF
-
-      - name: Create source bundle
-        run: |
-          zip -r app.zip Dockerrun.aws.json Dockerfile requirements.txt app/
-
+      # Step 2: Upload to S3
       - name: Upload to S3
         run: |
           aws s3 cp app.zip s3://elasticbeanstalk-ap-south-1-657229083717/app-${{ github.sha }}.zip
 
+      # Step 3: Create application version
       - name: Create application version
         run: |
           aws elasticbeanstalk create-application-version \
@@ -67,6 +44,7 @@ jobs:
             --version-label ${{ github.sha }} \
             --source-bundle S3Bucket=elasticbeanstalk-ap-south-1-657229083717,S3Key=app-${{ github.sha }}.zip
 
+      # Step 4: Deploy to environment
       - name: Update environment
         run: |
           aws elasticbeanstalk update-environment \
