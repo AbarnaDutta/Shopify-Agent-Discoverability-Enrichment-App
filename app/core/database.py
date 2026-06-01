@@ -1,12 +1,17 @@
 # app/core/database.py
 from __future__ import annotations
 
+import logging
 import os
 import datetime as dt
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Generator
 
 from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+log = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -31,13 +36,12 @@ class ReportRequest(Base):
 
 
 def _build_database_url() -> str | None:
-    """Return the DB URL, or None if no database is configured."""
     url = os.getenv("DATABASE_URL")
     if url:
         return url
     host = os.getenv("DB_HOST")
     if not host:
-        return None          # ← no DB configured at all
+        return None
     port     = os.getenv("DB_PORT", "5432")
     name     = os.getenv("DB_NAME", "shopify_enrichment")
     user     = os.getenv("DB_USER", "postgres")
@@ -45,12 +49,11 @@ def _build_database_url() -> str | None:
     return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
 
 
-# Module-level engine — None when no DB is configured
-_db_url = _build_database_url()
+url = os.getenv("DATABASE_URL")
 
-if _db_url:
+if url:
     engine = create_engine(
-        _db_url,
+        url,
         pool_pre_ping=True,
         pool_size=5,
         max_overflow=10,
@@ -67,16 +70,52 @@ def is_db_available() -> bool:
 
 
 def init_db() -> None:
-    """Create tables if a DB is configured. Silent no-op otherwise."""
     if not is_db_available():
         print("No DATABASE_URL set — running without database persistence.")
         return
-    Base.metadata.create_all(bind=engine)
-    print("Database initialised.")
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("Database initialised.")
+    except OperationalError as e:
+        log.warning("Database is configured but could not be reached at startup: %s", e)
+        print("Warning: database unreachable at startup — running without persistence.")
 
 
 def get_db() -> Session | None:
-    """Return a new session, or None if no DB is configured."""
     if SessionLocal is None:
         return None
     return SessionLocal()
+
+
+@contextmanager
+def safe_db(operation: str) -> Generator[Session | None, None, None]:
+    if not is_db_available():
+        yield None
+        return
+
+    db = get_db()
+    try:
+        yield db
+    except OperationalError as e:
+        log.error("DB connection error during '%s': %s", operation, e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    except SQLAlchemyError as e:
+        log.error("DB error during '%s': %s", operation, e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    except Exception as e:
+        log.error("Unexpected DB error during '%s': %s", operation, e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass

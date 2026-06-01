@@ -4,21 +4,15 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from app.core.database import get_db, is_db_available, ReportRequest
+from app.core.database import ReportRequest, safe_db
 
 
 class JobRepository:
-    """
-    Wraps all DB reads and writes.
-    Every method is a silent no-op when no database is configured,
-    so the app runs fine locally with in-memory state only.
-    """
 
     def create(self, job_id: str, email: str, store_url: str) -> None:
-        if not is_db_available():
-            return
-        db = get_db()
-        try:
+        with safe_db("create job") as db:
+            if db is None:
+                return
             row = ReportRequest(
                 job_id=job_id,
                 email=email,
@@ -27,14 +21,11 @@ class JobRepository:
             )
             db.add(row)
             db.commit()
-        finally:
-            db.close()
 
     def update(self, job_id: str, **changes: Any) -> None:
-        if not is_db_available():
-            return
-        db = get_db()
-        try:
+        with safe_db("update job") as db:
+            if db is None:
+                return
             row = db.query(ReportRequest).filter_by(job_id=job_id).first()
             if row is None:
                 return
@@ -42,45 +33,34 @@ class JobRepository:
                 setattr(row, key, value)
             row.updated_at = dt.datetime.now(dt.timezone.utc)
             db.commit()
-        finally:
-            db.close()
 
     def get(self, job_id: str) -> ReportRequest | None:
-        if not is_db_available():
-            return None         # caller falls back to in-memory cache
-        db = get_db()
-        try:
+        with safe_db("get job") as db:
+            if db is None:
+                return None
             return db.query(ReportRequest).filter_by(job_id=job_id).first()
-        finally:
-            db.close()
 
     def all_by_email(self, email: str) -> list[ReportRequest]:
-        if not is_db_available():
-            return []
-        db = get_db()
-        try:
+        with safe_db("list jobs by email") as db:
+            if db is None:
+                return []
             return (
                 db.query(ReportRequest)
                 .filter_by(email=email)
                 .order_by(ReportRequest.created_at.desc())
                 .all()
             )
-        finally:
-            db.close()
 
     def recent(self, limit: int = 100) -> list[ReportRequest]:
-        if not is_db_available():
-            return []
-        db = get_db()
-        try:
+        with safe_db("list recent jobs") as db:
+            if db is None:
+                return []
             return (
                 db.query(ReportRequest)
                 .order_by(ReportRequest.created_at.desc())
                 .limit(limit)
                 .all()
             )
-        finally:
-            db.close()
 
 
 job_repo = JobRepository()

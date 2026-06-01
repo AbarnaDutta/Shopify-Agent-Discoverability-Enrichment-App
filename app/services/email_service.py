@@ -27,6 +27,10 @@ _HINTS: dict[str, str] = {
         "This is usually temporary. Please try again — if it keeps happening, "
         "contact support with your job ID."
     ),
+    "llm_auth_error": (
+        "This is a configuration issue on our end, not with your store. "
+        "Please try again in a few minutes or contact support."
+    ),
     "internal_error": (
         "Our team has been notified. Please try again later or contact support."
     ),

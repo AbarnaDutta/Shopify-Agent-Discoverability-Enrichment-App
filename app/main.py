@@ -1,7 +1,11 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles  
+from fastapi.responses import FileResponse   
 from contextlib import asynccontextmanager
+from pathlib import Path                     
+
 
 from app.api.routes import router
 from app.services.jobs import job_queue
@@ -29,6 +33,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router, prefix="/api")
+
+static_dir = Path(__file__).parent.parent / "frontend"
+if static_dir.exists():
+    app.mount("/frontend", StaticFiles(directory=str(static_dir)), name="static")
+
+@app.get("/")
+async def serve_frontend():
+    return FileResponse(str(static_dir / "index.html"))
+
 
 
 if __name__ == "__main__":

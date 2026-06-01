@@ -1,3 +1,4 @@
+__MACOSX/
 __pycache__/
 *.py[cod]
 .venv/
@@ -6,3 +7,8 @@ products.json
 agent_enrichment_report.json
 agent_enrichment_report.html
 agent_enrichment_report.pdf
+
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml

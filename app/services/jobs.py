@@ -7,9 +7,21 @@ import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
+import traceback
 
-from app.services.report_builder import run_store_analysis
-from app.services.product_fetcher import normalize_store_url
+from app.services.report_builder import (
+    run_store_analysis,
+    LLMQuotaExceededError,
+    LLMRateLimitError,
+    LLMResponseError,
+    LLMAuthError, 
+)
+from app.services.product_fetcher import (
+    normalize_store_url,
+    InvalidStoreURLError,
+    NonShopifyStoreError,
+    StoreUnreachableError,
+)
 from app.services.email_service import EmailService
 from app.integrations.email_clients.hostinger_mail import HostingerMail
 from app.services.job_repository import job_repo          
@@ -30,7 +42,65 @@ class ReportJob:
     created_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat() + "Z")
     updated_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat() + "Z")
     error: str | None = None
+    error_type: str | None = None         
     report: dict[str, Any] | None = None
+
+
+_ERROR_CATALOGUE: list[tuple[type, str, str]] = [
+    (
+        InvalidStoreURLError,
+        "invalid_store_url",
+        "The store URL you entered doesn't look valid. "
+        "Please check it and try again (e.g. https://your-store.myshopify.com).",
+    ),
+    (
+        NonShopifyStoreError,
+        "non_shopify_store",
+        "We couldn't find a Shopify product catalogue at that URL. "
+        "Make sure the store is live and built on Shopify.",
+    ),
+    (
+        StoreUnreachableError,
+        "store_unreachable",
+        "We couldn't reach that store URL. "
+        "Please check that the address is correct and the store is online.",
+    ),
+    (
+        LLMQuotaExceededError,
+        "llm_quota_exceeded",
+        "The AI analysis couldn't be completed because the provider's quota or token limit "
+        "has been reached. Please try again later or contact support.",
+    ),
+    (
+        LLMRateLimitError,
+        "llm_rate_limited",
+        "The AI provider is currently rate-limiting requests. "
+        "Please wait a few minutes and try again.",
+    ),
+    (
+        LLMResponseError,
+        "llm_response_error",
+        "The AI provider returned an unexpected response. "
+        "Please try again — if the problem persists, contact support.",
+    ),
+    (
+        LLMAuthError,
+        "llm_auth_error",
+        "There was an authentication issue with the AI provider. "
+        "Please try again later — this is not an issue with your store URL.",
+    ),
+]
+
+
+def _classify_exception(error: Exception) -> tuple[str, str]:
+    """Return (error_type, user_message) for any exception."""
+    for exc_class, error_type, user_message in _ERROR_CATALOGUE:
+        if isinstance(error, exc_class):
+            return error_type, user_message
+    return "internal_error", (
+        "An unexpected error occurred while processing your request. "
+        "Our team has been notified. Please try again later."
+    )
 
 
 class JobQueue:
@@ -50,6 +120,7 @@ class JobQueue:
     def submit(self, email: str, store_url: str) -> ReportJob:
         normalized_store_url = normalize_store_url(store_url)
         job = ReportJob(job_id=str(uuid.uuid4()), email=email.strip(), store_url=normalized_store_url)
+        job_repo.create(job.job_id, job.email, job.store_url)
         with self._lock:
             self._jobs[job.job_id] = job
         self._queue.put(job.job_id)
@@ -95,7 +166,7 @@ class JobQueue:
         if job is None:
             return
 
-        self._update_job(job_id, status="processing", error=None)
+        self._update_job(job_id, status="processing", error=None, error_type=None)
         try:
             result = run_store_analysis(job.store_url)
             report = result["report"]
@@ -105,11 +176,18 @@ class JobQueue:
             email_service.send_report_email(job.email, report, result["products"], job.store_url)
             self._update_job(job_id, status="completed")
         except Exception as error:
+            traceback.print_exc() 
+            error_type, user_message = _classify_exception(error)
+            self._update_job(
+                job_id,
+                status="failed",
+                error=user_message,         
+                error_type=error_type,
+            )
             try:
-                email_service.send_failure_email(job.email, job.store_url, error)
+                email_service.send_failure_email(job.email, job.store_url, user_message=user_message, error_type=error_type)
             except Exception:
                 pass
-            self._update_job(job_id, status="failed", error=str(error))
 
     def _update_job(self, job_id: str, **changes: Any) -> None:
         with self._lock:

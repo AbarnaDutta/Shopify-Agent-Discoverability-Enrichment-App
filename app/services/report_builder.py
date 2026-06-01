@@ -38,6 +38,9 @@ class LLMRateLimitError(Exception):
 class LLMResponseError(Exception):
     """Raised when the LLM returns an unexpected or unparseable response."""
 
+class LLMAuthError(Exception):
+    """Raised when the LLM provider rejects the request due to auth / key issues."""
+
 _QUOTA_SIGNALS = (
     "quota",
     "rate limit",
@@ -61,6 +64,17 @@ _RATE_SIGNALS = (
     "throttl",
 )
 
+_AUTH_SIGNALS = (
+    "api key",
+    "api_key",
+    "leaked",
+    "expired", 
+    "invalid key",
+    "unauthorized",
+    "authentication",
+    "permission denied",
+    "forbidden",
+)
 
 def _classify_llm_error(message: str, status_code: int | None = None) -> None:
     lower = message.lower()
@@ -75,6 +89,12 @@ def _classify_llm_error(message: str, status_code: int | None = None) -> None:
         raise LLMQuotaExceededError(
             "The AI provider billing limit has been reached. "
             "Please check your account quota."
+        )
+    
+    if status_code in (400, 403) or any(sig in lower for sig in _AUTH_SIGNALS):
+        raise LLMAuthError(
+            "The AI provider rejected the request due to an authentication error. "
+            "Please contact support."
         )
 
     if any(sig in lower for sig in _QUOTA_SIGNALS):
