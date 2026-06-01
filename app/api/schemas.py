@@ -18,6 +18,7 @@ class ReportRequestResponse(BaseModel):
     created_at: str
     updated_at: str
     error: str | None = None
+    error_type: str | None = None
     report: dict[str, Any] | None = None
 
 

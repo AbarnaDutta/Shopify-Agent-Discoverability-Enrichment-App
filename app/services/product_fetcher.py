@@ -1,3 +1,4 @@
+# app/services/product_fetcher.py
 from __future__ import annotations
 
 import html
@@ -10,6 +11,17 @@ from dataclasses import dataclass
 from typing import Any
 
 
+# ── exceptions ────────────────────────────────────────────────────────
+
+class InvalidStoreURLError(Exception):
+    """Raised when the URL is syntactically wrong or missing a host."""
+
+class NonShopifyStoreError(Exception):
+    """Raised when the URL resolves but is not a Shopify store."""
+
+class StoreUnreachableError(Exception):
+    """Raised when the store URL cannot be reached at all."""
+
 @dataclass
 class ShopifyConfig:
     store_url: str
@@ -19,9 +31,16 @@ class ShopifyConfig:
 def normalize_store_url(store: str) -> str:
     store = store.strip().rstrip("/")
     if not store:
-        raise ValueError("Shopify store URL is required.")
+        raise InvalidStoreURLError("Shopify store URL is required.")
     if not store.startswith(("http://", "https://")):
         store = f"https://{store}"
+
+    parsed = urllib.parse.urlparse(store)
+    if not parsed.netloc or "." not in parsed.netloc:
+        raise InvalidStoreURLError(
+            f"'{store}' does not look like a valid URL. "
+            "Please provide a full store URL, e.g. https://your-store.myshopify.com"
+        )
     return store
 
 
@@ -45,7 +64,32 @@ def fetch_products_public(store_url: str, max_products: int) -> list[dict[str, A
     while len(products) < max_products:
         limit = min(250, max_products - len(products))
         url = f"{store_url}/products.json?limit={limit}&page={page}"
-        payload, _headers = request_json(url)
+
+        try:
+            payload, _headers = request_json(url)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise NonShopifyStoreError(
+                    f"'{store_url}' does not appear to be a Shopify store — "
+                    "/products.json returned 404."
+                ) from error
+            raise
+        except RuntimeError as error:
+            msg = str(error)
+            if any(k in msg for k in ("Name or service not known", "nodename nor servname",
+                                       "Could not fetch", "getaddrinfo")):
+                raise StoreUnreachableError(
+                    f"Could not reach '{store_url}'. "
+                    "Please check that the store URL is correct and the store is live."
+                ) from error
+            raise
+
+        if "products" not in payload:
+            raise NonShopifyStoreError(
+                f"'{store_url}' responded but does not look like a Shopify store — "
+                "no 'products' key in the response."
+            )
+
         batch = payload.get("products", [])
         if not batch:
             break

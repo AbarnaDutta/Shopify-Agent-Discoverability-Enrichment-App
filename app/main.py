@@ -1,14 +1,17 @@
+# app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api.routes import router
 from app.services.jobs import job_queue
+from app.core.database import init_db    
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # start background worker on application startup
+    init_db()                               
     job_queue.start()
     try:
         yield

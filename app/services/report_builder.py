@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# app/services/report_builder.py
 """FastAPI app for Shopify agent-discoverability enrichments."""
 
 from __future__ import annotations
@@ -26,6 +26,68 @@ import tempfile
 
 # Note: FastAPI app wiring was moved to app/main.py to separate frontend
 # rendering and analysis logic from the API surface.
+
+# ── exceptions ────────────────────────────────────────────────────────
+
+class LLMQuotaExceededError(Exception):
+    """Raised when the LLM provider returns a token / quota exhaustion error."""
+
+class LLMRateLimitError(Exception):
+    """Raised when the LLM provider rate-limits the request (retry later)."""
+
+class LLMResponseError(Exception):
+    """Raised when the LLM returns an unexpected or unparseable response."""
+
+_QUOTA_SIGNALS = (
+    "quota",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "resource_exhausted",         
+    "insufficient_quota",         
+    "billing",
+    "exceeded",
+    "token limit",
+    "context_length_exceeded",   
+    "maximum context length",
+)
+
+_RATE_SIGNALS = (
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "retry",
+    "slow down",
+    "throttl",
+)
+
+
+def _classify_llm_error(message: str, status_code: int | None = None) -> None:
+    lower = message.lower()
+
+    if status_code == 429:
+        raise LLMRateLimitError(
+            "The AI provider is rate-limiting requests right now. "
+            "Please wait a few minutes and try again."
+        )
+
+    if status_code == 402:
+        raise LLMQuotaExceededError(
+            "The AI provider billing limit has been reached. "
+            "Please check your account quota."
+        )
+
+    if any(sig in lower for sig in _QUOTA_SIGNALS):
+        raise LLMQuotaExceededError(
+            "The AI provider quota or token limit has been exhausted. "
+            f"Provider message: {message[:300]}"
+        )
+
+    if any(sig in lower for sig in _RATE_SIGNALS):
+        raise LLMRateLimitError(
+            "The AI provider is rate-limiting requests right now. "
+            f"Provider message: {message[:300]}"
+        )
 
 def build_prompt(products: list[dict[str, Any]], store_url: str) -> str:
     return f"""
@@ -67,16 +129,25 @@ def analyze_with_ollama(products: list[dict[str, Any]], store_url: str, model: s
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
             body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        message = error.read().decode("utf-8", errors="replace")
+        _classify_llm_error(message, error.code)
+        raise LLMResponseError(f"Ollama HTTP {error.code}: {message[:300]}") from error
     except urllib.error.URLError as error:
         raise RuntimeError(
-            "Could not reach Ollama. Install/start Ollama, pull a model, or use --provider rules."
+            "Could not reach Ollama. Make sure Ollama is installed and running locally."
         ) from error
 
     text = body.get("response", "")
+    if body.get("error"):
+        _classify_llm_error(body["error"])
+        raise LLMResponseError(f"Ollama error: {body['error'][:300]}")
+
     try:
         report = json.loads(text)
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"Ollama returned non-JSON output: {text[:500]}") from error
+        raise LLMResponseError(f"Ollama returned non-JSON output: {text[:500]}") from error
+
     report.setdefault("provider", "ollama")
     report.setdefault("store_url", store_url)
     return report
@@ -167,15 +238,35 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
             body = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         message = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Gemini API HTTP {error.code}: {message}") from error
+        try:
+            error_body = json.loads(message)
+            detail = error_body.get("error", {}).get("message", message)
+        except json.JSONDecodeError:
+            detail = message
+        _classify_llm_error(detail, error.code)
+        raise LLMResponseError(f"Gemini API HTTP {error.code}: {detail[:300]}") from error
     except urllib.error.URLError as error:
         raise RuntimeError(f"Could not reach Gemini API: {error.reason}") from error
 
     try:
-        text = body["candidates"][0]["content"]["parts"][0]["text"]
+        candidate = body["candidates"][0]
+        finish_reason = candidate.get("finishReason", "")
+        if finish_reason == "MAX_TOKENS":
+            raise LLMQuotaExceededError(
+                "Gemini hit the maximum token limit for this response. "
+                "Try reducing MAX_PRODUCTS in your .env or switching to a model with a larger context window."
+            )
+        if finish_reason not in ("STOP", ""):
+            raise LLMResponseError(
+                f"Gemini returned an unexpected finish reason: {finish_reason}. "
+                f"Full response: {json.dumps(body)[:500]}"
+            )
+        text = candidate["content"]["parts"][0]["text"]
         report = json.loads(text)
     except (KeyError, IndexError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"Unexpected Gemini API response: {json.dumps(body)[:1000]}") from error
+        raise LLMResponseError(
+            f"Unexpected Gemini API response structure: {json.dumps(body)[:500]}"
+        ) from error
 
     report.setdefault("provider", "Propero")
     # report.setdefault("model", model)
@@ -187,85 +278,107 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
     try:
         openai_module = importlib.import_module("openai")
         OpenAI = getattr(openai_module, "OpenAI")
+        APIStatusError = getattr(openai_module, "APIStatusError", None)
+        RateLimitError = getattr(openai_module, "RateLimitError", None)
     except (ImportError, AttributeError) as error:
-        raise RuntimeError("Install the optional OpenAI SDK first: python -m pip install openai") from error
+        raise RuntimeError(
+            "Install the optional OpenAI SDK first: pip install openai"
+        ) from error
 
     client = OpenAI()
-    response = client.responses.create(
-        model=model,
-        input=[
-            {
-                "role": "system",
-                "content": (
-                    "You return concise JSON for ecommerce enrichment work. "
-                    "Prioritize specific, actionable changes."
-                ),
-            },
-            {"role": "user", "content": build_prompt(products, store_url)},
-        ],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "shopify_agent_discoverability_report",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "store_level_recommendations": {
-                            "type": "array",
-                            "items": {"$ref": "#/$defs/recommendation"},
-                        },
-                        "products": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "properties": {
-                                    "product_id": {"type": ["integer", "string", "null"]},
-                                    "title": {"type": ["string", "null"]},
-                                  "agent_summary": {"type": "string"},
-                                    "missing_enrichments": {
-                                        "type": "array",
-                                        "items": {"$ref": "#/$defs/recommendation"},
+
+    try:
+        response = client.responses.create(
+            model=model,
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You return concise JSON for ecommerce enrichment work. "
+                        "Prioritize specific, actionable changes."
+                    ),
+                },
+                {"role": "user", "content": build_prompt(products, store_url)},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "shopify_agent_discoverability_report",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "store_level_recommendations": {
+                                "type": "array",
+                                "items": {"$ref": "#/$defs/recommendation"},
+                            },
+                            "products": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "product_id": {"type": ["integer", "string", "null"]},
+                                        "title": {"type": ["string", "null"]},
+                                      "agent_summary": {"type": "string"},
+                                        "missing_enrichments": {
+                                            "type": "array",
+                                            "items": {"$ref": "#/$defs/recommendation"},
+                                        },
                                     },
-                                },
-                                "required": [
+                                    "required": [
                                     "product_id",
                                     "title",
                                   "agent_summary",
                                     "missing_enrichments",
-                                ],
+                                    ],
+                                },
                             },
                         },
-                    },
-                    "required": ["store_level_recommendations", "products"],
-                    "$defs": {
-                        "recommendation": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": {
-                                "priority": {
-                                    "type": "string",
-                                    "enum": ["high", "medium", "low"],
+                        "required": ["store_level_recommendations", "products"],
+                        "$defs": {
+                            "recommendation": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "priority": {
+                                        "type": "string",
+                                        "enum": ["high", "medium", "low"],
+                                    },
+                                    "enrichment": {"type": "string"},
+                                    "why_it_matters_for_agents": {"type": "string"},
+                                    "example": {"type": "string"},
                                 },
-                                "enrichment": {"type": "string"},
-                                "why_it_matters_for_agents": {"type": "string"},
-                                "example": {"type": "string"},
-                            },
-                            "required": [
-                                "priority",
-                                "enrichment",
-                                "why_it_matters_for_agents",
-                                "example",
+                                "required": [
+                                    "priority",
+                                    "enrichment",
+                                    "why_it_matters_for_agents",
+                                    "example",
                             ],
                         }
+                        },
                     },
-                },
-            }
-        },
-    )
-    report = json.loads(response.output_text)
+                }
+            },
+        )
+    except Exception as error:
+        if RateLimitError and isinstance(error, RateLimitError):
+            raise LLMRateLimitError(
+                "OpenAI is rate-limiting requests right now. Please wait and try again."
+            ) from error
+        if APIStatusError and isinstance(error, APIStatusError):
+            _classify_llm_error(str(error), getattr(error, "status_code", None))
+        _classify_llm_error(str(error))
+        raise LLMResponseError(f"OpenAI API error: {str(error)[:300]}") from error
+
+    try:
+        report = json.loads(response.output_text)
+    except (json.JSONDecodeError, AttributeError) as error:
+        raise LLMResponseError(
+            f"OpenAI returned unparseable output: {str(response)[:300]}"
+        ) from error
+
     report.setdefault("provider", "openai")
     report.setdefault("store_url", store_url)
     return report
@@ -278,7 +391,7 @@ def analyze_products(products: list[dict[str, Any]], store_url: str, provider: s
         return analyze_with_ollama(products, store_url, model)
     if provider == "openai":
         return analyze_with_openai(products, store_url, model)
-    raise ValueError(f"Unsupported provider: {provider}")
+    raise ValueError(f"Unsupported provider: {provider!r}")
 
 
 def escape_html(value: Any) -> str:
@@ -330,11 +443,13 @@ def render_executive_summary(report: dict[str, Any], product_reports: list[dict[
     observations: list[str] = []
     if high_priority_count:
         observations.append(
-            f"There are {high_priority_count} high-priority gaps across the catalog, concentrated in the kinds of fields agents need to recommend products confidently."
+            f"There are {high_priority_count} high-priority gaps across the catalog, "
+            "concentrated in the kinds of fields agents need to recommend products confidently."
         )
     if not observations:
         observations.append(
-            "This report summarizes the current catalog readiness and the most useful fixes to make products easier for AI agents to discover and recommend."
+            "This report summarizes the current catalog readiness and the most useful fixes "
+            "to make products easier for AI agents to discover and recommend."
         )
 
     highlight_cards = [
@@ -343,11 +458,11 @@ def render_executive_summary(report: dict[str, Any], product_reports: list[dict[
         ("Store actions", str(len(store_recommendations)), "Catalog-wide improvements that benefit every product."),
     ]
 
-    store_action_items = []
-    for rec in top_store_actions:
-        store_action_items.append(
-            f"<li><strong>{escape_html(rec.get('enrichment'))}</strong><span>{escape_html(rec.get('why_it_matters_for_agents'))}</span></li>"
-        )
+    store_action_items = [
+        f"<li><strong>{escape_html(rec.get('enrichment'))}</strong>"
+        f"<span>{escape_html(rec.get('why_it_matters_for_agents'))}</span></li>"
+        for rec in top_store_actions
+    ]
 
     # Products needing attention: pick those with the most high-priority missing enrichments
     attention_products = sorted(
@@ -356,12 +471,11 @@ def render_executive_summary(report: dict[str, Any], product_reports: list[dict[
         reverse=True,
     )[:3]
 
-    attention_items = []
-    for product in attention_products:
-        hp_count = sum(1 for r in product.get("missing_enrichments", []) if r.get("priority") == "high")
-        attention_items.append(
-            f"<li><strong>{escape_html(product.get('title') or 'Untitled product')}</strong><span>{escape_html(str(hp_count))} high-priority gaps</span></li>"
-        )
+    attention_items = [
+        f"<li><strong>{escape_html(p.get('title') or 'Untitled product')}</strong>"
+        f"<span>{sum(1 for r in p.get('missing_enrichments', []) if r.get('priority') == 'high')} high-priority gaps</span></li>"
+        for p in attention_products
+    ]
 
     cards_html = "".join(
         f"""
@@ -414,25 +528,24 @@ def render_pdf_html(report: dict[str, Any], products: list[dict[str, Any]], stor
         if rec.get("priority") == "high"
     )
 
-    product_cards = []
-    for product in product_reports:
-        product_cards.append(
-            f"""
-            <section class="product-card">
-              <div class="product-card__top">
-                <div>
-                  <p class="eyebrow">Product</p>
-                  <h3>{escape_html(product.get("title") or "Untitled product")}</h3>
-                  <p class="muted">ID: {escape_html(product.get("product_id"))}</p>
-                </div>
-              </div>
-              <p class="summary">{escape_html(product.get("agent_summary"))}</p>
-              <div class="recommendation-list">
-                {render_recommendations(product.get("missing_enrichments") or [])}
-              </div>
-            </section>
-            """
-        )
+    product_cards = [
+        f"""
+        <section class="product-card">
+          <div class="product-card__top">
+            <div>
+              <p class="eyebrow">Product</p>
+              <h3>{escape_html(product.get("title") or "Untitled product")}</h3>
+              <p class="muted">ID: {escape_html(product.get("product_id"))}</p>
+            </div>
+          </div>
+          <p class="summary">{escape_html(product.get("agent_summary"))}</p>
+          <div class="recommendation-list">
+            {render_recommendations(product.get("missing_enrichments") or [])}
+          </div>
+        </section>
+        """
+        for product in product_reports
+    ]
 
     return f"""<!doctype html>
 <html>
@@ -762,12 +875,26 @@ def write_pdf_report(html_path: str, pdf_path: str) -> bool:
     try:
         weasyprint_module = importlib.import_module("weasyprint")
         HTML = getattr(weasyprint_module, "HTML")
-    except (ImportError, AttributeError):
+        HTML(filename=html_path).write_pdf(pdf_path)
+        return True
+    except Exception:
+        pass
+
+    # Fallback: Playwright
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"file:///{html_path.replace(os.sep, '/')}")
+            page.pdf(path=pdf_path, format="A4", margin={
+                "top": "18mm", "bottom": "18mm",
+                "left": "15mm", "right": "15mm"
+            })
+            browser.close()
+        return True
+    except Exception:
         return False
-
-    HTML(filename=html_path).write_pdf(pdf_path)
-    return True
-
 
 def run_store_analysis(store_url: str) -> dict[str, Any]:
     settings = get_app_settings()

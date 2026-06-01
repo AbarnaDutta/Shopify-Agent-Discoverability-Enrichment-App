@@ -1,3 +1,4 @@
+# app/services/jobs.py
 from __future__ import annotations
 
 import datetime as dt
@@ -11,6 +12,7 @@ from app.services.report_builder import run_store_analysis
 from app.services.product_fetcher import normalize_store_url
 from app.services.email_service import EmailService
 from app.integrations.email_clients.hostinger_mail import HostingerMail
+from app.services.job_repository import job_repo          
 
 from dotenv import load_dotenv
 
@@ -55,7 +57,27 @@ class JobQueue:
 
     def get(self, job_id: str) -> ReportJob | None:
         with self._lock:
-            return self._jobs.get(job_id)
+            cached = self._jobs.get(job_id)
+        if cached:
+            return cached
+
+        row = job_repo.get(job_id)
+        if row is None:
+            return None
+
+        job = ReportJob(
+            job_id=row.job_id,
+            email=row.email,
+            store_url=row.store_url,
+            status=row.status,
+            created_at=row.created_at.isoformat() + "Z",
+            updated_at=row.updated_at.isoformat() + "Z",
+            error=row.error,
+            report=row.report,
+        )
+        with self._lock:
+            self._jobs[job.job_id] = job
+        return job
 
     def serialize(self, job: ReportJob) -> dict[str, Any]:
         return asdict(job)
@@ -90,13 +112,13 @@ class JobQueue:
             self._update_job(job_id, status="failed", error=str(error))
 
     def _update_job(self, job_id: str, **changes: Any) -> None:
-        job = self._jobs.get(job_id)
-        if job is None:
-            return
         with self._lock:
-            for key, value in changes.items():
-                setattr(job, key, value)
-            job.updated_at = dt.datetime.now(dt.timezone.utc).isoformat() + "Z"
+            job = self._jobs.get(job_id)
+            if job:
+                for key, value in changes.items():
+                    setattr(job, key, value)
+                job.updated_at = dt.datetime.now(dt.timezone.utc).isoformat() + "Z"
+        job_repo.update(job_id, **changes)
 
 
 job_queue = JobQueue()
