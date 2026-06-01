@@ -24,7 +24,6 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push Docker image
-        id: build-image
         run: |
           ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY=shopify-agent
@@ -34,12 +33,42 @@ jobs:
           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Update Elastic Beanstalk
+      - name: Create Dockerrun.aws.json
         run: |
-          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/shopify-agent:${{ github.sha }}"
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          cat > Dockerrun.aws.json << EOF
+          {
+            "AWSEBDockerrunVersion": 1,
+            "Image": {
+              "Name": "${ECR_REGISTRY}/shopify-agent:${{ github.sha }}",
+              "Update": "true"
+            },
+            "Ports": [
+              {
+                "ContainerPort": "8000"
+              }
+            ]
+          }
+          EOF
+
+      - name: Create source bundle
+        run: |
+          zip -r app.zip Dockerrun.aws.json Dockerfile requirements.txt app/
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp app.zip s3://elasticbeanstalk-ap-south-1-657229083717/app-${{ github.sha }}.zip
+
+      - name: Create application version
+        run: |
+          aws elasticbeanstalk create-application-version \
+            --application-name shopify-agent \
+            --version-label ${{ github.sha }} \
+            --source-bundle S3Bucket=elasticbeanstalk-ap-south-1-657229083717,S3Key=app-${{ github.sha }}.zip
+
+      - name: Update environment
+        run: |
           aws elasticbeanstalk update-environment \
             --environment-name shopify-agent \
-            --option-settings Namespace=aws:elasticbeanstalk:container:docker,OptionName=Image,Value="$IMAGE_URI"
+            --version-label ${{ github.sha }}
