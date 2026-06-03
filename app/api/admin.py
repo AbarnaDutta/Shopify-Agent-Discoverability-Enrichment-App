@@ -15,8 +15,8 @@ admin_router = APIRouter()
 
 ADMIN_EMAIL    = os.getenv("ADMIN_EMAIL", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
-_SIGNING_KEY   = os.getenv("ADMIN_EMAIL", "") + os.getenv("ADMIN_PASSWORD", "")
-_serializer    = URLSafeSerializer(_SIGNING_KEY)
+ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "")
+_serializer = URLSafeSerializer(ADMIN_SECRET_KEY)
 COOKIE_NAME    = "admin_session"
 
 
