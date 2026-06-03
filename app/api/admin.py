@@ -161,7 +161,6 @@ def _login_html(error: str = "") -> str:
 </head>
 <body>
   <div class="card">
-    <div class="logo">🛠</div>
     <h1>Admin Panel</h1>
     <p class="sub">Shopify Enrichment App</p>
     {error_block}
@@ -183,14 +182,14 @@ def _login_html(error: str = "") -> str:
 
 # ── Routes ────────────────────────────────────────────────────────────────
 
-@admin_router.get("/admin/login", response_class=HTMLResponse)
+@admin_router.get("/admin/login", response_class=HTMLResponse, response_model=None)
 def login_page(request: Request) -> HTMLResponse:
     if _is_authenticated(request):
         return RedirectResponse(url="/admin", status_code=302)
     return HTMLResponse(_login_html())
 
 
-@admin_router.post("/admin/login")
+@admin_router.post("/admin/login", response_model=None)
 def login_submit(
     request: Request,
     email: str = Form(...),
@@ -212,14 +211,14 @@ def login_submit(
     return response
 
 
-@admin_router.get("/admin/logout")
+@admin_router.get("/admin/logout", response_model=None)
 def logout() -> RedirectResponse:
     response = RedirectResponse(url="/admin/login", status_code=302)
     response.delete_cookie(COOKIE_NAME)
     return response
 
 
-@admin_router.get("/admin", response_class=HTMLResponse)
+@admin_router.get("/admin", response_class=HTMLResponse, response_model=None)
 def admin_panel(request: Request) -> HTMLResponse:
     if not _is_authenticated(request):
         return RedirectResponse(url="/admin/login", status_code=302)
@@ -296,7 +295,7 @@ def admin_panel(request: Request) -> HTMLResponse:
 </head>
 <body>
   <div class="topbar">
-    <h1>🛠 Admin Panel – Shopify Enrichment App</h1>
+    <h1> Admin Panel – Shopify Enrichment App</h1>
     <div class="topbar-right">
       <span id="clock"></span>
       <span>Signed in as <strong>{ADMIN_EMAIL}</strong></span>

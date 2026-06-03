@@ -38,10 +38,7 @@ app.include_router(admin_router)
 static_dir = Path(__file__).parent.parent / "frontend"
 if static_dir.exists():
     app.mount("/frontend", StaticFiles(directory=str(static_dir)), name="static")
-    
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
+
 @app.get("/")
 async def serve_frontend():
     return FileResponse(str(static_dir / "index.html"))
