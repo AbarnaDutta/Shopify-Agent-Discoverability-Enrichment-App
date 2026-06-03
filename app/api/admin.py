@@ -343,7 +343,7 @@ def admin_panel(request: Request) -> HTMLResponse:
         <thead>
           <tr>
             <th>Job ID</th><th>Email</th><th>Store URL</th>
-            <th>Status</th><th>PDF</th><th>Language</th>
+            <th>Status</th><th>PDF</th>
             <th>Created</th><th>Error</th>
           </tr>
         </thead>

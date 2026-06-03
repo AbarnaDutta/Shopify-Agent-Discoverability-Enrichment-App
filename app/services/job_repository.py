@@ -9,7 +9,7 @@ from app.core.database import ReportRequest, safe_db
 
 class JobRepository:
 
-    def create(self, job_id: str, email: str, store_url: str) -> None:
+    def create(self, job_id: str, email: str, store_url: str, language: str = "English") -> None:
         with safe_db("create job") as db:
             if db is None:
                 return
@@ -17,6 +17,7 @@ class JobRepository:
                 job_id=job_id,
                 email=email,
                 store_url=store_url,
+                language=language,
                 status="queued",
             )
             db.add(row)

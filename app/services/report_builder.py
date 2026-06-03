@@ -109,7 +109,7 @@ def _classify_llm_error(message: str, status_code: int | None = None) -> None:
             f"Provider message: {message[:300]}"
         )
 
-def build_prompt(products: list[dict[str, Any]], store_url: str) -> str:
+def build_prompt(products: list[dict[str, Any]], store_url: str, language: str = "English") -> str:
     return f"""
 You are an ecommerce data strategist helping a Shopify merchant make products discoverable,
 understandable, and safely recommendable by AI agents.
@@ -123,18 +123,20 @@ product attributes, identifiers, policy/context fields, natural-language agent s
 variant details, image metadata, FAQs, synonyms/search terms, compatibility/use cases, and
 trust signals when relevant.
 
+IMPORTANT: Write your entire response in {language}. All field values, recommendations,
+summaries, and examples must be in {language}. Do not mix languages.
+
 Store URL: {store_url}
 
 Products:
 {json.dumps(products, ensure_ascii=False, indent=2)}
 """.strip()
 
-
-def analyze_with_ollama(products: list[dict[str, Any]], store_url: str, model: str) -> dict[str, Any]:
+def analyze_with_ollama(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
     payload = {
         "model": model,
         "prompt": (
-            build_prompt(products, store_url)
+            build_prompt(products, store_url, language)
             + "\n\nReturn only valid JSON with keys: store_level_recommendations and products."
         ),
         "stream": False,
@@ -225,7 +227,7 @@ def enrichment_report_schema() -> dict[str, Any]:
     }
 
 
-def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: str) -> dict[str, Any]:
+def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("Set GEMINI_API_KEY in .env. You can create one in Google AI Studio.")
@@ -235,7 +237,7 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": build_prompt(products, store_url)}],
+                "parts": [{"text": build_prompt(products, store_url, language)}],
             }
         ],
         "generationConfig": {
@@ -294,7 +296,7 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
     return report
 
 
-def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: str) -> dict[str, Any]:
+def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
     try:
         openai_module = importlib.import_module("openai")
         OpenAI = getattr(openai_module, "OpenAI")
@@ -318,7 +320,7 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
                         "Prioritize specific, actionable changes."
                     ),
                 },
-                {"role": "user", "content": build_prompt(products, store_url)},
+                {"role": "user", "content": build_prompt(products, store_url, language)},
             ],
             text={
                 "format": {
@@ -404,13 +406,13 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
     return report
 
 
-def analyze_products(products: list[dict[str, Any]], store_url: str, provider: str, model: str) -> dict[str, Any]:
+def analyze_products(products: list[dict[str, Any]], store_url: str, provider: str, model: str, language="English") -> dict[str, Any]:
     if provider == "gemini":
-        return analyze_with_gemini(products, store_url, model)
+        return analyze_with_gemini(products, store_url, model, language)
     if provider == "ollama":
-        return analyze_with_ollama(products, store_url, model)
+        return analyze_with_ollama(products, store_url, model, language)
     if provider == "openai":
-        return analyze_with_openai(products, store_url, model)
+        return analyze_with_openai(products, store_url, model, language)
     raise ValueError(f"Unsupported provider: {provider!r}")
 
 
@@ -916,7 +918,7 @@ def write_pdf_report(html_path: str, pdf_path: str) -> bool:
     except Exception:
         return False
 
-def run_store_analysis(store_url: str) -> dict[str, Any]:
+def run_store_analysis(store_url: str, language: str = "English") -> dict[str, Any]:
     settings = get_app_settings()
     normalized_store_url = normalize_store_url(store_url)
     config = ShopifyConfig(
@@ -927,7 +929,7 @@ def run_store_analysis(store_url: str) -> dict[str, Any]:
     products = [compact_product(product, normalized_store_url) for product in raw_products]
     report = None
     if products:
-        report = analyze_products(products, normalized_store_url, settings["provider"], settings["model"])
+        report = analyze_products(products, normalized_store_url, settings["provider"], settings["model"], language)
 
     return {
         "settings": settings,

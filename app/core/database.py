@@ -24,6 +24,7 @@ class ReportRequest(Base):
     job_id     = Column(String(36),  primary_key=True)
     email      = Column(String(320), nullable=False, index=True)
     store_url  = Column(String(512), nullable=False)
+    language   = Column(String(64),  nullable=False, server_default="English")
     status     = Column(String(32),  nullable=False, default="queued", index=True)
     error      = Column(Text,        nullable=True)
     error_type = Column(String(64),  nullable=True)
@@ -34,43 +35,37 @@ class ReportRequest(Base):
                         default=lambda: dt.datetime.now(dt.timezone.utc),
                         onupdate=lambda: dt.datetime.now(dt.timezone.utc))
 
-
-def _build_database_url() -> str | None:
-    url = os.getenv("DATABASE_URL")
-    if url:
-        return url
-    host = os.getenv("DB_HOST")
-    if not host:
-        return None
-    port     = os.getenv("DB_PORT", "5432")
-    name     = os.getenv("DB_NAME", "shopify_enrichment")
-    user     = os.getenv("DB_USER", "postgres")
-    password = os.getenv("DB_PASSWORD", "")
-    return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
+_engine = None
+_SessionLocal = None
 
 
-url = os.getenv("DATABASE_URL")
-
-if url:
-    engine = create_engine(
-        url,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
-        echo=False,
-    )
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-else:
-    engine = None
-    SessionLocal = None
+def get_engine():
+    global _engine, _SessionLocal
+    if _engine is None:
+        url = os.getenv("DATABASE_URL")
+        if url:
+            try:
+                _engine = create_engine(
+                    url,
+                    pool_pre_ping=True,
+                    pool_size=5,
+                    max_overflow=10,
+                    echo=False,
+                )
+                _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
+            except Exception as e:
+                log.error("Failed to initialize database engine configuration: %s", e)
+                return None
+    return _engine
 
 
 def is_db_available() -> bool:
-    return engine is not None
+    return get_engine() is not None
 
 
 def init_db() -> None:
-    if not is_db_available():
+    engine = get_engine()
+    if not engine:
         print("No DATABASE_URL set — running without database persistence.")
         return
     try:
@@ -82,9 +77,10 @@ def init_db() -> None:
 
 
 def get_db() -> Session | None:
-    if SessionLocal is None:
+    get_engine()  
+    if _SessionLocal is None:
         return None
-    return SessionLocal()
+    return _SessionLocal()
 
 
 @contextmanager
@@ -98,24 +94,20 @@ def safe_db(operation: str) -> Generator[Session | None, None, None]:
         yield db
     except OperationalError as e:
         log.error("DB connection error during '%s': %s", operation, e)
-        try:
-            db.rollback()
-        except Exception:
-            pass
+        if db:
+            try: db.rollback()
+            except Exception: pass
     except SQLAlchemyError as e:
         log.error("DB error during '%s': %s", operation, e)
-        try:
-            db.rollback()
-        except Exception:
-            pass
+        if db:
+            try: db.rollback()
+            except Exception: pass
     except Exception as e:
         log.error("Unexpected DB error during '%s': %s", operation, e)
-        try:
-            db.rollback()
-        except Exception:
-            pass
+        if db:
+            try: db.rollback()
+            except Exception: pass
     finally:
-        try:
-            db.close()
-        except Exception:
-            pass
+        if db:
+            try: db.close()
+            except Exception: pass

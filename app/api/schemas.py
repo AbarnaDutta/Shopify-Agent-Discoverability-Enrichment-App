@@ -1,3 +1,4 @@
+# app/api/schemas.py
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -5,9 +6,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+SUPPORTED_LANGUAGES = Literal[
+    "English",
+    "German",
+]
+
 class ReportRequestCreate(BaseModel):
     email: str = Field(min_length=3)
     store_url: str = Field(min_length=1)
+    language: str = Field(default="English")
 
 
 class ReportRequestResponse(BaseModel):
@@ -15,6 +22,7 @@ class ReportRequestResponse(BaseModel):
     status: Literal["queued", "processing", "completed", "failed"]
     email: str
     store_url: str
+    language: str = "English"                  
     created_at: str
     updated_at: str
     error: str | None = None

@@ -37,8 +37,8 @@ def home() -> dict[str, str]:
 def create_report_request(payload: ReportRequestCreate) -> QueueResponse:
     _validate_email(payload.email)
     normalized_url = _validate_store_url(payload.store_url)
-
-    job = job_queue.submit(payload.email, normalized_url)
+    language = payload.language or "English"
+    job = job_queue.submit(payload.email, normalized_url, language)
     return QueueResponse(job_id=job.job_id, status="queued", message="Report request queued.")
 
 

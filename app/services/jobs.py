@@ -38,6 +38,7 @@ class ReportJob:
     job_id: str
     email: str
     store_url: str
+    language: str = "English"
     status: str = "queued"
     created_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat() + "Z")
     updated_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat() + "Z")
@@ -117,10 +118,15 @@ class JobQueue:
         worker = threading.Thread(target=self._worker_loop, daemon=True)
         worker.start()
 
-    def submit(self, email: str, store_url: str) -> ReportJob:
+    def submit(self, email: str, store_url: str, language: str = "English") -> ReportJob:
         normalized_store_url = normalize_store_url(store_url)
-        job = ReportJob(job_id=str(uuid.uuid4()), email=email.strip(), store_url=normalized_store_url)
-        job_repo.create(job.job_id, job.email, job.store_url)
+        job = ReportJob(
+            job_id=str(uuid.uuid4()),
+            email=email.strip(),
+            store_url=normalized_store_url,
+            language=language,
+        )
+        job_repo.create(job.job_id, job.email, job.store_url, job.language)
         with self._lock:
             self._jobs[job.job_id] = job
         self._queue.put(job.job_id)
@@ -168,7 +174,7 @@ class JobQueue:
 
         self._update_job(job_id, status="processing", error=None, error_type=None)
         try:
-            result = run_store_analysis(job.store_url)
+            result = run_store_analysis(job.store_url, language=job.language)
             report = result["report"]
             if report is None:
                 raise RuntimeError("No report was generated for this store.")
