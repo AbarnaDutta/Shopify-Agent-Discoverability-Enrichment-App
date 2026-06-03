@@ -8,8 +8,9 @@ from pathlib import Path
 
 
 from app.api.routes import router
+from app.api.admin import admin_router
 from app.services.jobs import job_queue
-from app.core.database import init_db    
+from app.core.database import init_db
 
 
 @asynccontextmanager
@@ -33,7 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router, prefix="/api")
-
+app.include_router(admin_router)
 static_dir = Path(__file__).parent.parent / "frontend"
 if static_dir.exists():
     app.mount("/frontend", StaticFiles(directory=str(static_dir)), name="static")
