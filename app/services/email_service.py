@@ -13,7 +13,7 @@ _HINTS: dict[str, str] = {
     "llm_rate_limited":   "Please wait a few minutes before resubmitting.",
     "llm_response_error": "This is usually temporary. Please try again — if it keeps happening, contact support.",
     "llm_auth_error":     "This is a configuration issue on our end. Please try again later.",
-    "internal_error":     "Please try again later or contact us at https://www.propero.in/",
+    "internal_error":     "Please try again later or contact us at propero.in",
 }
 
 
@@ -29,8 +29,8 @@ _EMAIL_BODY_TEMPLATES: dict[str, dict[str, str]] = {
             "  • An executive summary highlighting your biggest opportunities\n"
         ),
         "pdf_line": "Your report is attached as a PDF below.",
-        "closing":  "If you have any questions, reply to this email or visit us at https://www.propero.in/",
-        "sign_off": "The Propero Team\nhttps://www.propero.in/",
+        "closing":  "If you have any questions, reply to this email or visit us at propero.in",
+        "sign_off": "The Propero Team\npropero.in",
     },
     "German": {
         "subject":  "Ihr Propero KI-Agenten-Bereitschaftsbericht — {store_url}",
@@ -43,8 +43,8 @@ _EMAIL_BODY_TEMPLATES: dict[str, dict[str, str]] = {
             "  • Eine Zusammenfassung mit Ihren größten Chancen\n"
         ),
         "pdf_line": "Ihr Bericht ist als PDF unten beigefügt.",
-        "closing":  "Bei Fragen antworten Sie auf diese E-Mail oder besuchen Sie uns unter https://www.propero.in/",
-        "sign_off": "Das Propero-Team\nhttps://www.propero.in/",
+        "closing":  "Bei Fragen antworten Sie auf diese E-Mail oder besuchen Sie uns unter propero.in",
+        "sign_off": "Das Propero-Team\npropero.in",
     },
     "French": {
         "subject":  "Votre rapport Propero de préparation aux agents IA — {store_url}",
@@ -57,8 +57,8 @@ _EMAIL_BODY_TEMPLATES: dict[str, dict[str, str]] = {
             "  • Un résumé exécutif mettant en avant vos meilleures opportunités\n"
         ),
         "pdf_line": "Votre rapport est joint en PDF ci-dessous.",
-        "closing":  "Pour toute question, répondez à cet e-mail ou visitez https://www.propero.in/",
-        "sign_off": "L'équipe Propero\nhttps://www.propero.in/",
+        "closing":  "Pour toute question, répondez à cet e-mail ou visitez propero.in",
+        "sign_off": "L'équipe Propero\npropero.in",
     },
     "Spanish": {
         "subject":  "Su informe Propero de preparación para agentes IA — {store_url}",
@@ -71,8 +71,8 @@ _EMAIL_BODY_TEMPLATES: dict[str, dict[str, str]] = {
             "  • Un resumen ejecutivo con sus mayores oportunidades\n"
         ),
         "pdf_line": "Su informe está adjunto como PDF a continuación.",
-        "closing":  "Si tiene preguntas, responda a este correo o visítenos en https://www.propero.in/",
-        "sign_off": "El equipo de Propero\nhttps://www.propero.in/",
+        "closing":  "Si tiene preguntas, responda a este correo o visítenos en propero.in",
+        "sign_off": "El equipo de Propero\npropero.in",
     },
     "Japanese": {
         "subject":  "Propero AIエージェント対応レポート — {store_url}",
@@ -85,8 +85,8 @@ _EMAIL_BODY_TEMPLATES: dict[str, dict[str, str]] = {
             "  • 最大の機会を強調したエグゼクティブサマリー\n"
         ),
         "pdf_line": "レポートはPDFとして下に添付されています。",
-        "closing":  "ご質問はこのメールへの返信、またはhttps://www.propero.in/までお問い合わせください。",
-        "sign_off": "Properoチーム\nhttps://www.propero.in/",
+        "closing":  "ご質問はこのメールへの返信、またはpropero.inまでお問い合わせください。",
+        "sign_off": "Properoチーム\npropero.in",
     },
 }
 
@@ -97,8 +97,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "We're sorry — we ran into an issue generating your AI Agent Discoverability Report for {store_url}.",
         "reason_label": "What went wrong:",
         "next_label": "What to do next:",
-        "closing": "If the problem continues, feel free to reach out at https://www.propero.in/ and we'll help you out.",
-        "sign_off": "The Propero Team\nhttps://www.propero.in/",
+        "closing": "If the problem continues, feel free to reach out at propero.in and we'll help you out.",
+        "sign_off": "The Propero Team\npropero.in",
     },
     "German": {
         "subject": "Ihr Propero-Bericht konnte nicht erstellt werden — {store_url}",
@@ -106,8 +106,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "Es tut uns leid — beim Erstellen Ihres KI-Agenten-Berichts für {store_url} ist ein Fehler aufgetreten.",
         "reason_label": "Was ist passiert:",
         "next_label": "Was Sie als Nächstes tun können:",
-        "closing": "Wenn das Problem weiterhin besteht, wenden Sie sich an https://www.propero.in/ und wir helfen Ihnen.",
-        "sign_off": "Das Propero-Team\nhttps://www.propero.in/",
+        "closing": "Wenn das Problem weiterhin besteht, wenden Sie sich an propero.in und wir helfen Ihnen.",
+        "sign_off": "Das Propero-Team\npropero.in",
     },
     "French": {
         "subject": "Nous n'avons pas pu générer votre rapport Propero — {store_url}",
@@ -115,8 +115,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "Nous sommes désolés — un problème est survenu lors de la génération de votre rapport pour {store_url}.",
         "reason_label": "Ce qui s'est passé :",
         "next_label": "Que faire ensuite :",
-        "closing": "Si le problème persiste, contactez-nous sur https://www.propero.in/ et nous vous aiderons.",
-        "sign_off": "L'équipe Propero\nhttps://www.propero.in/",
+        "closing": "Si le problème persiste, contactez-nous sur propero.in et nous vous aiderons.",
+        "sign_off": "L'équipe Propero\npropero.in",
     },
     "Spanish": {
         "subject": "No pudimos generar su informe Propero — {store_url}",
@@ -124,8 +124,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "Lo sentimos — ocurrió un problema al generar su informe para {store_url}.",
         "reason_label": "Qué ocurrió:",
         "next_label": "Qué hacer a continuación:",
-        "closing": "Si el problema continúa, contáctenos en https://www.propero.in/ y le ayudaremos.",
-        "sign_off": "El equipo de Propero\nhttps://www.propero.in/",
+        "closing": "Si el problema continúa, contáctenos en propero.in y le ayudaremos.",
+        "sign_off": "El equipo de Propero\npropero.in",
     },
     "Italian": {
         "subject": "Non siamo riusciti a generare il tuo report Propero — {store_url}",
@@ -133,8 +133,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "Ci dispiace — si è verificato un problema durante la generazione del report per {store_url}.",
         "reason_label": "Cosa è successo:",
         "next_label": "Cosa fare:",
-        "closing": "Se il problema persiste, contattaci su https://www.propero.in/ e ti aiuteremo.",
-        "sign_off": "Il team Propero\nhttps://www.propero.in/",
+        "closing": "Se il problema persiste, contattaci su propero.in e ti aiuteremo.",
+        "sign_off": "Il team Propero\npropero.in",
     },
     "Portuguese": {
         "subject": "Não conseguimos gerar seu relatório Propero — {store_url}",
@@ -142,8 +142,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "Lamentamos — ocorreu um problema ao gerar seu relatório para {store_url}.",
         "reason_label": "O que aconteceu:",
         "next_label": "O que fazer a seguir:",
-        "closing": "Se o problema persistir, entre em contato em https://www.propero.in/ e iremos ajudá-lo.",
-        "sign_off": "A equipe Propero\nhttps://www.propero.in/",
+        "closing": "Se o problema persistir, entre em contato em propero.in e iremos ajudá-lo.",
+        "sign_off": "A equipe Propero\npropero.in",
     },
     "Dutch": {
         "subject": "We konden uw Propero-rapport niet genereren — {store_url}",
@@ -151,8 +151,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "Het spijt ons — er is een probleem opgetreden bij het genereren van uw rapport voor {store_url}.",
         "reason_label": "Wat er is misgegaan:",
         "next_label": "Wat u kunt doen:",
-        "closing": "Als het probleem aanhoudt, neem dan contact op via https://www.propero.in/ en we helpen u.",
-        "sign_off": "Het Propero-team\nhttps://www.propero.in/",
+        "closing": "Als het probleem aanhoudt, neem dan contact op via propero.in en we helpen u.",
+        "sign_off": "Het Propero-team\npropero.in",
     },
     "Japanese": {
         "subject": "Properoレポートを生成できませんでした — {store_url}",
@@ -160,8 +160,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "{store_url}のAIエージェントレポート生成中に問題が発生しました。申し訳ございません。",
         "reason_label": "発生した問題：",
         "next_label": "次のステップ：",
-        "closing": "問題が続く場合は、https://www.propero.in/ までお問い合わせください。",
-        "sign_off": "Properoチーム\nhttps://www.propero.in/",
+        "closing": "問題が続く場合は、propero.in までお問い合わせください。",
+        "sign_off": "Properoチーム\npropero.in",
     },
     "Chinese": {
         "subject": "我们无法生成您的Propero报告 — {store_url}",
@@ -169,8 +169,8 @@ _FAILURE_TEMPLATES: dict[str, dict[str, str]] = {
         "intro": "很抱歉 — 为{store_url}生成AI代理报告时遇到了问题。",
         "reason_label": "发生了什么：",
         "next_label": "接下来怎么做：",
-        "closing": "如果问题仍然存在，请通过 https://www.propero.in/ 联系我们，我们将为您提供帮助。",
-        "sign_off": "Propero团队\nhttps://www.propero.in/",
+        "closing": "如果问题仍然存在，请通过 propero.in 联系我们，我们将为您提供帮助。",
+        "sign_off": "Propero团队\npropero.in",
     },
 }
 

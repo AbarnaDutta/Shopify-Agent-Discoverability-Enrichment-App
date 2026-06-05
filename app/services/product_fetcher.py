@@ -29,24 +29,28 @@ class ShopifyConfig:
 
 
 def normalize_store_url(store: str) -> str:
-    store = store.strip().rstrip("/")
+    print("Normalizing store URL:", repr(store))
+    store = store.strip()
+
     if not store:
         raise InvalidStoreURLError("Shopify store URL is required.")
-    for prefix in ("http//", "https//", "http:/", "https:/"):
-        if store.lower().startswith(prefix):
-            store = store[len(prefix):]
 
-    if not store.startswith(("http://", "https://")):
-        store = f"https://{store}"
+    store = re.sub(r"^https?:/*", "", store, flags=re.IGNORECASE)
+
+    store = store.lstrip("/")
+    store = store.rstrip("/")
+
+    store = f"https://{store}"
 
     parsed = urllib.parse.urlparse(store)
+
     if not parsed.netloc or "." not in parsed.netloc:
         raise InvalidStoreURLError(
             f"'{store}' doesn't look like a valid store URL. "
             "Try entering it like: your-store.myshopify.com"
         )
-    return store
 
+    return store
 def request_json(url: str, headers: dict[str, str] | None = None) -> tuple[dict[str, Any], dict[str, str]]:
     request = urllib.request.Request(url, headers=headers or {})
     try:

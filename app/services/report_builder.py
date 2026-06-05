@@ -866,7 +866,7 @@ def render_pdf_html(
         <div>{escape_html(labels["footer"])}</div>
         <div style="margin-top:8px;font-weight:600;color:#22594f;">
             {escape_html(labels["powered_by"])} • 
-            <a href="https://www.propero.in"style="color:#17695b;text-decoration:none">www.propero.in</a>
+            <a href="https://www.propero.in"style="color:#17695b;text-decoration:none">propero.in</a>
         </div>
     </footer>
   </div>
