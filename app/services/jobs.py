@@ -17,7 +17,6 @@ from app.services.report_builder import (
     LLMAuthError, 
 )
 from app.services.product_fetcher import (
-    normalize_store_url,
     InvalidStoreURLError,
     NonShopifyStoreError,
     StoreUnreachableError,
@@ -119,11 +118,10 @@ class JobQueue:
         worker.start()
 
     def submit(self, email: str, store_url: str, language: str = "English") -> ReportJob:
-        normalized_store_url = normalize_store_url(store_url)
         job = ReportJob(
             job_id=str(uuid.uuid4()),
             email=email.strip(),
-            store_url=normalized_store_url,
+            store_url=store_url,
             language=language,
         )
         job_repo.create(job.job_id, job.email, job.store_url, job.language)
