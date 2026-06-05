@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 
-email_service = EmailService(email_client=HostingerMail(os.getenv("SENDER_EMAIL"), os.getenv("EMAIL_PASSWORD")))  # Initialize with appropriate values
+email_service = EmailService(email_client=HostingerMail(os.getenv("SENDER_EMAIL"), os.getenv("EMAIL_PASSWORD")))  
 
 @dataclass
 class ReportJob:
@@ -182,19 +182,18 @@ class JobQueue:
             email_service.send_report_email(job.email, report, result["products"], job.store_url, language=job.language)
             self._update_job(job_id, status="completed")
         except Exception as error:
-            traceback.print_exc() 
             error_type, user_message = _classify_exception(error)
-            self._update_job(
-                job_id,
-                status="failed",
-                error=user_message,         
-                error_type=error_type,
-            )
+            self._update_job(job_id, status="failed", error=user_message, error_type=error_type)
             try:
-                email_service.send_failure_email(job.email, job.store_url, user_message=user_message, error_type=error_type)
+                email_service.send_failure_email(
+                    job.email,
+                    job.store_url,
+                    user_message=user_message,
+                    error_type=error_type,
+                    language=job.language,    
+                )
             except Exception:
                 pass
-
     def _update_job(self, job_id: str, **changes: Any) -> None:
         with self._lock:
             job = self._jobs.get(job_id)

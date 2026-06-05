@@ -459,6 +459,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "provider_label":     "Provider:",
         "generated_label":    "Generated",
         "footer":             "Generated from Shopify product data. Review recommendations before publishing product or policy changes.",
+        "powered_by": "Powered by Propero",
     },
     "German": {
         "eyebrow":            "Shopify KI-Agenten-Bereitschaft",
@@ -491,6 +492,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "provider_label":     "Anbieter:",
         "generated_label":    "Erstellt",
         "footer":             "Erstellt aus Shopify-Produktdaten. Empfehlungen vor der Veröffentlichung von Produkt- oder Richtlinienänderungen prüfen.",
+        "powered_by":          "Bereitgestellt von Propero",
     },
     "French": {
         "eyebrow":            "Préparation Shopify pour les agents IA",
@@ -523,6 +525,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "provider_label":     "Fournisseur :",
         "generated_label":    "Généré le",
         "footer":             "Généré à partir des données produits Shopify. Vérifiez les recommandations avant de publier des modifications de produits ou de politiques.",
+        "powered_by":         "Propulsé par Propero",
     },
     "Spanish": {
         "eyebrow":            "Preparación de Shopify para agentes IA",
@@ -555,6 +558,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "provider_label":     "Proveedor:",
         "generated_label":    "Generado",
         "footer":             "Generado a partir de datos de productos de Shopify. Revise las recomendaciones antes de publicar cambios en productos o políticas.",
+        "powered_by":         "Desarrollado por Propero",
     },
     "Japanese": {
         "eyebrow":            "Shopify AIエージェント対応状況",
@@ -587,6 +591,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "provider_label":     "プロバイダー：",
         "generated_label":    "生成日時",
         "footer":             "Shopify商品データから生成されました。商品やポリシーの変更を公開する前に推薦事項を確認してください。",
+        "powered_by":         "Propero提供",
     },
 }
 
@@ -858,7 +863,11 @@ def render_pdf_html(
       </section>
     </main>
     <footer class="footer">
-      {escape_html(labels["footer"])}
+        <div>{escape_html(labels["footer"])}</div>
+        <div style="margin-top:8px;font-weight:600;color:#22594f;">
+            {escape_html(labels["powered_by"])} • 
+            <a href="https://www.propero.in"style="color:#17695b;text-decoration:none">www.propero.in</a>
+        </div>
     </footer>
   </div>
 </body>
@@ -915,21 +924,26 @@ def build_pdf_attachment(
     report: dict[str, Any],
     products: list[dict[str, Any]],
     store_url: str,
-    language: str = "English",    
+    language: str = "English",
 ) -> tuple[bytes, str]:
+    from urllib.parse import urlparse
+    domain = urlparse(store_url).netloc.replace("www.", "")
+    date_str = dt.datetime.now().strftime("%Y-%m-%d")
+    pdf_filename = f"Propero_AI_Report_{domain}_{date_str}.pdf"
+
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
         html_path = temp_path / "report.html"
-        pdf_path  = temp_path / "report.pdf"
+        pdf_path  = temp_path / pdf_filename
         html_path.write_text(
-            render_pdf_html(report, products, store_url, language),   # ← pass language
+            render_pdf_html(report, products, store_url, language),
             encoding="utf-8",
         )
         if not write_pdf_report(str(html_path), str(pdf_path)):
             raise RuntimeError(
                 "PDF conversion is unavailable. Install weasyprint to enable PDF email delivery."
             )
-        return pdf_path.read_bytes(), pdf_path.name
+        return pdf_path.read_bytes(), pdf_filename
 # The API routes were intentionally removed from this module so the package
 # `app` can own the FastAPI instance (see app/main.py). This file continues to
 # provide the analysis and rendering helpers which can be used by the API or
