@@ -71,7 +71,7 @@ class EmailService:
         language: str = "English",       
     ) -> None:
         subject = f"Your AI Agent Discoverability Report — {store_url}"
-        body = self._build_report_body(store_url)
+        body = self._build_report_email(store_url)
         try:
             pdf_bytes, pdf_filename = build_pdf_attachment(
                 report, products, store_url, language   
