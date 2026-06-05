@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 SUPPORTED_LANGUAGES = Literal[
     "English",
     "German",
+    "French",
+    "Spanish",
+    "Japanese",
 ]
 
 class ReportRequestCreate(BaseModel):

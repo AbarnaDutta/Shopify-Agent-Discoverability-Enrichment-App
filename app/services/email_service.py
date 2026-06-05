@@ -62,18 +62,30 @@ class EmailService:
         ]
         return "\n".join(lines)
 
-    def send_report_email(self, recipient_email: str, report: dict[str, Any], products: list[dict[str, Any]], store_url: str) -> None:
+    def send_report_email(
+        self,
+        recipient_email: str,
+        report: dict[str, Any],
+        products: list[dict[str, Any]],
+        store_url: str,
+        language: str = "English",       
+    ) -> None:
         subject = f"Your AI Agent Discoverability Report — {store_url}"
-        body = self._build_report_email(store_url)
+        body = self._build_report_body(store_url)
         try:
-            pdf_bytes, pdf_filename = build_pdf_attachment(report, products, store_url)
+            pdf_bytes, pdf_filename = build_pdf_attachment(
+                report, products, store_url, language   
+            )
         except RuntimeError as error:
             print(f"Error during pdf attachment creation: {error}")
-            self.send_failure_email(recipient_email, store_url, str(error), error_type="internal_error")
+            self.send_failure_email(
+                recipient_email, store_url,
+                str(error), error_type="internal_error",
+            )
             return
-        
-        self.email_client.send_mail(recipient_email, subject, body, [(pdf_bytes, pdf_filename)])
-
+        self.email_client.send_mail(
+            recipient_email, subject, body, [(pdf_bytes, pdf_filename)]
+        )
     def send_failure_email(self, recipient_email: str, store_url: str, user_message: str, error_type: str = "internal_error") -> None:
         print(f"Error during report generation: {error_type}")
         body = self.build_failure_email(store_url, user_message, error_type)

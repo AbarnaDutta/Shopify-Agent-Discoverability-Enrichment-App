@@ -179,7 +179,7 @@ class JobQueue:
             if report is None:
                 raise RuntimeError("No report was generated for this store.")
             self._update_job(job_id, report=report)
-            email_service.send_report_email(job.email, report, result["products"], job.store_url)
+            email_service.send_report_email(job.email, report, result["products"], job.store_url, language=job.language)
             self._update_job(job_id, status="completed")
         except Exception as error:
             traceback.print_exc() 

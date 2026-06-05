@@ -425,13 +425,183 @@ def priority_class(priority: str | None) -> str:
         return priority
     return "medium"
 
+# ── PDF label translations ────────────────────────────────────────────────
+
+_PDF_LABELS: dict[str, dict[str, str]] = {
+    "English": {
+        "eyebrow":            "Shopify AI Agent Readiness",
+        "title":              "AI Agent Discoverability Report",
+        "meta_products":      "Products Analyzed",
+        "meta_high":          "High Priority",
+        "meta_actions":       "Store Actions",
+        "exec_eyebrow":       "Executive Summary",
+        "exec_heading":       "Overall observations",
+        "obs_high":           "{n} high-priority gaps across the catalog, concentrated in the kinds of fields agents need to recommend products confidently.",
+        "obs_default":        "This report summarizes the current catalog readiness and the most useful fixes to make products easier for AI agents to discover and recommend.",
+        "card_catalog":       "Catalog size",
+        "card_catalog_desc":  "Number of products analyzed.",
+        "card_gaps":          "High-priority gaps",
+        "card_gaps_desc":     "Issues most likely to block accurate agent recommendations.",
+        "card_actions":       "Store actions",
+        "card_actions_desc":  "Catalog-wide improvements that benefit every product.",
+        "top_store":          "Top store-level actions",
+        "top_products":       "Products needing the most attention",
+        "no_store_recs":      "No store-level recommendations returned.",
+        "no_products":        "No products returned.",
+        "gaps_label":         "{n} high-priority gaps",
+        "section_store":      "Store-Level Recommendations",
+        "section_products":   "Product Recommendations",
+        "no_recs":            "No recommendations returned.",
+        "no_product_recs":    "No product recommendations returned.",
+        "product_eyebrow":    "Product",
+        "product_id":         "ID:",
+        "example_label":      "Example:",
+        "provider_label":     "Provider:",
+        "generated_label":    "Generated",
+        "footer":             "Generated from Shopify product data. Review recommendations before publishing product or policy changes.",
+    },
+    "German": {
+        "eyebrow":            "Shopify KI-Agenten-Bereitschaft",
+        "title":              "KI-Agenten-Auffindbarkeits-Bericht",
+        "meta_products":      "Analysierte Produkte",
+        "meta_high":          "Hohe Priorität",
+        "meta_actions":       "Shop-Maßnahmen",
+        "exec_eyebrow":       "Zusammenfassung",
+        "exec_heading":       "Allgemeine Beobachtungen",
+        "obs_high":           "{n} Lücken mit hoher Priorität im Katalog, konzentriert auf Felder, die Agenten für sichere Produktempfehlungen benötigen.",
+        "obs_default":        "Dieser Bericht fasst die aktuelle Katalogbereitschaft und die nützlichsten Verbesserungen zusammen, um Produkte für KI-Agenten leichter auffindbar zu machen.",
+        "card_catalog":       "Kataloggröße",
+        "card_catalog_desc":  "Anzahl der analysierten Produkte.",
+        "card_gaps":          "Lücken mit hoher Priorität",
+        "card_gaps_desc":     "Probleme, die präzise Agentenempfehlungen am ehesten blockieren.",
+        "card_actions":       "Shop-Maßnahmen",
+        "card_actions_desc":  "Katalogweite Verbesserungen, die allen Produkten zugutekommen.",
+        "top_store":          "Wichtigste Shop-Maßnahmen",
+        "top_products":       "Produkte mit dem größten Handlungsbedarf",
+        "no_store_recs":      "Keine Shop-Empfehlungen zurückgegeben.",
+        "no_products":        "Keine Produkte zurückgegeben.",
+        "gaps_label":         "{n} Lücken mit hoher Priorität",
+        "section_store":      "Shop-weite Empfehlungen",
+        "section_products":   "Produktempfehlungen",
+        "no_recs":            "Keine Empfehlungen zurückgegeben.",
+        "no_product_recs":    "Keine Produktempfehlungen zurückgegeben.",
+        "product_eyebrow":    "Produkt",
+        "product_id":         "ID:",
+        "example_label":      "Beispiel:",
+        "provider_label":     "Anbieter:",
+        "generated_label":    "Erstellt",
+        "footer":             "Erstellt aus Shopify-Produktdaten. Empfehlungen vor der Veröffentlichung von Produkt- oder Richtlinienänderungen prüfen.",
+    },
+    "French": {
+        "eyebrow":            "Préparation Shopify pour les agents IA",
+        "title":              "Rapport de découvrabilité pour agents IA",
+        "meta_products":      "Produits analysés",
+        "meta_high":          "Priorité haute",
+        "meta_actions":       "Actions boutique",
+        "exec_eyebrow":       "Résumé exécutif",
+        "exec_heading":       "Observations générales",
+        "obs_high":           "{n} lacunes hautement prioritaires dans le catalogue, concentrées sur les champs dont les agents ont besoin pour recommander des produits en toute confiance.",
+        "obs_default":        "Ce rapport résume l'état de préparation du catalogue et les corrections les plus utiles pour faciliter la découverte des produits par les agents IA.",
+        "card_catalog":       "Taille du catalogue",
+        "card_catalog_desc":  "Nombre de produits analysés.",
+        "card_gaps":          "Lacunes prioritaires",
+        "card_gaps_desc":     "Problèmes susceptibles de bloquer les recommandations précises des agents.",
+        "card_actions":       "Actions boutique",
+        "card_actions_desc":  "Améliorations à l'échelle du catalogue bénéficiant à tous les produits.",
+        "top_store":          "Principales actions boutique",
+        "top_products":       "Produits nécessitant le plus d'attention",
+        "no_store_recs":      "Aucune recommandation boutique retournée.",
+        "no_products":        "Aucun produit retourné.",
+        "gaps_label":         "{n} lacunes prioritaires",
+        "section_store":      "Recommandations au niveau boutique",
+        "section_products":   "Recommandations produits",
+        "no_recs":            "Aucune recommandation retournée.",
+        "no_product_recs":    "Aucune recommandation produit retournée.",
+        "product_eyebrow":    "Produit",
+        "product_id":         "ID :",
+        "example_label":      "Exemple :",
+        "provider_label":     "Fournisseur :",
+        "generated_label":    "Généré le",
+        "footer":             "Généré à partir des données produits Shopify. Vérifiez les recommandations avant de publier des modifications de produits ou de politiques.",
+    },
+    "Spanish": {
+        "eyebrow":            "Preparación de Shopify para agentes IA",
+        "title":              "Informe de descubribilidad para agentes IA",
+        "meta_products":      "Productos analizados",
+        "meta_high":          "Alta prioridad",
+        "meta_actions":       "Acciones de tienda",
+        "exec_eyebrow":       "Resumen ejecutivo",
+        "exec_heading":       "Observaciones generales",
+        "obs_high":           "{n} brechas de alta prioridad en el catálogo, concentradas en los campos que los agentes necesitan para recomendar productos con confianza.",
+        "obs_default":        "Este informe resume la preparación actual del catálogo y las correcciones más útiles para facilitar el descubrimiento de productos por agentes IA.",
+        "card_catalog":       "Tamaño del catálogo",
+        "card_catalog_desc":  "Número de productos analizados.",
+        "card_gaps":          "Brechas de alta prioridad",
+        "card_gaps_desc":     "Problemas que probablemente bloqueen las recomendaciones precisas de los agentes.",
+        "card_actions":       "Acciones de tienda",
+        "card_actions_desc":  "Mejoras a nivel de catálogo que benefician a todos los productos.",
+        "top_store":          "Principales acciones de tienda",
+        "top_products":       "Productos que requieren más atención",
+        "no_store_recs":      "No se devolvieron recomendaciones de tienda.",
+        "no_products":        "No se devolvieron productos.",
+        "gaps_label":         "{n} brechas de alta prioridad",
+        "section_store":      "Recomendaciones a nivel de tienda",
+        "section_products":   "Recomendaciones de productos",
+        "no_recs":            "No se devolvieron recomendaciones.",
+        "no_product_recs":    "No se devolvieron recomendaciones de productos.",
+        "product_eyebrow":    "Producto",
+        "product_id":         "ID:",
+        "example_label":      "Ejemplo:",
+        "provider_label":     "Proveedor:",
+        "generated_label":    "Generado",
+        "footer":             "Generado a partir de datos de productos de Shopify. Revise las recomendaciones antes de publicar cambios en productos o políticas.",
+    },
+    "Japanese": {
+        "eyebrow":            "Shopify AIエージェント対応状況",
+        "title":              "AIエージェント発見可能性レポート",
+        "meta_products":      "分析済み商品数",
+        "meta_high":          "高優先度",
+        "meta_actions":       "ストア施策",
+        "exec_eyebrow":       "エグゼクティブサマリー",
+        "exec_heading":       "全体的な所見",
+        "obs_high":           "カタログ全体に{n}件の高優先度のギャップがあり、エージェントが自信を持って商品を推薦するために必要なフィールドに集中しています。",
+        "obs_default":        "このレポートは現在のカタログの準備状況と、AIエージェントによる商品発見を促進するための最も有益な改善点をまとめています。",
+        "card_catalog":       "カタログサイズ",
+        "card_catalog_desc":  "分析した商品数。",
+        "card_gaps":          "高優先度のギャップ",
+        "card_gaps_desc":     "エージェントの正確な推薦をブロックする可能性が最も高い問題。",
+        "card_actions":       "ストア施策",
+        "card_actions_desc":  "すべての商品に恩恵をもたらすカタログ全体の改善。",
+        "top_store":          "主要なストアレベルの施策",
+        "top_products":       "最も注意が必要な商品",
+        "no_store_recs":      "ストアの推薦事項はありません。",
+        "no_products":        "商品が返されませんでした。",
+        "gaps_label":         "{n}件の高優先度ギャップ",
+        "section_store":      "ストアレベルの推薦事項",
+        "section_products":   "商品推薦事項",
+        "no_recs":            "推薦事項はありません。",
+        "no_product_recs":    "商品推薦事項はありません。",
+        "product_eyebrow":    "商品",
+        "product_id":         "ID：",
+        "example_label":      "例：",
+        "provider_label":     "プロバイダー：",
+        "generated_label":    "生成日時",
+        "footer":             "Shopify商品データから生成されました。商品やポリシーの変更を公開する前に推薦事項を確認してください。",
+    },
+}
 
 
+def _get_labels(language: str) -> dict[str, str]:
+    """Return the label map for the given language, falling back to English."""
+    return _PDF_LABELS.get(language, _PDF_LABELS["English"])
 
 
-def render_recommendations(recommendations: list[dict[str, Any]]) -> str:
+def render_recommendations(
+    recommendations: list[dict[str, Any]],
+    labels: dict[str, str],
+) -> str:
     if not recommendations:
-        return '<p class="muted">No recommendations returned.</p>'
+        return f'<p class="muted">{escape_html(labels["no_recs"])}</p>'
 
     items = []
     for rec in recommendations:
@@ -444,15 +614,21 @@ def render_recommendations(recommendations: list[dict[str, Any]]) -> str:
                 <h4>{escape_html(rec.get("enrichment"))}</h4>
               </div>
               <p>{escape_html(rec.get("why_it_matters_for_agents"))}</p>
-              <div class="example"><strong>Example:</strong> {escape_html(rec.get("example"))}</div>
+              <div class="example">
+                <strong>{escape_html(labels["example_label"])}</strong>
+                {escape_html(rec.get("example"))}
+              </div>
             </article>
             """
         )
     return "\n".join(items)
 
 
-def render_executive_summary(report: dict[str, Any], product_reports: list[dict[str, Any]]) -> str:
-    # Determine catalog-level counts and products needing attention (by high-priority gaps)
+def render_executive_summary(
+    report: dict[str, Any],
+    product_reports: list[dict[str, Any]],
+    labels: dict[str, str],
+) -> str:
     high_priority_count = sum(
         1
         for product in product_reports
@@ -462,22 +638,15 @@ def render_executive_summary(report: dict[str, Any], product_reports: list[dict[
     store_recommendations = report.get("store_level_recommendations") or []
     top_store_actions = store_recommendations[:3]
 
-    observations: list[str] = []
     if high_priority_count:
-        observations.append(
-            f"There are {high_priority_count} high-priority gaps across the catalog, "
-            "concentrated in the kinds of fields agents need to recommend products confidently."
-        )
-    if not observations:
-        observations.append(
-            "This report summarizes the current catalog readiness and the most useful fixes "
-            "to make products easier for AI agents to discover and recommend."
-        )
+        observation = labels["obs_high"].replace("{n}", str(high_priority_count))
+    else:
+        observation = labels["obs_default"]
 
     highlight_cards = [
-        ("Catalog size", str(len(product_reports)), "Number of products analyzed."),
-        ("High-priority gaps", str(high_priority_count), "Issues most likely to block accurate agent recommendations."),
-        ("Store actions", str(len(store_recommendations)), "Catalog-wide improvements that benefit every product."),
+        (labels["card_catalog"],  str(len(product_reports)),       labels["card_catalog_desc"]),
+        (labels["card_gaps"],     str(high_priority_count),        labels["card_gaps_desc"]),
+        (labels["card_actions"],  str(len(store_recommendations)), labels["card_actions_desc"]),
     ]
 
     store_action_items = [
@@ -486,16 +655,17 @@ def render_executive_summary(report: dict[str, Any], product_reports: list[dict[
         for rec in top_store_actions
     ]
 
-    # Products needing attention: pick those with the most high-priority missing enrichments
     attention_products = sorted(
         product_reports,
-        key=lambda p: sum(1 for r in p.get("missing_enrichments", []) if r.get("priority") == "high"),
+        key=lambda p: sum(
+            1 for r in p.get("missing_enrichments", []) if r.get("priority") == "high"
+        ),
         reverse=True,
     )[:3]
 
     attention_items = [
         f"<li><strong>{escape_html(p.get('title') or 'Untitled product')}</strong>"
-        f"<span>{sum(1 for r in p.get('missing_enrichments', []) if r.get('priority') == 'high')} high-priority gaps</span></li>"
+        f"<span>{labels['gaps_label'].replace('{n}', str(sum(1 for r in p.get('missing_enrichments', []) if r.get('priority') == 'high')))}</span></li>"
         for p in attention_products
     ]
 
@@ -510,29 +680,30 @@ def render_executive_summary(report: dict[str, Any], product_reports: list[dict[
         for label, value, description in highlight_cards
     )
 
+    no_store = f"<li><span>{escape_html(labels['no_store_recs'])}</span></li>"
+    no_prod  = f"<li><span>{escape_html(labels['no_products'])}</span></li>"
+
     return f"""
       <section class="section executive-summary">
         <div class="summary-heading">
           <div>
-            <p class="eyebrow">Executive Summary</p>
-            <h2>Overall observations</h2>
+            <p class="eyebrow">{escape_html(labels["exec_eyebrow"])}</p>
+            <h2>{escape_html(labels["exec_heading"])}</h2>
           </div>
-          <p class="summary-intro">{' '.join(observations)}</p>
+          <p class="summary-intro">{escape_html(observation)}</p>
         </div>
-        <div class="summary-grid">
-          {cards_html}
-        </div>
+        <div class="summary-grid">{cards_html}</div>
         <div class="summary-columns">
           <article class="summary-panel">
-            <h3>Top store-level actions</h3>
+            <h3>{escape_html(labels["top_store"])}</h3>
             <ul class="summary-list">
-              {''.join(store_action_items) if store_action_items else '<li><span>No store-level recommendations returned.</span></li>'}
+              {"".join(store_action_items) if store_action_items else no_store}
             </ul>
           </article>
           <article class="summary-panel">
-            <h3>Products needing the most attention</h3>
+            <h3>{escape_html(labels["top_products"])}</h3>
             <ul class="summary-list">
-              {''.join(attention_items) if attention_items else '<li><span>No products returned.</span></li>'}
+              {"".join(attention_items) if attention_items else no_prod}
             </ul>
           </article>
         </div>
@@ -540,7 +711,13 @@ def render_executive_summary(report: dict[str, Any], product_reports: list[dict[
     """
 
 
-def render_pdf_html(report: dict[str, Any], products: list[dict[str, Any]], store_url: str) -> str:
+def render_pdf_html(
+    report: dict[str, Any],
+    products: list[dict[str, Any]],
+    store_url: str,
+    language: str = "English",     
+) -> str:
+    labels = _get_labels(language)
     generated_at = dt.datetime.now().strftime("%b %d, %Y %I:%M %p")
     product_reports = report.get("products") or []
     high_priority_count = sum(
@@ -555,259 +732,67 @@ def render_pdf_html(report: dict[str, Any], products: list[dict[str, Any]], stor
         <section class="product-card">
           <div class="product-card__top">
             <div>
-              <p class="eyebrow">Product</p>
+              <p class="eyebrow">{escape_html(labels["product_eyebrow"])}</p>
               <h3>{escape_html(product.get("title") or "Untitled product")}</h3>
-              <p class="muted">ID: {escape_html(product.get("product_id"))}</p>
+              <p class="muted">{escape_html(labels["product_id"])} {escape_html(product.get("product_id"))}</p>
             </div>
           </div>
           <p class="summary">{escape_html(product.get("agent_summary"))}</p>
           <div class="recommendation-list">
-            {render_recommendations(product.get("missing_enrichments") or [])}
+            {render_recommendations(product.get("missing_enrichments") or [], labels)}
           </div>
         </section>
         """
         for product in product_reports
     ]
 
+    no_product_recs = f'<p class="muted">{escape_html(labels["no_product_recs"])}</p>'
+
     return f"""<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>AI Agent Discoverability Report</title>
+  <title>{escape_html(labels["title"])}</title>
   <style>
-    @page {{
-      size: A4;
-      margin: 18mm 15mm;
-    }}
-    * {{
-      box-sizing: border-box;
-    }}
-    body {{
-      margin: 0;
-      color: #18212f;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 11px;
-      line-height: 1.5;
-      background: #f6f2ea;
-    }}
-    .report {{
-      background: #fffdf8;
-      border: 1px solid #ded6c8;
-      min-height: 100vh;
-    }}
-    .hero {{
-      padding: 34px 38px 28px;
-      color: #f9f4ea;
-      background: linear-gradient(135deg, #16302b 0%, #22594f 48%, #b86b3d 100%);
-    }}
-    .hero h1 {{
-      max-width: 680px;
-      margin: 10px 0 12px;
-      font-size: 34px;
-      line-height: 1.05;
-      font-weight: 760;
-      letter-spacing: 0;
-    }}
-    .hero p {{
-      max-width: 620px;
-      margin: 0;
-      color: #f2e7d4;
-      font-size: 13px;
-    }}
-    .eyebrow {{
-      margin: 0 0 5px;
-      color: inherit;
-      font-size: 9px;
-      font-weight: 750;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      opacity: .72;
-    }}
-    .meta-grid {{
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 10px;
-      padding: 18px 38px;
-      background: #efe6d8;
-      border-bottom: 1px solid #ded6c8;
-    }}
-    .metric {{
-      padding: 12px;
-      background: #fffdf8;
-      border: 1px solid #d9d0c0;
-      border-radius: 8px;
-    }}
-    .metric strong {{
-      display: block;
-      margin-top: 2px;
-      color: #172a3a;
-      font-size: 18px;
-      line-height: 1.1;
-    }}
-    main {{
-      padding: 28px 38px 36px;
-    }}
-    h2 {{
-      margin: 0 0 12px;
-      color: #172a3a;
-      font-size: 19px;
-      line-height: 1.2;
-    }}
-    h3 {{
-      margin: 0;
-      color: #172a3a;
-      font-size: 17px;
-      line-height: 1.25;
-    }}
-    h4 {{
-      margin: 0;
-      color: #172a3a;
-      font-size: 12px;
-      line-height: 1.3;
-    }}
-    .section {{
-      margin-bottom: 28px;
-    }}
-        .executive-summary {{
-            break-after: page;
-            margin-bottom: 34px;
-        }}
-        .summary-heading {{
-            display: grid;
-            grid-template-columns: minmax(220px, 0.95fr) minmax(0, 1.35fr);
-            gap: 20px;
-            align-items: start;
-            margin-bottom: 16px;
-        }}
-        .summary-intro {{
-            margin: 0;
-            padding: 14px 16px;
-            color: #243246;
-            background: #f4efe6;
-            border: 1px solid #ded6c8;
-            border-radius: 10px;
-            font-size: 12px;
-        }}
-        .summary-grid {{
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 12px;
-            margin-bottom: 14px;
-        }}
-        .summary-card {{
-            padding: 14px;
-            background: #ffffff;
-            border: 1px solid #ded6c8;
-            border-radius: 10px;
-            break-inside: avoid;
-        }}
-        .summary-card strong {{
-            display: block;
-            margin: 4px 0 8px;
-            color: #172a3a;
-            font-size: 24px;
-            line-height: 1;
-        }}
-        .summary-card p {{
-            margin: 0;
-            color: #4b5567;
-        }}
-        .summary-columns {{
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-        }}
-        .summary-panel {{
-            padding: 14px 15px;
-            background: #ffffff;
-            border: 1px solid #ded6c8;
-            border-radius: 10px;
-            break-inside: avoid;
-        }}
-        .summary-panel h3 {{
-            margin-bottom: 10px;
-            font-size: 15px;
-        }}
-        .summary-list {{
-            margin: 0;
-            padding-left: 18px;
-            color: #324150;
-        }}
-        .summary-list li + li {{
-            margin-top: 8px;
-        }}
-        .summary-list strong {{
-            display: block;
-            margin-bottom: 1px;
-            color: #172a3a;
-        }}
-        .summary-list span {{
-            display: block;
-            color: #4b5567;
-        }}
-    .recommendation-list {{
-      display: grid;
-      gap: 10px;
-    }}
-    .recommendation {{
-      padding: 12px 13px;
-      background: #ffffff;
-      border: 1px solid #ded6c8;
-      border-radius: 8px;
-      break-inside: avoid;
-    }}
-    .recommendation__header {{
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      margin-bottom: 7px;
-    }}
-    .recommendation p {{
-      margin: 0 0 8px;
-      color: #3f4a5a;
-    }}
-    .example {{
-      padding: 8px 9px;
-      color: #324150;
-      background: #f4efe6;
-      border-left: 3px solid #c47d52;
-      border-radius: 5px;
-    }}
-    .pill {{
-      display: inline-block;
-      min-width: 44px;
-      padding: 3px 7px;
-      border-radius: 999px;
-      color: #ffffff;
-      font-size: 8px;
-      font-weight: 800;
-      text-align: center;
-      text-transform: uppercase;
-      letter-spacing: .05em;
-    }}
-    .pill--high {{
-      background: #b43d31;
-    }}
-    .pill--medium {{
-      background: #b87524;
-    }}
-    .pill--low {{
-      background: #3d756b;
-    }}
-    .product-card {{
-      margin-bottom: 18px;
-      padding: 18px;
-      background: #ffffff;
-      border: 1px solid #ded6c8;
-      border-radius: 8px;
-      break-inside: avoid;
-    }}
-    .product-card__top {{
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 12px;
-    }}
+    @page {{ size: A4; margin: 18mm 15mm; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; color: #18212f; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; line-height: 1.5; background: #f6f2ea; }}
+    .report {{ background: #fffdf8; border: 1px solid #ded6c8; min-height: 100vh; }}
+    .hero {{ padding: 34px 38px 28px; color: #f9f4ea; background: linear-gradient(135deg, #16302b 0%, #22594f 48%, #b86b3d 100%); }}
+    .hero h1 {{ max-width: 680px; margin: 10px 0 12px; font-size: 34px; line-height: 1.05; font-weight: 760;letter-spacing: 0; }}
+    .hero p {{ max-width: 620px; margin: 0; color: #f2e7d4; font-size: 13px; }}
+    .eyebrow {{ margin: 0 0 5px; color: inherit; font-size: 9px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; opacity: .72; }}
+    .meta-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 18px 38px; background: #efe6d8; border-bottom: 1px solid #ded6c8; }}
+    .metric {{ padding: 12px; background: #fffdf8; border: 1px solid #d9d0c0; border-radius: 8px; }}
+    .metric strong {{ display: block; margin-top: 2px; color: #172a3a; font-size: 18px; line-height: 1.1; }}
+    main {{ padding: 28px 38px 36px; }}
+    h2 {{ margin: 0 0 12px; color: #172a3a; font-size: 19px; line-height: 1.2; }}
+    h3 {{ margin: 0; color: #172a3a; font-size: 17px; line-height: 1.25; }}
+    h4 {{ margin: 0; color: #172a3a; font-size: 12px; line-height: 1.3; }}
+    .section {{ margin-bottom: 28px; }}
+    .executive-summary {{ break-after: page; margin-bottom: 34px; }}
+    .summary-heading {{ display: grid; grid-template-columns: minmax(220px, 0.95fr) minmax(0, 1.35fr); gap: 20px; align-items: start; margin-bottom: 16px; }}
+    .summary-intro {{ margin: 0; padding: 14px 16px; color: #243246; background: #f4efe6; border: 1px solid #ded6c8; border-radius: 10px; font-size: 12px; }}
+    .summary-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }}
+    .summary-card {{ padding: 14px; background: #ffffff; border: 1px solid #ded6c8; border-radius: 10px; break-inside: avoid; }}
+    .summary-card strong {{ display: block; margin: 4px 0 8px; color: #172a3a; font-size: 24px; line-height: 1; }}
+    .summary-card p {{ margin: 0; color: #4b5567; }}
+    .summary-columns {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
+    .summary-panel {{ padding: 14px 15px; background: #ffffff; border: 1px solid #ded6c8; border-radius: 10px; break-inside: avoid; }}
+    .summary-panel h3 {{ margin-bottom: 10px; font-size: 15px; }}
+    .summary-list {{ margin: 0; padding-left: 18px; color: #324150; }}
+    .summary-list li + li {{ margin-top: 8px; }}
+    .summary-list strong {{ display: block; margin-bottom: 1px; color: #172a3a; }}
+    .summary-list span {{ display: block; color: #4b5567; }}
+    .recommendation-list {{ display: grid; gap: 10px; }}
+    .recommendation {{ padding: 12px 13px; background: #ffffff; border: 1px solid #ded6c8; border-radius: 8px; break-inside: avoid; }}
+    .recommendation__header {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 7px; }}
+    .recommendation p {{ margin: 0 0 8px; color: #3f4a5a; }}
+    .example {{ padding: 8px 9px; color: #324150; background: #f4efe6; border-left: 3px solid #c47d52; border-radius: 5px; }}
+    .pill {{ display: inline-block; min-width: 44px; padding: 3px 7px; border-radius: 999px; color: #ffffff; font-size: 8px; font-weight: 800; text-align: center; text-transform: uppercase; letter-spacing: .05em; }}
+    .pill--high {{ background: #b43d31; }} .pill--medium {{ background: #b87524; }} .pill--low {{ background: #3d756b; }}
+    .product-card {{ margin-bottom: 18px; padding: 18px; background: #ffffff; border: 1px solid #ded6c8; border-radius: 8px; break-inside: avoid; }}
+    .product-card__top {{ display: flex; justify-content: space-between; gap: 16px; margin-bottom: 12px; }}
     .score {{
       width: 62px;
       height: 62px;
@@ -838,60 +823,43 @@ def render_pdf_html(report: dict[str, Any], products: list[dict[str, Any]], stor
     .score--weak, .score--unknown {{
       background: #b43d31;
     }}
-    .summary {{
-      margin: 0 0 14px;
-      color: #3a4757;
-      font-size: 12px;
-    }}
-    .muted {{
-      margin: 0;
-      color: #667085;
-    }}
-    .footer {{
-      padding: 14px 38px 24px;
-      color: #667085;
-      border-top: 1px solid #ded6c8;
-    }}
+    .summary {{ margin: 0 0 14px; color: #3a4757; font-size: 12px; }}
+    .muted {{ margin: 0; color: #667085; }}
+    .footer {{ padding: 14px 38px 24px; color: #667085; border-top: 1px solid #ded6c8; }}
   </style>
 </head>
 <body>
   <div class="report">
     <header class="hero">
-      <p class="eyebrow">Shopify AI Agent Readiness</p>
-      <h1>AI Agent Discoverability Report</h1>
-      <p>{escape_html(store_url)} · Generated {escape_html(generated_at)} · Provider: {escape_html(report.get("provider", "unknown"))} {escape_html(report.get("model", ""))}</p>
+      <p class="eyebrow">{escape_html(labels["eyebrow"])}</p>
+      <h1>{escape_html(labels["title"])}</h1>
+      <p>{escape_html(store_url)} · {escape_html(labels["generated_label"])} {escape_html(generated_at)} · {escape_html(labels["provider_label"])} {escape_html(report.get("provider", "unknown"))} {escape_html(report.get("model", ""))}</p>
     </header>
-
     <section class="meta-grid">
-      <div class="metric"><span class="eyebrow">Products Analyzed</span><strong>{len(products)}</strong></div>
-      <div class="metric"><span class="eyebrow">High Priority</span><strong>{high_priority_count}</strong></div>
-      <div class="metric"><span class="eyebrow">Store Actions</span><strong>{len(report.get("store_level_recommendations") or [])}</strong></div>
+      <div class="metric"><span class="eyebrow">{escape_html(labels["meta_products"])}</span><strong>{len(products)}</strong></div>
+      <div class="metric"><span class="eyebrow">{escape_html(labels["meta_high"])}</span><strong>{high_priority_count}</strong></div>
+      <div class="metric"><span class="eyebrow">{escape_html(labels["meta_actions"])}</span><strong>{len(report.get("store_level_recommendations") or [])}</strong></div>
     </section>
-
     <main>
-            {render_executive_summary(report, product_reports)}
-
+      {render_executive_summary(report, product_reports, labels)}
       <section class="section">
-        <h2>Store-Level Recommendations</h2>
+        <h2>{escape_html(labels["section_store"])}</h2>
         <div class="recommendation-list">
-          {render_recommendations(report.get("store_level_recommendations") or [])}
+          {render_recommendations(report.get("store_level_recommendations") or [], labels)}
         </div>
       </section>
-
       <section class="section">
-        <h2>Product Recommendations</h2>
-        {"".join(product_cards) if product_cards else '<p class="muted">No product recommendations returned.</p>'}
+        <h2>{escape_html(labels["section_products"])}</h2>
+        {"".join(product_cards) if product_cards else no_product_recs}
       </section>
     </main>
-
     <footer class="footer">
-      Generated from Shopify product data. Review recommendations before publishing product or policy changes.
+      {escape_html(labels["footer"])}
     </footer>
   </div>
 </body>
 </html>
 """
-
 
 def write_pdf_report(html_path: str, pdf_path: str) -> bool:
     try:
@@ -939,19 +907,25 @@ def run_store_analysis(store_url: str, language: str = "English") -> dict[str, A
     }
 
 
-def build_pdf_attachment(report: dict[str, Any], products: list[dict[str, Any]], store_url: str) -> tuple[bytes, str]:
+def build_pdf_attachment(
+    report: dict[str, Any],
+    products: list[dict[str, Any]],
+    store_url: str,
+    language: str = "English",    
+) -> tuple[bytes, str]:
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
         html_path = temp_path / "report.html"
-        pdf_path = temp_path / "report.pdf"
-        html_path.write_text(render_pdf_html(report, products, store_url), encoding="utf-8")
-
+        pdf_path  = temp_path / "report.pdf"
+        html_path.write_text(
+            render_pdf_html(report, products, store_url, language),   # ← pass language
+            encoding="utf-8",
+        )
         if not write_pdf_report(str(html_path), str(pdf_path)):
-            raise RuntimeError("PDF conversion is unavailable. Install weasyprint to enable PDF email delivery.")
-
+            raise RuntimeError(
+                "PDF conversion is unavailable. Install weasyprint to enable PDF email delivery."
+            )
         return pdf_path.read_bytes(), pdf_path.name
-
-
 # The API routes were intentionally removed from this module so the package
 # `app` can own the FastAPI instance (see app/main.py). This file continues to
 # provide the analysis and rendering helpers which can be used by the API or
