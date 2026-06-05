@@ -756,7 +756,11 @@ def render_pdf_html(
   <style>
     @page {{ size: A4; margin: 18mm 15mm; }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; color: #18212f; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; line-height: 1.5; background: #f6f2ea; }}
+    @font-face {{
+      font-family: 'NotoSansCJK';
+      src: local('Noto Sans CJK JP'), local('NotoSansCJK-Regular');
+    }}
+    body {{ margin: 0; color: #18212f; font-family: 'NotoSansCJK', Inter, "Noto Sans CJK JP", "Noto Sans CJK SC", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; line-height: 1.5; background: #f6f2ea; }}
     .report {{ background: #fffdf8; border: 1px solid #ded6c8; min-height: 100vh; }}
     .hero {{ padding: 34px 38px 28px; color: #f9f4ea; background: linear-gradient(135deg, #16302b 0%, #22594f 48%, #b86b3d 100%); }}
     .hero h1 {{ max-width: 680px; margin: 10px 0 12px; font-size: 34px; line-height: 1.05; font-weight: 760;letter-spacing: 0; }}

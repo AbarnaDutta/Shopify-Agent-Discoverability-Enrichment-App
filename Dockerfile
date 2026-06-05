@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     libharfbuzz-subset0 \
     libjpeg-dev \
     libopenjp2-7-dev \
+    fonts-noto-cjk \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
