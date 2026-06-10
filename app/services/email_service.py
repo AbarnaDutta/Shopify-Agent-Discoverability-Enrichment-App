@@ -14,6 +14,11 @@ _HINTS: dict[str, str] = {
     "llm_response_error": "This is usually temporary. Please try again — if it keeps happening, contact support.",
     "llm_auth_error":     "This is a configuration issue on our end. Please try again later.",
     "internal_error":     "Please try again later or contact us at propero.in",
+    "non_shopify_store": (
+        "Confirm the store is built on Shopify and publicly accessible. "
+        "If the store uses Cloudflare bot protection, the owner may need to "
+        "allow automated access to /products.json, or try a different store URL."
+    ),
 }
 
 

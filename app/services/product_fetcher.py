@@ -51,8 +51,30 @@ def normalize_store_url(store: str) -> str:
         )
 
     return store
+
+_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def _is_cloudflare_block(response_body: str) -> bool:
+    return (
+        "challenges.cloudflare.com" in response_body
+        or "Just a moment..." in response_body
+        or "__cf_chl_opt" in response_body
+        or "cf-chl" in response_body.lower()
+    )
+
+
 def request_json(url: str, headers: dict[str, str] | None = None) -> tuple[dict[str, Any], dict[str, str]]:
-    request = urllib.request.Request(url, headers=headers or {})
+    merged_headers = {**_REQUEST_HEADERS, **(headers or {})}
+    request = urllib.request.Request(url, headers=merged_headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -74,21 +96,36 @@ def fetch_products_public(store_url: str, max_products: int) -> list[dict[str, A
 
         try:
             payload, _headers = request_json(url)
-        except urllib.error.HTTPError as error:
-            if error.code == 404:
+        except RuntimeError as error:
+            msg = str(error)
+
+            # ── Cloudflare bot protection ────────────────────────────────
+            if "HTTP 403" in msg or "HTTP 401" in msg or "HTTP 429" in msg:
+                if _is_cloudflare_block(msg):
+                    raise NonShopifyStoreError(
+                        f"'{store_url}' is protected by Cloudflare's bot detection and "
+                        "is blocking automated access to its product catalogue. "
+                        "The store owner needs to whitelist API access or disable "
+                        "bot protection for /products.json."
+                    ) from error
+
+            # ── not a Shopify store ───────────────────────
+            if "HTTP 404" in msg:
                 raise NonShopifyStoreError(
                     f"'{store_url}' does not appear to be a Shopify store — "
                     "/products.json returned 404."
                 ) from error
-            raise
-        except RuntimeError as error:
-            msg = str(error)
-            if any(k in msg for k in ("Name or service not known", "nodename nor servname",
-                                       "Could not fetch", "getaddrinfo")):
+
+            # ── network failures ───────────────────────────────────
+            if any(k in msg for k in (
+                "Name or service not known", "nodename nor servname",
+                "Could not fetch", "getaddrinfo",
+            )):
                 raise StoreUnreachableError(
                     f"Could not reach '{store_url}'. "
                     "Please check that the store URL is correct and the store is live."
                 ) from error
+
             raise
 
         if "products" not in payload:

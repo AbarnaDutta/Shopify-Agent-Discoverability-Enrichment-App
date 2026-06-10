@@ -901,20 +901,17 @@ def write_pdf_report(html_path: str, pdf_path: str) -> bool:
 
 def run_store_analysis(store_url: str, language: str = "English") -> dict[str, Any]:
     settings = get_app_settings()
-    normalized_store_url = normalize_store_url(store_url)
-    config = ShopifyConfig(
-        store_url=normalized_store_url,
-        api_version=settings["api_version"],
-    )
-    raw_products = fetch_products_public(normalized_store_url, settings["max_products"])
-    products = [compact_product(product, normalized_store_url) for product in raw_products]
+    raw_products = fetch_products_public(store_url, settings["max_products"])
+    products = [compact_product(p, store_url) for p in raw_products]
     report = None
     if products:
-        report = analyze_products(products, normalized_store_url, settings["provider"], settings["model"], language)
-
+        report = analyze_products(
+            products, store_url,
+            settings["provider"], settings["model"], language,
+        )
     return {
         "settings": settings,
-        "store_url": normalized_store_url,
+        "store_url": store_url,
         "products": products,
         "report": report,
     }
