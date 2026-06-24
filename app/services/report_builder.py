@@ -25,6 +25,18 @@ from app.services.product_fetcher import (
 
 import tempfile
 
+import threading
+_gemini_last_call = {"t": 0}
+_gemini_lock = threading.Lock()
+
+def _gemini_rate_limit():
+    with _gemini_lock:
+        wait = 20 - (time.time() - _gemini_last_call["t"])
+        if wait > 0:
+            print(f"[GeminiRateLimit] Waiting {wait:.1f}s before next call...")
+            time.sleep(wait)
+        _gemini_last_call["t"] = time.time()
+
 
 # Note: FastAPI app wiring was moved to app/main.py to separate frontend
 # rendering and analysis logic from the API surface.
@@ -179,15 +191,15 @@ def analyze_with_ollama(products: list[dict[str, Any]], store_url: str, model: s
 
 def enrichment_report_schema() -> dict[str, Any]:
     recommendation_schema = {
-        "type": "object",
+        "type": "OBJECT",
         "properties": {
             "priority": {
-                "type": "string",
+                "type": "STRING",
                 "enum": ["high", "medium", "low"],
             },
-            "enrichment": {"type": "string"},
-            "why_it_matters_for_agents": {"type": "string"},
-            "example": {"type": "string"},
+            "enrichment":                  {"type": "STRING"},
+            "why_it_matters_for_agents":   {"type": "STRING"},
+            "example":                     {"type": "STRING"},
         },
         "required": [
             "priority",
@@ -197,29 +209,29 @@ def enrichment_report_schema() -> dict[str, Any]:
         ],
     }
     return {
-        "type": "object",
+        "type": "OBJECT",
         "properties": {
             "store_level_recommendations": {
-                "type": "array",
+                "type": "ARRAY",
                 "items": recommendation_schema,
             },
             "products": {
-                "type": "array",
+                "type": "ARRAY",
                 "items": {
-                    "type": "object",
+                    "type": "OBJECT",
                     "properties": {
-                        "product_id": {"type": ["integer", "string", "null"]},
-                        "title": {"type": ["string", "null"]},
-                      "agent_summary": {"type": "string"},
+                        "product_id":          {"type": "STRING"},
+                        "title":               {"type": "STRING"},
+                        "agent_summary":       {"type": "STRING"},
                         "missing_enrichments": {
-                            "type": "array",
+                            "type": "ARRAY",
                             "items": recommendation_schema,
                         },
                     },
                     "required": [
                         "product_id",
                         "title",
-                      "agent_summary",
+                        "agent_summary",
                         "missing_enrichments",
                     ],
                 },
@@ -230,6 +242,7 @@ def enrichment_report_schema() -> dict[str, Any]:
 
 
 def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
+    _gemini_rate_limit()
     request_id = random.randint(10000, 99999)
 
     print(f"[Gemini-{request_id}] Starting")
@@ -239,12 +252,6 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     prompt = build_prompt(products, store_url, language)
-    schema = enrichment_report_schema()
-    print(json.dumps(enrichment_report_schema(), indent=2))
-    print(
-        "[Gemini] Schema size:",
-        len(json.dumps(schema))
-    )
     
     payload = {
         "contents": [
@@ -258,13 +265,6 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
             "responseJsonSchema": enrichment_report_schema(),
          },
     }
-    if "generationConfig" in payload:
-        print(
-            json.dumps(
-                payload["generationConfig"],
-                indent=2
-            )
-        )
 
     body = None
     last_error = None
@@ -325,30 +325,17 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
             print("Response:")
             print(message)
             print("=" * 80)
-
-            retry_after = error.headers.get("Retry-After")
-
             if error.code in (429, 503):
-                wait_time = int(retry_after) if retry_after else (base_delay * (2 ** attempt))
-
-                print(
-                    f"[Gemini-{request_id}] Retrying after {wait_time}s "
-                    f"(attempt {attempt + 1}/{max_attempts})"
-                )
-
+                retry_after = error.headers.get("Retry-After")
+                wait_time = int(retry_after) if retry_after else min(max_delay, base_delay * (2 ** attempt))
+                last_error = LLMRateLimitError(f"Gemini HTTP {error.code}: {message[:300]}")
+                print(f"[Gemini-{request_id}] HTTP {error.code} on attempt {attempt + 1}, waiting {wait_time}s...")
                 time.sleep(wait_time)
                 continue
             try:
                 detail = json.loads(message).get("error", {}).get("message", message)
             except json.JSONDecodeError:
                 detail = message
-
-            if error.code in (429, 503):
-                last_error = LLMRateLimitError(
-                    f"Gemini temporarily unavailable (HTTP {error.code}): {detail[:300]}"
-                )
-                print(f"[Gemini-{request_id}] HTTP {error.code} on attempt {attempt + 1}: {detail[:200]}")
-                continue
 
             _classify_llm_error(detail, error.code)
             raise LLMResponseError(f"Gemini API HTTP {error.code}: {detail[:300]}") from error
@@ -1054,7 +1041,7 @@ def run_store_analysis(store_url: str, language: str = "English") -> dict[str, A
     if provider != "gemini":
         report = analyze_products(products, store_url, provider, model, language)
     else:
-        batch_size = int(os.getenv("MAX_PRODUCTS_PER_BATCH", "1"))
+        batch_size = int(os.getenv("MAX_PRODUCTS_PER_BATCH", "5"))
         batches = chunked(products, batch_size)
 
         batch_reports = []
