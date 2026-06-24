@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_API_VERSION = "2025-10"
 
 

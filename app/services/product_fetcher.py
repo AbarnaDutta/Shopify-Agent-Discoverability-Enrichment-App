@@ -22,10 +22,14 @@ class NonShopifyStoreError(Exception):
 class StoreUnreachableError(Exception):
     """Raised when the store URL cannot be reached at all."""
 
+class EmptyStoreError(Exception):
+    """Raised when the store is reachable but has no public products."""
+
 @dataclass
 class ShopifyConfig:
     store_url: str
     api_version: str
+
 
 
 def normalize_store_url(store: str) -> str:
@@ -34,23 +38,25 @@ def normalize_store_url(store: str) -> str:
 
     if not store:
         raise InvalidStoreURLError("Shopify store URL is required.")
-
-    store = re.sub(r"^https?:/*", "", store, flags=re.IGNORECASE)
-
-    store = store.lstrip("/")
-    store = store.rstrip("/")
-
-    store = f"https://{store}"
+    if not re.match(r"^https?://", store, re.IGNORECASE):
+        store = re.sub(r"^https?:/*", "", store, flags=re.IGNORECASE)
+        store = f"https://{store}"
 
     parsed = urllib.parse.urlparse(store)
 
-    if not parsed.netloc or "." not in parsed.netloc:
+    netloc = parsed.netloc.lower()
+
+    if not netloc or "." not in netloc:
         raise InvalidStoreURLError(
             f"'{store}' doesn't look like a valid store URL. "
             "Try entering it like: your-store.myshopify.com"
         )
 
-    return store
+    if ":" in netloc:
+        netloc = netloc.split(":")[0]
+
+    normalized_url = f"https://{netloc}"
+    return normalized_url
 
 _REQUEST_HEADERS = {
     "User-Agent": (
@@ -99,18 +105,30 @@ def fetch_products_public(store_url: str, max_products: int) -> list[dict[str, A
         except RuntimeError as error:
             msg = str(error)
 
-            # ── Cloudflare bot protection ────────────────────────────────
             if "HTTP 403" in msg or "HTTP 401" in msg or "HTTP 429" in msg:
                 if _is_cloudflare_block(msg):
                     raise NonShopifyStoreError(
-                        f"'{store_url}' is protected by Cloudflare's bot detection and "
-                        "is blocking automated access to its product catalogue. "
-                        "The store owner needs to whitelist API access or disable "
-                        "bot protection for /products.json."
+                        f"'{store_url}' is protected by Cloudflare's bot detection "
+                        "and is blocking automated access to its product catalogue."
                     ) from error
+                if "myshopify.com" in store_url:
+                    raise EmptyStoreError(
+                        f"'{store_url}' appears to be a Shopify store but is "
+                        "password-protected. The store owner needs to remove "
+                        "the storefront password before a report can be generated."
+                    ) from error
+                raise NonShopifyStoreError(
+                    f"'{store_url}' blocked access to its product catalogue (403)."
+                ) from error
 
             # ── not a Shopify store ───────────────────────
             if "HTTP 404" in msg:
+                if '"errors"' in msg and "myshopify.com" in store_url:
+                    raise EmptyStoreError(
+                        f"'{store_url}' is a Shopify store but its catalogue is "
+                        "not publicly accessible. It may be password-protected "
+                        "or the store may not have launched yet."
+                    ) from error
                 raise NonShopifyStoreError(
                     f"'{store_url}' does not appear to be a Shopify store — "
                     "/products.json returned 404."
@@ -123,15 +141,14 @@ def fetch_products_public(store_url: str, max_products: int) -> list[dict[str, A
             )):
                 raise StoreUnreachableError(
                     f"Could not reach '{store_url}'. "
-                    "Please check that the store URL is correct and the store is live."
+                    "Please check the store URL is correct and the store is live."
                 ) from error
 
             raise
 
         if "products" not in payload:
             raise NonShopifyStoreError(
-                f"'{store_url}' responded but does not look like a Shopify store — "
-                "no 'products' key in the response."
+                f"'{store_url}' responded but does not look like a Shopify store."
             )
 
         batch = payload.get("products", [])
@@ -144,7 +161,6 @@ def fetch_products_public(store_url: str, max_products: int) -> list[dict[str, A
         page += 1
 
     return products
-
 
 def strip_html(value: str | None) -> str:
     if not value:

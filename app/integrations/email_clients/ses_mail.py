@@ -1,4 +1,4 @@
-# app/integrations/email_clients/hostinger_mail.py
+# app/integrations/email_clients/ses_mail.py
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -8,34 +8,37 @@ from email import encoders
 from pathlib import Path
 from app.integrations.email_clients.email_interface import Email
 
-class HostingerMail(Email):
-    def __init__(self, sender_email: str, password: str) -> None:
-        # Hostinger SMTP server configuration
-        self.smtp_server = "smtp.hostinger.com"
-        self.smtp_port = 587
-        self.sender_email = sender_email
-        self.password = password
-        self.bcc_email    = os.getenv("ADMIN_EMAIL", "")
+
+class SESMail(Email):
+    def __init__(self, sender_email: str, smtp_username: str, smtp_password: str) -> None:
+        self.sender_email  = sender_email
+        self.smtp_username = smtp_username
+        self.smtp_password = smtp_password
+        self.smtp_server   = os.getenv("SES_SMTP_HOST", "email-smtp.ap-south-1.amazonaws.com")
+        self.smtp_port     = int(os.getenv("SES_SMTP_PORT", "587"))
+        self.bcc_email     = os.getenv("ADMIN_EMAIL", "")
 
     def authenticate(self) -> None:
-        # Hostinger SMTP does not require per-email authentication, so this is a no-op.
-        pass
+        pass  
 
-    def send_mail(self, recipient_email: str, subject: str, message_body: str, attachments: list | None = None) -> None:
+    def send_mail(
+        self,
+        recipient_email: str,
+        subject: str,
+        message_body: str,
+        attachments: list | None = None,
+    ) -> None:
         message = MIMEMultipart()
         message["Subject"] = subject
         message["From"]    = self.sender_email
         message["To"]      = recipient_email
+
         html_body = self._to_html(message_body)
         alt_part = MIMEMultipart("alternative")
         alt_part.attach(MIMEText(message_body, "plain", "utf-8"))
         alt_part.attach(MIMEText(html_body,    "html",  "utf-8"))
         message.attach(alt_part)
 
-        
-
-        # Attach any provided files
-        
         if attachments:
             for attachment in attachments:
                 try:
@@ -52,10 +55,11 @@ class HostingerMail(Email):
                             part.set_payload(f.read())
                         filename = path.name
                     encoders.encode_base64(part)
-                    part.add_header("Content-Disposition", f'attachment;filename="{filename}"')
+                    part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
                     message.attach(part)
                 except Exception as e:
                     print(f"Warning: could not attach {attachment}: {e}")
+
         all_recipients = [recipient_email]
         if self.bcc_email:
             all_recipients.append(self.bcc_email)
@@ -63,11 +67,12 @@ class HostingerMail(Email):
         try:
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls()
-                server.login(self.sender_email, self.password)
+                server.login(self.smtp_username, self.smtp_password)
                 server.sendmail(self.sender_email, all_recipients, message.as_string())
-            print(f"Email sent to {recipient_email}")
+            print(f"Email sent via SES SMTP to {recipient_email}")
         except Exception as e:
-            print(f"Error sending email to {recipient_email}: {e}")
+            print(f"Error sending email via SES SMTP to {recipient_email}: {e}")
+            raise
 
     @staticmethod
     def _to_html(text: str) -> str:
@@ -82,13 +87,10 @@ class HostingerMail(Email):
                 html_lines.append("<br>")
             elif stripped.startswith("  •"):
                 item = html_module.escape(stripped[3:].strip())
-                html_lines.append(
-                    f'<li style="margin-bottom:4px">{item}</li>'
-                )
+                html_lines.append(f'<li style="margin-bottom:4px">{item}</li>')
             else:
                 html_lines.append(
-                    f'<p style="margin:0 0 8px;color:#333">'
-                    f'{html_module.escape(stripped)}</p>'
+                    f'<p style="margin:0 0 8px;color:#333">{html_module.escape(stripped)}</p>'
                 )
 
         result = []

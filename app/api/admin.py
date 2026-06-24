@@ -78,6 +78,7 @@ def _build_table_rows(jobs: list) -> str:
         job_id     = getattr(job, "job_id",    "—")
         email      = getattr(job, "email",     "—")
         store_url  = getattr(job, "store_url", "—")
+        language   = getattr(job, "language",  "—")
         status     = getattr(job, "status",    "—")
         error      = getattr(job, "error",     None) or "—"
         created    = _fmt_dt(getattr(job, "created_at", None))
@@ -98,6 +99,7 @@ def _build_table_rows(jobs: list) -> str:
           <td title="{store_url}">
             <a href="{store_url}" target="_blank" style="color:#17695b">{short_url}</a>
           </td>
+          <td>{language}</td>
           <td>{_status_badge(status)}</td>
           <td style="text-align:center">{has_report}</td>
           <td style="font-size:12px;color:#666">{created}</td>
@@ -343,6 +345,7 @@ def admin_panel(request: Request) -> HTMLResponse:
         <thead>
           <tr>
             <th>Job ID</th><th>Email</th><th>Store URL</th>
+            <th>Language</th>
             <th>Status</th><th>PDF</th>
             <th>Created</th><th>Error</th>
           </tr>

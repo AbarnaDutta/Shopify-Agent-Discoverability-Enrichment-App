@@ -8,29 +8,36 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
 import traceback
+import os
+import time
 
 from app.services.report_builder import (
     run_store_analysis,
     LLMQuotaExceededError,
     LLMRateLimitError,
     LLMResponseError,
-    LLMAuthError, 
+    LLMAuthError,
 )
 from app.services.product_fetcher import (
     InvalidStoreURLError,
     NonShopifyStoreError,
     StoreUnreachableError,
+    EmptyStoreError,
 )
 from app.services.email_service import EmailService
-from app.integrations.email_clients.hostinger_mail import HostingerMail
-from app.services.job_repository import job_repo          
-
+from app.integrations.email_clients.ses_mail import SESMail
+from app.services.job_repository import job_repo
 from dotenv import load_dotenv
 
 load_dotenv()
-import os
 
-email_service = EmailService(email_client=HostingerMail(os.getenv("SENDER_EMAIL"), os.getenv("EMAIL_PASSWORD")))  
+email_service = EmailService(
+    email_client=SESMail(
+        sender_email  = os.getenv("SENDER_EMAIL"),
+        smtp_username = os.getenv("SES_SMTP_USERNAME"),
+        smtp_password = os.getenv("SES_SMTP_PASSWORD"),
+    )
+)
 
 @dataclass
 class ReportJob:
@@ -42,58 +49,53 @@ class ReportJob:
     created_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat() + "Z")
     updated_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat() + "Z")
     error: str | None = None
-    error_type: str | None = None         
+    error_type: str | None = None
     report: dict[str, Any] | None = None
-
 
 _ERROR_CATALOGUE: list[tuple[type, str, str]] = [
     (
         InvalidStoreURLError,
         "invalid_store_url",
-        "The store URL you entered doesn't look valid. "
-        "Please check it and try again (e.g. https://your-store.myshopify.com).",
+        "The store URL you entered doesn't look valid. Please check it and try again (e.g. https://your-store.myshopify.com).",
     ),
     (
         NonShopifyStoreError,
         "non_shopify_store",
-        "We couldn't find a Shopify product catalogue at that URL. "
-        "Make sure the store is live and built on Shopify.",
+        "We couldn't find a Shopify product catalogue at that URL. Make sure the store is live and built on Shopify.",
     ),
     (
         StoreUnreachableError,
         "store_unreachable",
-        "We couldn't reach that store URL. "
-        "Please check that the address is correct and the store is online.",
+        "We couldn't reach that store URL. Please check that the address is correct and the store is online.",
     ),
     (
         LLMQuotaExceededError,
         "llm_quota_exceeded",
-        "The AI analysis couldn't be completed because the provider's quota or token limit "
-        "has been reached. Please try again later or contact support.",
+        "The AI analysis couldn't be completed because the provider's quota or token limit has been reached. Please try again later or contact support.",
     ),
     (
         LLMRateLimitError,
         "llm_rate_limited",
-        "The AI provider is currently rate-limiting requests. "
-        "Please wait a few minutes and try again.",
+        "The AI provider is currently rate-limiting requests. Please wait a few minutes and try again.",
     ),
     (
         LLMResponseError,
         "llm_response_error",
-        "The AI provider returned an unexpected response. "
-        "Please try again — if the problem persists, contact support.",
+        "The AI provider returned an unexpected response. Please try again — if the problem persists, contact support.",
     ),
     (
         LLMAuthError,
         "llm_auth_error",
-        "There was an authentication issue with the AI provider. "
-        "Please try again later — this is not an issue with your store URL.",
+        "There was an authentication issue with the AI provider. Please try again later — this is not an issue with your store URL.",
+    ),
+    (
+        EmptyStoreError,
+        "empty_store",
+        "Your store was found but has no publicly visible products. This usually means the catalogue is password-protected, products are set to draft, or the store hasn't launched yet.",
     ),
 ]
 
-
 def _classify_exception(error: Exception) -> tuple[str, str]:
-    """Return (error_type, user_message) for any exception."""
     for exc_class, error_type, user_message in _ERROR_CATALOGUE:
         if isinstance(error, exc_class):
             return error_type, user_message
@@ -102,13 +104,13 @@ def _classify_exception(error: Exception) -> tuple[str, str]:
         "Our team has been notified. Please try again later."
     )
 
-
 class JobQueue:
     def __init__(self) -> None:
         self._queue: queue.Queue[str] = queue.Queue()
         self._jobs: dict[str, ReportJob] = {}
         self._lock = threading.Lock()
         self._started = False
+        self._llm_gate = threading.Semaphore(1)
 
     def start(self) -> None:
         if self._started:
@@ -167,42 +169,81 @@ class JobQueue:
                 self._queue.task_done()
 
     def _process_job(self, job_id: str) -> None:
+        print("=" * 80)
+        print(f"[JOB {job_id}] PROCESS START")
+        print("=" * 80)
         job = self.get(job_id)
         if job is None:
             return
 
         self._update_job(job_id, status="processing", error=None, error_type=None)
         try:
-            result = run_store_analysis(job.store_url, language=job.language)
+            print(f"[JOB {job_id}] Starting analysis")
+            print(f"[JOB {job_id}] Store: {job.store_url}")
+            print(f"[JOB {job_id}] Language: {job.language}")
+
+            start_time = time.time()
+
+            with self._llm_gate:
+                result = run_store_analysis(job.store_url, language=job.language)
+
+            print(
+                f"[JOB {job_id}] Analysis completed in "
+                f"{time.time() - start_time:.2f}s"
+            )
+
+            #time.sleep(10)
+            print(f"[JOB {job_id}] Result received")
+
             report = result["report"]
+
+            print(
+                f"[JOB {job_id}] Report exists: "
+                f"{report is not None}"
+            )
+
+            if report:
+                print(
+                    f"[JOB {job_id}] Product recommendations: "
+                    f"{len(report.get('products', []))}"
+                )
             if report is None:
                 raise RuntimeError("No report was generated for this store.")
+
             self._update_job(job_id, report=report)
-            email_service.send_report_email(
-                job.email, report, result["products"],
-                job.store_url, language=job.language,
-            )
+
+            try:
+                print(f"[JOB {job_id}] Starting email send")
+
+                email_service.send_report_email(
+                    job.email,
+                    report,
+                    result["products"],
+                    job.store_url,
+                    language=job.language,
+                )
+
+                print(f"[JOB {job_id}] Email sent successfully")
+            except Exception as email_error:
+                print(f"[JOB {job_id}] Report ready but email failed: {email_error}")
+                print(traceback.format_exc())
+
             self._update_job(job_id, status="completed")
 
         except Exception as error:
-            import traceback
+            print("FULL ERROR TYPE:", type(error))
+            print("FULL ERROR:", repr(error))
+            traceback.print_exc()
             print(f"[JOB {job_id}] FAILED with {type(error).__name__}: {error}")
             print(traceback.format_exc())
             error_type, user_message = _classify_exception(error)
             print(f"[JOB {job_id}] Classified as: {error_type}")
             self._update_job(job_id, status="failed", error=user_message, error_type=error_type)
-            try:
-                email_service.send_failure_email(
-                    job.email,
-                    job.store_url,
-                    user_message=user_message,
-                    error_type=error_type,
-                    language=job.language,
-                )
-            except Exception as email_error:
-                print(f"[JOB {job_id}] Failed to send failure email: {email_error}")
-                print(traceback.format_exc())
-    
+
+        print("=" * 80)
+        print(f"[JOB {job_id}] PROCESS COMPLETED")
+        print("=" * 80)
+
     def _update_job(self, job_id: str, **changes: Any) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -211,6 +252,5 @@ class JobQueue:
                     setattr(job, key, value)
                 job.updated_at = dt.datetime.now(dt.timezone.utc).isoformat() + "Z"
         job_repo.update(job_id, **changes)
-
 
 job_queue = JobQueue()

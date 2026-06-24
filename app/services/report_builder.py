@@ -12,13 +12,15 @@ import urllib.error
 import urllib.request
 from typing import Any
 from pathlib import Path
-
+import time
 from app.core.config import get_app_settings
+import random
 from app.services.product_fetcher import (
     ShopifyConfig,
     compact_product,
     fetch_products_public,
     normalize_store_url,
+    EmptyStoreError,
 )
 
 import tempfile
@@ -228,55 +230,147 @@ def enrichment_report_schema() -> dict[str, Any]:
 
 
 def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
+    request_id = random.randint(10000, 99999)
+
+    print(f"[Gemini-{request_id}] Starting")
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("Set GEMINI_API_KEY in .env. You can create one in Google AI Studio.")
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    prompt = build_prompt(products, store_url, language)
+    schema = enrichment_report_schema()
+    print(json.dumps(enrichment_report_schema(), indent=2))
+    print(
+        "[Gemini] Schema size:",
+        len(json.dumps(schema))
+    )
+    
     payload = {
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": build_prompt(products, store_url, language)}],
+                "parts": [{"text": prompt}],
             }
         ],
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseJsonSchema": enrichment_report_schema(),
-        },
+         },
     }
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-        },
-        method="POST",
+    if "generationConfig" in payload:
+        print(
+            json.dumps(
+                payload["generationConfig"],
+                indent=2
+            )
+        )
+
+    body = None
+    last_error = None
+    max_attempts = 5
+    base_delay = 10
+    max_delay = 90
+    print("=" * 80)
+    print(f"[Gemini-{request_id}] Starting request")
+    print(f"[Gemini-{request_id}] Model: {model}")
+    print(f"[Gemini-{request_id}] Store: {store_url}")
+    print(f"[Gemini-{request_id}] Product count: {len(products)}")
+    print(
+        f"[Gemini-{request_id}] Prompt length: {len(prompt):,} chars"
     )
+    print("=" * 80)
 
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        message = error.read().decode("utf-8", errors="replace")
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+            delay += random.uniform(0, min(5, delay * 0.3))
+            print(f"[Gemini-{request_id}] Attempt {attempt + 1}/{max_attempts}, waiting {delay:.1f}s after 429/503...")
+            time.sleep(delay)
+        print(f"[Gemini-{request_id}] Attempt {attempt + 1}/{max_attempts}")
+        print(f"[Gemini-{request_id}] Payload size: {len(json.dumps(payload))} bytes")
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+            },
+            method="POST",
+        )
         try:
-            error_body = json.loads(message)
-            detail = error_body.get("error", {}).get("message", message)
-        except json.JSONDecodeError:
-            detail = message
-        _classify_llm_error(detail, error.code)
-        raise LLMResponseError(f"Gemini API HTTP {error.code}: {detail[:300]}") from error
-    except urllib.error.URLError as error:
-        raise RuntimeError(f"Could not reach Gemini API: {error.reason}") from error
+            with urllib.request.urlopen(request, timeout=120) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            print(f"[Gemini-{request_id}] HTTP request successful")
+            print("=" * 80)
+            print(f"[Gemini-{request_id}] RESPONSE")
+            print(json.dumps(body, indent=2)[:5000])
+            print("=" * 80)
+            print(f"[Gemini-{request_id}] Candidate count:", len(body.get("candidates", [])))
+
+            if body.get("candidates"):
+                print(
+                    f"[Gemini-{request_id}] Finish reason:",
+                    body["candidates"][0].get("finishReason")
+                )
+            last_error = None
+            break
+
+        except urllib.error.HTTPError as error:
+            message = error.read().decode("utf-8", errors="replace")
+
+            print("=" * 80)
+            print(f"[Gemini-{request_id}] HTTP ERROR]")
+            print("Status:", error.code)
+            print("Response:")
+            print(message)
+            print("=" * 80)
+
+            retry_after = error.headers.get("Retry-After")
+
+            if error.code in (429, 503):
+                wait_time = int(retry_after) if retry_after else (base_delay * (2 ** attempt))
+
+                print(
+                    f"[Gemini-{request_id}] Retrying after {wait_time}s "
+                    f"(attempt {attempt + 1}/{max_attempts})"
+                )
+
+                time.sleep(wait_time)
+                continue
+            try:
+                detail = json.loads(message).get("error", {}).get("message", message)
+            except json.JSONDecodeError:
+                detail = message
+
+            if error.code in (429, 503):
+                last_error = LLMRateLimitError(
+                    f"Gemini temporarily unavailable (HTTP {error.code}): {detail[:300]}"
+                )
+                print(f"[Gemini-{request_id}] HTTP {error.code} on attempt {attempt + 1}: {detail[:200]}")
+                continue
+
+            _classify_llm_error(detail, error.code)
+            raise LLMResponseError(f"Gemini API HTTP {error.code}: {detail[:300]}") from error
+
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Could not reach Gemini API: {error.reason}") from error
+
+    if last_error:
+        raise last_error
+
+    if not body:
+        raise LLMResponseError("Gemini API execution finished without returning data payloads.")
 
     try:
+        print(f"[Gemini-{request_id}] Parsing response...")
+        print(f"[Gemini-{request_id}] Candidates:", len(body.get("candidates", [])))
         candidate = body["candidates"][0]
         finish_reason = candidate.get("finishReason", "")
         if finish_reason == "MAX_TOKENS":
             raise LLMQuotaExceededError(
                 "Gemini hit the maximum token limit for this response. "
-                "Try reducing MAX_PRODUCTS in your .env or switching to a model with a larger context window."
+                "Try reducing MAX_PRODUCTS_PER_BATCH in your .env or switching to a model with a larger context window."
             )
         if finish_reason not in ("STOP", ""):
             raise LLMResponseError(
@@ -284,15 +378,24 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
                 f"Full response: {json.dumps(body)[:500]}"
             )
         text = candidate["content"]["parts"][0]["text"]
-        report = json.loads(text)
+
+        print("RAW RESPONSE:")
+        print(text[:3000])
+
+        try:
+            report = json.loads(text)
+        except json.JSONDecodeError:
+            raise LLMResponseError(
+                f"Gemini returned plain text instead of JSON:\n{text[:1000]}"
+            )
     except (KeyError, IndexError, json.JSONDecodeError) as error:
         raise LLMResponseError(
             f"Unexpected Gemini API response structure: {json.dumps(body)[:500]}"
         ) from error
 
     report.setdefault("provider", "Propero")
-    # report.setdefault("model", model)
     report.setdefault("store_url", store_url)
+    
     return report
 
 
@@ -899,23 +1002,103 @@ def write_pdf_report(html_path: str, pdf_path: str) -> bool:
     except Exception:
         return False
 
+def chunked(items: list[Any], size: int) -> list[list[Any]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    merged = {
+        "store_level_recommendations": [],
+        "products": [],
+    }
+
+    for report in reports:
+        merged["store_level_recommendations"].extend(
+            report.get("store_level_recommendations") or []
+        )
+        merged["products"].extend(report.get("products") or [])
+
+    seen_store = set()
+    deduped_store = []
+    for rec in merged["store_level_recommendations"]:
+        key = (
+            rec.get("priority"),
+            rec.get("enrichment"),
+            rec.get("why_it_matters_for_agents"),
+            rec.get("example"),
+        )
+        if key in seen_store:
+            continue
+        seen_store.add(key)
+        deduped_store.append(rec)
+
+    merged["store_level_recommendations"] = deduped_store
+    return merged
+
 def run_store_analysis(store_url: str, language: str = "English") -> dict[str, Any]:
     settings = get_app_settings()
-    raw_products = fetch_products_public(store_url, settings["max_products"])
-    products = [compact_product(p, store_url) for p in raw_products]
-    report = None
-    if products:
-        report = analyze_products(
-            products, store_url,
-            settings["provider"], settings["model"], language,
+    max_products = settings["max_products"]
+    raw_products = fetch_products_public(store_url, max_products)
+
+    if not raw_products:
+        raise EmptyStoreError(
+            f"'{store_url}' appears to be a Shopify store but has no publicly "
+            "visible products. The catalogue may be password-protected, "
+            "set to draft, or not yet published."
         )
+
+    products = [compact_product(p, store_url) for p in raw_products]
+
+    provider = settings["provider"]
+    model = settings["model"]
+
+    if provider != "gemini":
+        report = analyze_products(products, store_url, provider, model, language)
+    else:
+        batch_size = int(os.getenv("MAX_PRODUCTS_PER_BATCH", "1"))
+        batches = chunked(products, batch_size)
+
+        batch_reports = []
+
+        for idx, batch in enumerate(batches, start=1):
+            print("=" * 80)
+            print(f"[Gemini] Batch {idx}/{len(batches)}")
+            print(f"[Gemini] Products in batch: {len(batch)}")
+
+            for product in batch:
+                print(
+                    f"  - {product.get('title')} "
+                    f"(ID: {product.get('id')})"
+                )
+
+            start = time.time()
+
+            result = analyze_products(
+                batch,
+                store_url,
+                provider,
+                model,
+                language,
+            )
+
+            print(
+                f"[Gemini] Batch {idx} completed in "
+                f"{time.time() - start:.2f}s"
+            )
+
+            batch_reports.append(result)
+
+        report = merge_reports(batch_reports)
+
+    report.setdefault("provider", provider)
+    report.setdefault("model", model)
+    report.setdefault("store_url", store_url)
+
     return {
         "settings": settings,
         "store_url": store_url,
         "products": products,
         "report": report,
     }
-
 
 def build_pdf_attachment(
     report: dict[str, Any],
