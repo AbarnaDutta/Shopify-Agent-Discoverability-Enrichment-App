@@ -25,6 +25,72 @@ from app.services.product_fetcher import (
 
 import tempfile
 
+from typing import Protocol
+
+class LLMAdapter(Protocol):
+    """Common interface all LLM adapters must satisfy."""
+    def analyze(
+        self,
+        products: list[dict[str, Any]],
+        store_url: str,
+        language: str,
+    ) -> dict[str, Any]:
+        ...
+
+
+class GeminiAdapter:
+    def __init__(self, model: str) -> None:
+        self.model = model
+
+    def analyze(self, products, store_url, language="English"):
+        return analyze_with_gemini(products, store_url, self.model, language)
+
+
+class BedrockAdapter:
+    def __init__(self, model: str = "global.anthropic.claude-opus-4-5-20251101-v1:0") -> None:
+        self.model = model
+
+    def analyze(self, products, store_url, language="English"):
+        return analyze_with_bedrock_claude(products, store_url, self.model, language)
+
+
+class OpenAIAdapter:
+    def __init__(self, model: str) -> None:
+        self.model = model
+
+    def analyze(self, products, store_url, language="English"):
+        return analyze_with_openai(products, store_url, self.model, language)
+
+
+class OllamaAdapter:
+    def __init__(self, model: str) -> None:
+        self.model = model
+
+    def analyze(self, products, store_url, language="English"):
+        return analyze_with_ollama(products, store_url, self.model, language)
+
+
+def get_llm_adapter(provider: str, model: str) -> LLMAdapter:
+    """Factory — returns the correct adapter for the configured provider."""
+    if provider == "gemini":
+        return GeminiAdapter(model)
+    if provider == "bedrock":
+        return BedrockAdapter(model)
+    if provider == "openai":
+        return OpenAIAdapter(model)
+    if provider == "ollama":
+        return OllamaAdapter(model)
+    raise ValueError(f"Unsupported provider: {provider!r}")
+
+
+def get_bedrock_adapter() -> LLMAdapter:
+    """Always returns a Bedrock adapter — used for fallback/load balancing."""
+    model = os.getenv(
+        "BEDROCK_FALLBACK_MODEL",
+        "global.anthropic.claude-opus-4-5-20251101-v1:0",
+    )
+    return BedrockAdapter(model)
+
 import threading
 _gemini_last_call = {"t": 0}
 _gemini_lock = threading.Lock()
@@ -128,21 +194,23 @@ def build_prompt(products: list[dict[str, Any]], store_url: str, language: str =
 You are an ecommerce data strategist helping a Shopify merchant make products discoverable,
 understandable, and safely recommendable by AI agents.
 
-Analyze the product data below and identify enrichments to add. Focus on machine-readable
-and user-useful fields that would help shopping agents answer questions, compare products,
-match intent, verify fit, and complete purchase decisions.
+Analyze the raw Shopify product data provided below. Your task is to identify and generate deep structural data enrichments to help autonomous AI shopping agents answer customer queries, compare features, verify fitment, match user intent, and safely execute purchase decisions.
 
-Return practical recommendations, not generic SEO advice. Include missing structured data,
-product attributes, identifiers, policy/context fields, natural-language agent summaries,
-variant details, image metadata, FAQs, synonyms/search terms, compatibility/use cases, and
-trust signals when relevant.
+Analyze the raw payload attributes and extract/build out:
+1. Missing explicit identifiers (e.g., GTIN, MPN, precise global synonyms).
+2. Deep variant attributes (e.g., precise material blends, sizing dimensions, exact color tokens).
+3. Clear compatibility rules, target use cases, and negative use cases (when NOT to recommend).
+4. Natural language agent summaries designed specifically to be parsed by LLM search vector indexes.
+5. Trust signals, strict policy context, and a machine-readable FAQ map.
 
-IMPORTANT: Write your entire response in {language}. All field values, recommendations,
-summaries, and examples must be in {language}. Do not mix languages.
+CRITICAL CONSTRAINTS:
+- Write the entire response, including all values, summaries, and structural examples, strictly in the requested language: {language}.
+- Do not mix languages.
+- Ensure all numbers use standard floats/integers where applicable, and do not append descriptive text inside clean value arrays.
 
 Store URL: {store_url}
 
-Products:
+Products Catalogue Payload:
 {json.dumps(products, ensure_ascii=False, indent=2)}
 """.strip()
 
@@ -344,6 +412,15 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
             raise RuntimeError(f"Could not reach Gemini API: {error.reason}") from error
 
     if last_error:
+        fallback_model = "global.anthropic.claude-opus-4-5-20251101-v1:0"
+        if os.getenv("BEDROCK_FALLBACK_ENABLED", "true").lower() == "true":
+            print(
+                f"[Gemini-{request_id}] All attempts failed, "
+                f"falling back to Bedrock Claude ({fallback_model})..."
+            )
+            return analyze_with_bedrock_claude(
+                products, store_url, fallback_model, language
+            )
         raise last_error
 
     if not body:
@@ -385,6 +462,103 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
     
     return report
 
+def analyze_with_bedrock_claude(
+    products: list[dict[str, Any]],
+    store_url: str,
+    model: str = "global.anthropic.claude-opus-4-5-20251101-v1:0",
+    language: str = "English",
+) -> dict[str, Any]:
+    bearer_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
+    region = "ap-south-1"
+
+    if not bearer_token:
+        raise LLMAuthError(
+            "AWS_BEARER_TOKEN_BEDROCK is not set. "
+            "Please add it to your .env file."
+        )
+
+    url = (
+        f"https://bedrock-runtime.{region}.amazonaws.com"
+        f"/model/{model}/invoke"
+    )
+
+    prompt = build_prompt(products, store_url, language)
+
+    system = (
+       "You are an expert e-commerce data strategist and data engineer. "
+    "Your job is to analyze raw Shopify product data catalogs and return structured, "
+    "highly actionable JSON enrichments to make products perfectly discoverable by AI shopping agents. "
+    "You must prioritize specific, technical, machine-readable attributes (like exact dimensions, materials, "
+    "GTIN/MPN identifiers, precise compatibility mappings, and structured FAQs). "
+    "Do not include generic marketing fluff or standard SEO advice. "
+    "You must return ONLY a raw JSON object that strictly adheres to the requested JSON schema. "
+    "Do not include any markdown formatting, backticks (```json), or introductory/concluding prose text."
+    "Return ONLY valid JSON matching this exact schema — no markdown, no preamble:\n"
+        '{"store_level_recommendations": [{"priority": "high|medium|low", '
+        '"enrichment": "...", "why_it_matters_for_agents": "...", "example": "..."}], '
+        '"products": [{"product_id": "...", "title": "...", "agent_summary": "...", '
+        '"missing_enrichments": [{"priority": "...", "enrichment": "...", '
+        '"why_it_matters_for_agents": "...", "example": "..."}]}]}'
+    )
+
+    payload = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 8000,
+        "system": system,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {bearer_token}",
+        },
+        method="POST",
+    )
+    print(f"[Bedrock] Starting request | model: {model} | products: {len(products)} | store: {store_url}")
+
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        print(f"[Bedrock] Request completed successfully")
+    except urllib.error.HTTPError as error:
+        message = error.read().decode("utf-8", errors="replace")
+        print(f"[Bedrock] HTTP {error.code}: {message[:300]}")
+        if error.code == 429:
+            raise LLMRateLimitError(
+                "AWS Bedrock is rate-limiting requests. Please try again shortly."
+            ) from error
+        if error.code in (401, 403):
+            raise LLMAuthError(
+                "AWS Bedrock rejected the bearer token. Check AWS_BEARER_TOKEN_BEDROCK."
+            ) from error
+        raise LLMResponseError(
+            f"Bedrock HTTP {error.code}: {message[:300]}"
+        ) from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(
+            f"Could not reach Bedrock endpoint: {error.reason}"
+        ) from error
+
+    try:
+        text = body["content"][0]["text"].strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        report = json.loads(text)
+    except (KeyError, IndexError) as error:
+        raise LLMResponseError(
+            f"Unexpected Bedrock response structure: {str(body)[:300]}"
+        ) from error
+    except json.JSONDecodeError as error:
+        raise LLMResponseError(
+            f"Bedrock returned non-JSON: {text[:500]}"
+        ) from error
+
+    report.setdefault("provider", "Propero")
+    report.setdefault("store_url", store_url)
+    return report
 
 def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
     try:
@@ -496,15 +670,22 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
     return report
 
 
-def analyze_products(products: list[dict[str, Any]], store_url: str, provider: str, model: str, language="English") -> dict[str, Any]:
+def analyze_products(
+    products: list[dict[str, Any]],
+    store_url: str,
+    provider: str,
+    model: str,
+    language: str = "English",
+) -> dict[str, Any]:
     if provider == "gemini":
         return analyze_with_gemini(products, store_url, model, language)
     if provider == "ollama":
         return analyze_with_ollama(products, store_url, model, language)
     if provider == "openai":
         return analyze_with_openai(products, store_url, model, language)
+    if provider == "bedrock":
+        return analyze_with_bedrock_claude(products, store_url, model, language)
     raise ValueError(f"Unsupported provider: {provider!r}")
-
 
 def escape_html(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)

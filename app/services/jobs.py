@@ -11,18 +11,26 @@ import traceback
 import os
 import time
 
-from app.services.report_builder import (
-    run_store_analysis,
-    LLMQuotaExceededError,
-    LLMRateLimitError,
-    LLMResponseError,
-    LLMAuthError,
-)
+from app.core.config import get_app_settings
 from app.services.product_fetcher import (
     InvalidStoreURLError,
     NonShopifyStoreError,
     StoreUnreachableError,
     EmptyStoreError,
+    fetch_products_public,
+    compact_product,
+    normalize_store_url,
+)
+import contextlib
+from app.services.report_builder import (
+    LLMQuotaExceededError,
+    LLMRateLimitError,
+    LLMResponseError,
+    LLMAuthError,
+    chunked,
+    merge_reports,
+    get_llm_adapter,
+    get_bedrock_adapter,
 )
 from app.services.email_service import EmailService
 from app.integrations.email_clients.ses_mail import SESMail
@@ -105,19 +113,27 @@ def _classify_exception(error: Exception) -> tuple[str, str]:
     )
 
 class JobQueue:
+
     def __init__(self) -> None:
         self._queue: queue.Queue[str] = queue.Queue()
         self._jobs: dict[str, ReportJob] = {}
         self._lock = threading.Lock()
         self._started = False
-        self._llm_gate = threading.Semaphore(1)
+        self._gemini_gate = threading.Semaphore(1)   
+        self._bedrock_gate = threading.Semaphore(2)  
+        self._provider_lock = threading.Lock()
+        self._active_gemini = 0
+        self._active_bedrock = 0
 
     def start(self) -> None:
         if self._started:
             return
         self._started = True
-        worker = threading.Thread(target=self._worker_loop, daemon=True)
-        worker.start()
+        num_workers = int(os.getenv("JOB_WORKERS", "3"))
+        for i in range(num_workers):
+            worker = threading.Thread(target=self._worker_loop, daemon=True, name=f"worker-{i}")
+            worker.start()
+        print(f"[JobQueue] Started {num_workers} workers")
 
     def submit(self, email: str, store_url: str, language: str = "English") -> ReportJob:
         job = ReportJob(
@@ -168,6 +184,31 @@ class JobQueue:
             finally:
                 self._queue.task_done()
 
+    def _pick_provider(self, default_provider: str, model: str):
+        bedrock_enabled = os.getenv("BEDROCK_FALLBACK_ENABLED", "true").lower() == "true"
+
+        if default_provider != "gemini" or not bedrock_enabled:
+            adapter = get_llm_adapter(default_provider, model)
+            gate = self._gemini_gate if default_provider == "gemini" else contextlib.nullcontext()
+            return adapter, gate, default_provider
+
+        with self._provider_lock:
+            gemini_free = self._active_gemini == 0
+            if gemini_free:
+                self._active_gemini += 1
+                return get_llm_adapter("gemini", model), None, "gemini"
+            else:
+                self._active_bedrock += 1
+                return get_bedrock_adapter(), None, "bedrock"
+
+    def _release_provider(self, provider_label: str) -> None:
+        if provider_label in ("gemini", "bedrock"):
+            with self._provider_lock:
+                if provider_label == "gemini":
+                    self._active_gemini = max(0, self._active_gemini - 1)
+                else:
+                    self._active_bedrock = max(0, self._active_bedrock - 1)
+
     def _process_job(self, job_id: str) -> None:
         print("=" * 80)
         print(f"[JOB {job_id}] PROCESS START")
@@ -177,73 +218,66 @@ class JobQueue:
             return
 
         self._update_job(job_id, status="processing", error=None, error_type=None)
+        effective_provider = None
         try:
-            print(f"[JOB {job_id}] Starting analysis")
+            print(f"[JOB {job_id}] Starting store fetch")
             print(f"[JOB {job_id}] Store: {job.store_url}")
             print(f"[JOB {job_id}] Language: {job.language}")
+            settings = get_app_settings()
+            store_url = normalize_store_url(job.store_url)
+            raw_products = fetch_products_public(store_url, settings["max_products"])
 
+            if not raw_products:
+                raise EmptyStoreError(f"'{store_url}' has no publicly visible products.")
+
+            products = [compact_product(p, store_url) for p in raw_products]
+            print(f"[JOB {job_id}] Fetched {len(products)} products")
+            provider = settings["provider"]
+            model = settings["model"]
+            adapter, _, effective_provider = self._pick_provider(provider, model)
+            print(f"[JOB {job_id}] Routed → {effective_provider}")
             start_time = time.time()
+            batch_size = int(os.getenv("MAX_PRODUCTS_PER_BATCH", "5"))
+            batches = chunked(products, batch_size)
+            batch_reports = []
 
-            with self._llm_gate:
-                result = run_store_analysis(job.store_url, language=job.language)
+            for idx, batch in enumerate(batches, start=1):
+                print(f"[JOB {job_id}] Batch {idx}/{len(batches)}")
+                result = adapter.analyze(batch, store_url, job.language)
+                batch_reports.append(result)
 
-            print(
-                f"[JOB {job_id}] Analysis completed in "
-                f"{time.time() - start_time:.2f}s"
-            )
+            report = merge_reports(batch_reports) if len(batch_reports) > 1 else batch_reports[0]
 
-            #time.sleep(10)
-            print(f"[JOB {job_id}] Result received")
+            print(f"[JOB {job_id}] Analysis done in {time.time() - start_time:.2f}s")
 
-            report = result["report"]
-
-            print(
-                f"[JOB {job_id}] Report exists: "
-                f"{report is not None}"
-            )
-
-            if report:
-                print(
-                    f"[JOB {job_id}] Product recommendations: "
-                    f"{len(report.get('products', []))}"
-                )
-            if report is None:
-                raise RuntimeError("No report was generated for this store.")
+            report.setdefault("provider", effective_provider)
+            report.setdefault("model", model)
+            report.setdefault("store_url", store_url)
 
             self._update_job(job_id, report=report)
-
             try:
-                print(f"[JOB {job_id}] Starting email send")
-
+                print(f"[JOB {job_id}] Sending email")
                 email_service.send_report_email(
-                    job.email,
-                    report,
-                    result["products"],
-                    job.store_url,
-                    language=job.language,
+                    job.email, report, products, store_url, language=job.language
                 )
-
-                print(f"[JOB {job_id}] Email sent successfully")
+                print(f"[JOB {job_id}] Email sent")
             except Exception as email_error:
-                print(f"[JOB {job_id}] Report ready but email failed: {email_error}")
-                print(traceback.format_exc())
+                print(f"[JOB {job_id}] Email failed (report still complete): {email_error}")
 
             self._update_job(job_id, status="completed")
 
         except Exception as error:
-            print("FULL ERROR TYPE:", type(error))
-            print("FULL ERROR:", repr(error))
+            print(f"[JOB {job_id}] FAILED: {type(error).__name__}: {error}")
             traceback.print_exc()
-            print(f"[JOB {job_id}] FAILED with {type(error).__name__}: {error}")
-            print(traceback.format_exc())
             error_type, user_message = _classify_exception(error)
-            print(f"[JOB {job_id}] Classified as: {error_type}")
             self._update_job(job_id, status="failed", error=user_message, error_type=error_type)
 
-        print("=" * 80)
-        print(f"[JOB {job_id}] PROCESS COMPLETED")
-        print("=" * 80)
+        finally:
+            if effective_provider:
+                self._release_provider(effective_provider)
 
+        print(f"[JOB {job_id}] PROCESS COMPLETED")
+        print("=" * 80)  
     def _update_job(self, job_id: str, **changes: Any) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
