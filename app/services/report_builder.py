@@ -191,22 +191,43 @@ def _classify_llm_error(message: str, status_code: int | None = None) -> None:
 
 def build_prompt(products: list[dict[str, Any]], store_url: str, language: str = "English") -> str:
     return f"""
-You are an ecommerce data strategist helping a Shopify merchant make products discoverable,
-understandable, and safely recommendable by AI agents.
+You are an ecommerce data strategist helping a Shopify merchant prepare their store for AI commerce
+agents that use Shopify's Universal Commerce Protocol (UCP) and Storefront Model Context Protocol (MCP).
+Your job is to make products discoverable, understandable, and safely recommendable/actionable by
+those agents.
 
-Analyze the raw Shopify product data provided below. Your task is to identify and generate deep structural data enrichments to help autonomous AI shopping agents answer customer queries, compare features, verify fitment, match user intent, and safely execute purchase decisions.
+Analyze the raw Shopify product data provided below. Your task is to:
+- Assess the store's readiness for agentic commerce (UCP-style agents that search, compare, build
+  carts, and create checkouts) and produce numeric readiness scores.
+- Identify and generate deep structural data enrichments to help autonomous AI shopping agents answer
+  customer queries, compare features, verify fitment, match user intent, and safely execute purchase
+  decisions.
 
 Analyze the raw payload attributes and extract/build out:
 1. Missing explicit identifiers (e.g., GTIN, MPN, precise global synonyms).
-2. Deep variant attributes (e.g., precise material blends, sizing dimensions, exact color tokens).
-3. Clear compatibility rules, target use cases, and negative use cases (when NOT to recommend).
+2. Deep variant attributes (e.g., precise material blends, sizing dimensions, exact color tokens),
+   and flag any variant hygiene issues that would confuse an agent building a cart (e.g. many
+   "Default Title" variants, inconsistent option names like "Option1"/"Custom1", zero-priced or
+   placeholder variants).
+3. Clear compatibility rules, target use cases, and negative use cases (when NOT to recommend, or
+   when an agent should not act without human review).
 4. Natural language agent summaries designed specifically to be parsed by LLM search vector indexes.
 5. Trust signals, strict policy context, and a machine-readable FAQ map.
+6. A `readiness_scores` object with integer scores from 0-100 for:
+   - overall: holistic agentic-commerce readiness
+   - ucp_commerce_flows: can an agent reliably search, filter, compare, build carts and check out
+     using this catalog's structure?
+   - mcp_knowledge: how clear/complete is the information an MCP-style agent would need to answer
+     shopper questions (policies, FAQs, trust signals) based on what's inferable from this data?
+   - catalog_enrichment: depth/consistency of product data (identifiers, variants, descriptions)
+   - safety_policies: clarity of negative-use-cases and guardrails for when agents should NOT
+     autonomously recommend or transact
 
 CRITICAL CONSTRAINTS:
 - Write the entire response, including all values, summaries, and structural examples, strictly in the requested language: {language}.
 - Do not mix languages.
 - Ensure all numbers use standard floats/integers where applicable, and do not append descriptive text inside clean value arrays.
+- readiness_scores values must be plain integers between 0 and 100 (no % sign, no text).
 
 Store URL: {store_url}
 
@@ -219,7 +240,7 @@ def analyze_with_ollama(products: list[dict[str, Any]], store_url: str, model: s
         "model": model,
         "prompt": (
             build_prompt(products, store_url, language)
-            + "\n\nReturn only valid JSON with keys: store_level_recommendations and products."
+            + "\n\nReturn only valid JSON with keys: readiness_scores, store_level_recommendations and products."
         ),
         "stream": False,
         "format": "json",
@@ -276,9 +297,27 @@ def enrichment_report_schema() -> dict[str, Any]:
             "example",
         ],
     }
+    readiness_scores_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "overall":             {"type": "INTEGER"},
+            "ucp_commerce_flows":  {"type": "INTEGER"},
+            "mcp_knowledge":       {"type": "INTEGER"},
+            "catalog_enrichment":  {"type": "INTEGER"},
+            "safety_policies":     {"type": "INTEGER"},
+        },
+        "required": [
+            "overall",
+            "ucp_commerce_flows",
+            "mcp_knowledge",
+            "catalog_enrichment",
+            "safety_policies",
+        ],
+    }
     return {
         "type": "OBJECT",
         "properties": {
+            "readiness_scores": readiness_scores_schema,
             "store_level_recommendations": {
                 "type": "ARRAY",
                 "items": recommendation_schema,
@@ -305,7 +344,7 @@ def enrichment_report_schema() -> dict[str, Any]:
                 },
             },
         },
-        "required": ["store_level_recommendations", "products"],
+        "required": ["readiness_scores", "store_level_recommendations", "products"],
     }
 
 
@@ -494,11 +533,14 @@ def analyze_with_bedrock_claude(
     "You must return ONLY a raw JSON object that strictly adheres to the requested JSON schema. "
     "Do not include any markdown formatting, backticks (```json), or introductory/concluding prose text."
     "Return ONLY valid JSON matching this exact schema — no markdown, no preamble:\n"
-        '{"store_level_recommendations": [{"priority": "high|medium|low", '
+        '{"readiness_scores": {"overall": 0, "ucp_commerce_flows": 0, "mcp_knowledge": 0, '
+        '"catalog_enrichment": 0, "safety_policies": 0}, '
+        '"store_level_recommendations": [{"priority": "high|medium|low", '
         '"enrichment": "...", "why_it_matters_for_agents": "...", "example": "..."}], '
         '"products": [{"product_id": "...", "title": "...", "agent_summary": "...", '
         '"missing_enrichments": [{"priority": "...", "enrichment": "...", '
-        '"why_it_matters_for_agents": "...", "example": "..."}]}]}'
+        '"why_it_matters_for_agents": "...", "example": "..."}]}]} '
+        "readiness_scores values are integers 0-100."
     )
 
     payload = {
@@ -595,6 +637,7 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
+                            "readiness_scores": {"$ref": "#/$defs/readiness_scores"},
                             "store_level_recommendations": {
                                 "type": "array",
                                 "items": {"$ref": "#/$defs/recommendation"},
@@ -622,8 +665,26 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
                                 },
                             },
                         },
-                        "required": ["store_level_recommendations", "products"],
+                        "required": ["readiness_scores", "store_level_recommendations", "products"],
                         "$defs": {
+                            "readiness_scores": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "overall": {"type": "integer"},
+                                    "ucp_commerce_flows": {"type": "integer"},
+                                    "mcp_knowledge": {"type": "integer"},
+                                    "catalog_enrichment": {"type": "integer"},
+                                    "safety_policies": {"type": "integer"},
+                                },
+                                "required": [
+                                    "overall",
+                                    "ucp_commerce_flows",
+                                    "mcp_knowledge",
+                                    "catalog_enrichment",
+                                    "safety_policies",
+                                ],
+                            },
                             "recommendation": {
                                 "type": "object",
                                 "additionalProperties": False,
@@ -691,6 +752,28 @@ def escape_html(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
+_READINESS_KEYS = (
+    "overall",
+    "ucp_commerce_flows",
+    "mcp_knowledge",
+    "catalog_enrichment",
+    "safety_policies",
+)
+
+
+def normalize_readiness_scores(raw: Any) -> dict[str, int]:
+    """Clamp/validate readiness scores from an LLM response; fills gaps with 0."""
+    raw = raw if isinstance(raw, dict) else {}
+    scores: dict[str, int] = {}
+    for key in _READINESS_KEYS:
+        try:
+            value = int(round(float(raw.get(key, 0))))
+        except (TypeError, ValueError):
+            value = 0
+        scores[key] = max(0, min(100, value))
+    return scores
+
+
 def priority_class(priority: str | None) -> str:
     if priority in {"high", "medium", "low"}:
         return priority
@@ -700,11 +783,19 @@ def priority_class(priority: str | None) -> str:
 
 _PDF_LABELS: dict[str, dict[str, str]] = {
     "English": {
-        "eyebrow":            "Shopify AI Agent Readiness",
-        "title":              "AI Agent Discoverability Report",
+        "eyebrow":            "Shopify Agentic Commerce Readiness",
+        "title":              "Agentic Commerce Readiness Report",
         "meta_products":      "Products Analyzed",
         "meta_high":          "High Priority",
         "meta_actions":       "Store Actions",
+        "score_overall":      "Overall Readiness",
+        "score_ucp":          "UCP Commerce Flows",
+        "score_mcp":          "MCP Knowledge",
+        "score_catalog":      "Catalog Enrichment",
+        "score_safety":       "Safety & Policies",
+        "cta_heading":        "Want us to make your store agentic-commerce ready?",
+        "cta_body":           "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
+        "cta_button":         "Book a Free Consultation",
         "exec_eyebrow":       "Executive Summary",
         "exec_heading":       "Overall observations",
         "obs_high":           "{n} high-priority gaps across the catalog, concentrated in the kinds of fields agents need to recommend products confidently.",
@@ -733,11 +824,19 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "powered_by": "Powered by Propero",
     },
     "German": {
-        "eyebrow":            "Shopify KI-Agenten-Bereitschaft",
-        "title":              "KI-Agenten-Auffindbarkeits-Bericht",
+        "eyebrow":            "Shopify Agentic-Commerce-Bereitschaft",
+        "title":              "Agentic-Commerce-Bereitschaftsbericht",
         "meta_products":      "Analysierte Produkte",
         "meta_high":          "Hohe Priorität",
         "meta_actions":       "Shop-Maßnahmen",
+        "score_overall":      "Gesamtbereitschaft",
+        "score_ucp":          "UCP-Handelsabläufe",
+        "score_mcp":          "MCP-Wissen",
+        "score_catalog":      "Katalog-Anreicherung",
+        "score_safety":       "Sicherheit & Richtlinien",
+        "cta_heading":        "Möchten Sie, dass wir Ihren Shop agentic-commerce-bereit machen?",
+        "cta_body":           "Unser Team kann diese Korrekturen für Sie umsetzen — von Schema- und Variantenbereinigung bis zu UCP/MCP-fähigen Shop-Daten.",
+        "cta_button":         "Kostenlose Beratung buchen",
         "exec_eyebrow":       "Zusammenfassung",
         "exec_heading":       "Allgemeine Beobachtungen",
         "obs_high":           "{n} Lücken mit hoher Priorität im Katalog, konzentriert auf Felder, die Agenten für sichere Produktempfehlungen benötigen.",
@@ -766,11 +865,19 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "powered_by":          "Bereitgestellt von Propero",
     },
     "French": {
-        "eyebrow":            "Préparation Shopify pour les agents IA",
-        "title":              "Rapport de découvrabilité pour agents IA",
+        "eyebrow":            "Préparation Shopify au commerce agentique",
+        "title":              "Rapport de préparation au commerce agentique",
         "meta_products":      "Produits analysés",
         "meta_high":          "Priorité haute",
         "meta_actions":       "Actions boutique",
+        "score_overall":      "Préparation globale",
+        "score_ucp":          "Flux de commerce UCP",
+        "score_mcp":          "Connaissances MCP",
+        "score_catalog":      "Enrichissement du catalogue",
+        "score_safety":       "Sécurité et politiques",
+        "cta_heading":        "Vous voulez que nous rendions votre boutique prête pour le commerce agentique ?",
+        "cta_body":           "Notre équipe peut mettre en œuvre ces corrections pour vous — du nettoyage des schémas et variantes aux données boutique compatibles UCP/MCP.",
+        "cta_button":         "Réserver une consultation gratuite",
         "exec_eyebrow":       "Résumé exécutif",
         "exec_heading":       "Observations générales",
         "obs_high":           "{n} lacunes hautement prioritaires dans le catalogue, concentrées sur les champs dont les agents ont besoin pour recommander des produits en toute confiance.",
@@ -799,11 +906,19 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "powered_by":         "Propulsé par Propero",
     },
     "Spanish": {
-        "eyebrow":            "Preparación de Shopify para agentes IA",
-        "title":              "Informe de descubribilidad para agentes IA",
+        "eyebrow":            "Preparación de Shopify para el comercio agéntico",
+        "title":              "Informe de preparación para el comercio agéntico",
         "meta_products":      "Productos analizados",
         "meta_high":          "Alta prioridad",
         "meta_actions":       "Acciones de tienda",
+        "score_overall":      "Preparación general",
+        "score_ucp":          "Flujos de comercio UCP",
+        "score_mcp":          "Conocimiento MCP",
+        "score_catalog":      "Enriquecimiento del catálogo",
+        "score_safety":       "Seguridad y políticas",
+        "cta_heading":        "¿Quiere que preparemos su tienda para el comercio agéntico?",
+        "cta_body":           "Nuestro equipo puede implementar estas mejoras por usted — desde la limpieza de esquemas y variantes hasta datos de tienda compatibles con UCP/MCP.",
+        "cta_button":         "Reservar una consulta gratuita",
         "exec_eyebrow":       "Resumen ejecutivo",
         "exec_heading":       "Observaciones generales",
         "obs_high":           "{n} brechas de alta prioridad en el catálogo, concentradas en los campos que los agentes necesitan para recomendar productos con confianza.",
@@ -832,11 +947,19 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "powered_by":         "Desarrollado por Propero",
     },
     "Japanese": {
-        "eyebrow":            "Shopify AIエージェント対応状況",
-        "title":              "AIエージェント発見可能性レポート",
+        "eyebrow":            "Shopifyエージェント型コマース対応状況",
+        "title":              "エージェント型コマース対応レポート",
         "meta_products":      "分析済み商品数",
         "meta_high":          "高優先度",
         "meta_actions":       "ストア施策",
+        "score_overall":      "総合対応度",
+        "score_ucp":          "UCPコマースフロー",
+        "score_mcp":          "MCPナレッジ",
+        "score_catalog":      "カタログの充実度",
+        "score_safety":       "安全性とポリシー",
+        "cta_heading":        "ストアをエージェント型コマース対応にしませんか？",
+        "cta_body":           "スキーマやバリアントの整備からUCP/MCP対応のストアデータ構築まで、私たちのチームが対応いたします。",
+        "cta_button":         "無料相談を予約する",
         "exec_eyebrow":       "エグゼクティブサマリー",
         "exec_heading":       "全体的な所見",
         "obs_high":           "カタログ全体に{n}件の高優先度のギャップがあり、エージェントが自信を持って商品を推薦するために必要なフィールドに集中しています。",
@@ -987,6 +1110,35 @@ def render_executive_summary(
     """
 
 
+
+def render_readiness_scores(scores: dict[str, int], labels: dict[str, str]) -> str:
+    items = [
+        (labels["score_overall"], scores.get("overall", 0)),
+        (labels["score_ucp"], scores.get("ucp_commerce_flows", 0)),
+        (labels["score_mcp"], scores.get("mcp_knowledge", 0)),
+        (labels["score_catalog"], scores.get("catalog_enrichment", 0)),
+        (labels["score_safety"], scores.get("safety_policies", 0)),
+    ]
+
+    def band(value: int) -> str:
+        if value >= 70:
+            return "strong"
+        if value >= 40:
+            return "fair"
+        return "weak"
+
+    cards = "".join(
+        f"""
+        <div class="score-card">
+          <div class="score-circle score-circle--{band(value)}"><span>{value}</span></div>
+          <p class="score-card__label">{escape_html(label)}</p>
+        </div>
+        """
+        for label, value in items
+    )
+    return f'<section class="section readiness-scores">{cards}</section>'
+
+
 def render_pdf_html(
     report: dict[str, Any],
     products: list[dict[str, Any]],
@@ -1105,6 +1257,18 @@ def render_pdf_html(
     }}
     .summary {{ margin: 0 0 14px; color: #3a4757; font-size: 12px; }}
     .muted {{ margin: 0; color: #667085; }}
+    .readiness-scores {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 30px; }}
+    .score-card {{ display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px; background: #ffffff; border: 1px solid #ded6c8; border-radius: 10px; break-inside: avoid; }}
+    .score-circle {{ width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #ffffff; }}
+    .score-circle span {{ font-size: 18px; font-weight: 800; }}
+    .score-circle--strong {{ background: #2e7169; }}
+    .score-circle--fair {{ background: #b87524; }}
+    .score-circle--weak {{ background: #b43d31; }}
+    .score-card__label {{ margin: 0; font-size: 9px; font-weight: 700; text-align: center; color: #4b5567; text-transform: uppercase; letter-spacing: .03em; line-height: 1.3; }}
+    .cta-block {{ margin-top: 10px; padding: 22px 26px; background: linear-gradient(135deg, #16302b 0%, #22594f 60%, #b86b3d 130%); border-radius: 12px; color: #f9f4ea; text-align: center; break-inside: avoid; }}
+    .cta-block h3 {{ color: #f9f4ea; font-size: 16px; margin-bottom: 8px; }}
+    .cta-block p {{ margin: 0 auto 16px; max-width: 520px; font-size: 12px; color: #f2e7d4; }}
+    .cta-button {{ display: inline-block; padding: 11px 26px; background: #ffffff; color: #16302b; border-radius: 100px; font-size: 13px; font-weight: 800; text-decoration: none; }}
     .footer {{ padding: 14px 38px 24px; color: #667085; border-top: 1px solid #ded6c8; }}
   </style>
 </head>
@@ -1121,6 +1285,7 @@ def render_pdf_html(
       <div class="metric"><span class="eyebrow">{escape_html(labels["meta_actions"])}</span><strong>{len(report.get("store_level_recommendations") or [])}</strong></div>
     </section>
     <main>
+      {render_readiness_scores(normalize_readiness_scores(report.get("readiness_scores")), labels)}
       {render_executive_summary(report, product_reports, labels)}
       <section class="section">
         <h2>{escape_html(labels["section_store"])}</h2>
@@ -1175,15 +1340,30 @@ def chunked(items: list[Any], size: int) -> list[list[Any]]:
 
 def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     merged = {
+        "readiness_scores": {},
         "store_level_recommendations": [],
         "products": [],
     }
+
+    score_totals = {key: 0 for key in _READINESS_KEYS}
+    score_counts = {key: 0 for key in _READINESS_KEYS}
 
     for report in reports:
         merged["store_level_recommendations"].extend(
             report.get("store_level_recommendations") or []
         )
         merged["products"].extend(report.get("products") or [])
+
+        batch_scores = normalize_readiness_scores(report.get("readiness_scores"))
+        if report.get("readiness_scores"):
+            for key in _READINESS_KEYS:
+                score_totals[key] += batch_scores[key]
+                score_counts[key] += 1
+
+    merged["readiness_scores"] = {
+        key: round(score_totals[key] / score_counts[key]) if score_counts[key] else 0
+        for key in _READINESS_KEYS
+    }
 
     seen_store = set()
     deduped_store = []

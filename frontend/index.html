@@ -278,6 +278,16 @@
     .report-header .domain-url   { font-size: 12px; color: #6b7280; margin-top: 2px; }
     .report-header .meta-date    { font-size: 11px; color: #9ca3af; }
 
+    /* ── Readiness Scores ── */
+    .readiness-scores { padding: 28px 40px 4px; display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; border-bottom: 1px solid #f3f4f6; }
+    .score-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px 24px; }
+    .score-circle { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #ffffff; }
+    .score-circle span { font-size: 18px; font-weight: 800; }
+    .score-circle.strong { background: #16a34a; }
+    .score-circle.fair   { background: #d97706; }
+    .score-circle.weak   { background: #dc2626; }
+    .score-card__label { margin: 0; font-size: 10px; font-weight: 700; text-align: center; color: #6b7280; text-transform: uppercase; letter-spacing: 0.03em; line-height: 1.3; }
+
     /* ── Executive Summary ── */
     .exec-summary { padding: 32px 40px; border-bottom: 1px solid #f3f4f6; }
     .exec-summary .exec-eyebrow { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #d97706; letter-spacing: 0.08em; margin-bottom: 8px; }
@@ -345,6 +355,34 @@
     .accordion-trigger.open .arrow-icon { transform: rotate(180deg); }
     .agent-vision-panel { background: #f3f4f6; padding: 14px 16px; border-radius: 8px; font-size: 13px; color: #1f2937; margin-bottom: 20px; line-height: 1.5; border: 1px solid #e5e7eb; }
 
+    /* ── CTA block ── */
+    .cta-block {
+      margin: 0 40px 40px;
+      padding: 32px 30px;
+      border-radius: 16px;
+      text-align: center;
+      color: #f9f4ea;
+      background: linear-gradient(135deg, #16302b 0%, #22594f 55%, #b86b3d 130%);
+    }
+    .cta-block h3 { font-size: 19px; font-weight: 800; color: #f9f4ea; margin-bottom: 10px; }
+    .cta-block p { font-size: 13px; line-height: 1.6; color: #f2e7d4; max-width: 520px; margin: 0 auto 20px; }
+    .cta-button-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #ffffff;
+      color: #16302b;
+      border: none;
+      padding: 13px 28px;
+      border-radius: 100px;
+      font-size: 14px;
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform 0.15s, background 0.15s;
+    }
+    .cta-button-link:hover { background: #f2e7d4; transform: translateY(-1px); }
+
     .report-footer-meta { padding: 24px 40px; border-top: 1px solid #f3f4f6; background: #faf9f6; font-size: 12px; color: #9ca3af; }
     .report-footer-meta .footer-line { margin-bottom: 8px; }
     .report-footer-meta .powered-by { font-weight: 700; color: #22594f; }
@@ -357,6 +395,8 @@
       .audit-body-content { padding: 24px; }
       .exec-summary { padding: 24px; }
       .exec-cards, .exec-columns { grid-template-columns: 1fr; }
+      .readiness-scores { padding: 24px 20px 4px; grid-template-columns: repeat(3, minmax(0,1fr)); }
+      .cta-block { margin: 0 20px 24px; padding: 24px 20px; }
     }
   </style>
 </head>
@@ -499,6 +539,11 @@
         schemaUpdates: "schema updates pending", poweredBy: "Powered by Propero",
         verified: "Verified schema data parameters matching standard parser rules.",
         errorTitle: "We couldn't generate your report",
+        scoreOverall: "Overall Readiness", scoreUcp: "UCP Commerce Flows", scoreMcp: "MCP Knowledge",
+        scoreCatalog: "Catalog Enrichment", scoreSafety: "Safety & Policies",
+        ctaHeading: "Want us to make your store agentic-commerce ready?",
+        ctaBody: "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
+        ctaButton: "Book a Free Consultation",
       },
       German: {
         execEyebrow: "Zusammenfassung", execHeading: "Allgemeine Beobachtungen",
@@ -516,6 +561,11 @@
         schemaUpdates: "ausstehende Schema-Optimierungen", poweredBy: "Bereitgestellt von Propero",
         verified: "Verifizierte Schema-Datenparameter.",
         errorTitle: "Wir konnten Ihren Bericht nicht erstellen",
+        scoreOverall: "Gesamtbereitschaft", scoreUcp: "UCP-Handelsabläufe", scoreMcp: "MCP-Wissen",
+        scoreCatalog: "Katalog-Anreicherung", scoreSafety: "Sicherheit & Richtlinien",
+        ctaHeading: "Möchten Sie, dass wir Ihren Shop agentic-commerce-bereit machen?",
+        ctaBody: "Unser Team kann diese Korrekturen für Sie umsetzen — von Schema- und Variantenbereinigung bis zu UCP/MCP-fähigen Shop-Daten.",
+        ctaButton: "Kostenlose Beratung buchen",
       },
       French: {
         execEyebrow: "Résumé exécutif", execHeading: "Observations générales",
@@ -533,6 +583,11 @@
         schemaUpdates: "mises à jour en attente", poweredBy: "Propulsé par Propero",
         verified: "Paramètres de schéma vérifiés.",
         errorTitle: "Nous n'avons pas pu générer votre rapport",
+        scoreOverall: "Préparation globale", scoreUcp: "Flux de commerce UCP", scoreMcp: "Connaissances MCP",
+        scoreCatalog: "Enrichissement du catalogue", scoreSafety: "Sécurité et politiques",
+        ctaHeading: "Vous voulez que nous rendions votre boutique prête pour le commerce agentique ?",
+        ctaBody: "Notre équipe peut mettre en œuvre ces corrections pour vous — du nettoyage des schémas et variantes aux données boutique compatibles UCP/MCP.",
+        ctaButton: "Réserver une consultation gratuite",
       },
       Spanish: {
         execEyebrow: "Resumen ejecutivo", execHeading: "Observaciones generales",
@@ -550,6 +605,11 @@
         schemaUpdates: "actualizaciones pendientes", poweredBy: "Desarrollado por Propero",
         verified: "Parámetros de esquema verificados.",
         errorTitle: "No pudimos generar su informe",
+        scoreOverall: "Preparación general", scoreUcp: "Flujos de comercio UCP", scoreMcp: "Conocimiento MCP",
+        scoreCatalog: "Enriquecimiento del catálogo", scoreSafety: "Seguridad y políticas",
+        ctaHeading: "¿Quiere que preparemos su tienda para el comercio agéntico?",
+        ctaBody: "Nuestro equipo puede implementar estas mejoras por usted — desde la limpieza de esquemas y variantes hasta datos de tienda compatibles con UCP/MCP.",
+        ctaButton: "Reservar una consulta gratuita",
       },
       Italian: {
         execEyebrow: "Riepilogo esecutivo", execHeading: "Osservazioni generali",
@@ -567,6 +627,11 @@
         schemaUpdates: "aggiornamenti schema in sospeso", poweredBy: "Offerto da Propero",
         verified: "Parametri schema verificati.",
         errorTitle: "Non siamo riusciti a generare il tuo report",
+        scoreOverall: "Preparazione complessiva", scoreUcp: "Flussi di commercio UCP", scoreMcp: "Conoscenza MCP",
+        scoreCatalog: "Arricchimento del catalogo", scoreSafety: "Sicurezza e policy",
+        ctaHeading: "Vuoi che rendiamo il tuo store pronto per il commercio agentico?",
+        ctaBody: "Il nostro team può implementare queste correzioni per te — dalla pulizia di schemi e varianti ai dati store compatibili UCP/MCP.",
+        ctaButton: "Prenota una consulenza gratuita",
       },
       Portuguese: {
         execEyebrow: "Resumo executivo", execHeading: "Observações gerais",
@@ -584,6 +649,11 @@
         schemaUpdates: "atualizações de esquema pendentes", poweredBy: "Desenvolvido por Propero",
         verified: "Parâmetros de esquema verificados.",
         errorTitle: "Não conseguimos gerar seu relatório",
+        scoreOverall: "Prontidão geral", scoreUcp: "Fluxos de comércio UCP", scoreMcp: "Conhecimento MCP",
+        scoreCatalog: "Enriquecimento do catálogo", scoreSafety: "Segurança e políticas",
+        ctaHeading: "Quer que deixemos sua loja pronta para o comércio agêntico?",
+        ctaBody: "Nossa equipe pode implementar essas correções para você — da limpeza de esquemas e variantes a dados de loja compatíveis com UCP/MCP.",
+        ctaButton: "Agendar uma consultoria gratuita",
       },
       Dutch: {
         execEyebrow: "Samenvatting", execHeading: "Algemene observaties",
@@ -601,6 +671,11 @@
         schemaUpdates: "schema-updates in behandeling", poweredBy: "Aangedreven door Propero",
         verified: "Geverifieerde schemaparameters.",
         errorTitle: "We konden uw rapport niet genereren",
+        scoreOverall: "Algehele gereedheid", scoreUcp: "UCP-handelsstromen", scoreMcp: "MCP-kennis",
+        scoreCatalog: "Catalogusverrijking", scoreSafety: "Veiligheid & beleid",
+        ctaHeading: "Wilt u dat wij uw winkel agentic-commerce-klaar maken?",
+        ctaBody: "Ons team kan deze verbeteringen voor u doorvoeren — van schema- en variantopschoning tot UCP/MCP-klare winkeldata.",
+        ctaButton: "Boek een gratis consult",
       },
       Japanese: {
         execEyebrow: "エグゼクティブサマリー", execHeading: "全体的な所見",
@@ -618,6 +693,11 @@
         schemaUpdates: "件のスキーマ最適化が保留中", poweredBy: "Propero提供",
         verified: "標準パーサールールに準拠した検証済みスキーマ。",
         errorTitle: "レポートを生成できませんでした",
+        scoreOverall: "総合対応度", scoreUcp: "UCPコマースフロー", scoreMcp: "MCPナレッジ",
+        scoreCatalog: "カタログの充実度", scoreSafety: "安全性とポリシー",
+        ctaHeading: "ストアをエージェント型コマース対応にしませんか？",
+        ctaBody: "スキーマやバリアントの整備からUCP/MCP対応のストアデータ構築まで、私たちのチームが対応いたします。",
+        ctaButton: "無料相談を予約する",
       },
       Chinese: {
         execEyebrow: "执行摘要", execHeading: "总体观察",
@@ -635,8 +715,15 @@
         schemaUpdates: "个架构更新待优化", poweredBy: "由Propero提供支持",
         verified: "符合标准解析器规则的已验证架构数据参数。",
         errorTitle: "我们无法生成您的报告",
+        scoreOverall: "总体准备度", scoreUcp: "UCP商业流程", scoreMcp: "MCP知识",
+        scoreCatalog: "目录丰富度", scoreSafety: "安全与政策",
+        ctaHeading: "希望我们帮您的商店做好智能体商务准备吗？",
+        ctaBody: "我们的团队可以为您实施这些改进——从架构和变体清理到符合UCP/MCP标准的商店数据。",
+        ctaButton: "预约免费咨询",
       },
     };
+
+    const BOOKING_URL = "https://calendly.com/garima-dhebana-propero/30min?month=2026-02&date=2026-02-06";
 
     const ERROR_HINTS = {
       invalid_store_url:  'Double-check the URL and make sure it includes the full domain, e.g. your-store.myshopify.com',
@@ -809,6 +896,41 @@ async function pollJob(jobId) {
         </div>`).join('');
     }
 
+    function scoreBand(value) {
+      if (value >= 70) return 'strong';
+      if (value >= 40) return 'fair';
+      return 'weak';
+    }
+
+    function renderReadinessScores(report, labels) {
+      const s = report.readiness_scores || {};
+      const items = [
+        [labels.scoreOverall, s.overall],
+        [labels.scoreUcp, s.ucp_commerce_flows],
+        [labels.scoreMcp, s.mcp_knowledge],
+        [labels.scoreCatalog, s.catalog_enrichment],
+        [labels.scoreSafety, s.safety_policies],
+      ];
+      const cards = items.map(([label, raw]) => {
+        const value = Number.isFinite(raw) ? Math.max(0, Math.min(100, Math.round(raw))) : 0;
+        return `
+          <div class="score-card">
+            <div class="score-circle ${scoreBand(value)}"><span>${value}</span></div>
+            <p class="score-card__label">${esc(label)}</p>
+          </div>`;
+      }).join('');
+      return `<div class="readiness-scores">${cards}</div>`;
+    }
+
+    function renderCta(labels) {
+      return `
+        <div class="cta-block">
+          <h3>${esc(labels.ctaHeading)}</h3>
+          <p>${esc(labels.ctaBody)}</p>
+          <a class="cta-button-link" href="${esc(BOOKING_URL)}" target="_blank" rel="noopener">${esc(labels.ctaButton)} →</a>
+        </div>`;
+    }
+
     function renderExecutiveSummary(report, products, labels) {
       const storeRecs = report.store_level_recommendations || [];
       const highCount = products.reduce((n, p) => n + (p.missing_enrichments||[]).filter(r=>r.priority==='high').length, 0);
@@ -891,6 +1013,7 @@ async function pollJob(jobId) {
             </div>
             <div><div class="meta-date">${esc(now)}</div></div>
           </div>
+          ${renderReadinessScores(report, labels)}
           ${renderExecutiveSummary(report, products, labels)}
           <div class="audit-body-content">
             <div class="panel-block-title">${esc(labels.sectionStore)}</div>
@@ -900,6 +1023,7 @@ async function pollJob(jobId) {
             <div class="panel-block-title">${esc(labels.sectionProducts)}</div>
             ${accordions || `<p style="color:#9ca3af;font-size:13px">${esc(labels.noProductRecs)}</p>`}
           </div>
+          ${renderCta(labels)}
           <div class="report-footer-meta">
             <div class="footer-line">${esc(labels.verified)}</div>
             <div><span class="powered-by">${esc(labels.poweredBy)}</span> · <a href="https://www.propero.in" target="_blank">propero.in</a></div>
