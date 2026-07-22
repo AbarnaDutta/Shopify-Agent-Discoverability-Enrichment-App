@@ -288,6 +288,19 @@
     .score-circle.weak   { background: #dc2626; }
     .score-card__label { margin: 0; font-size: 10px; font-weight: 700; text-align: center; color: #6b7280; text-transform: uppercase; letter-spacing: 0.03em; line-height: 1.3; }
 
+    /* ── Agent Discovery Files ── */
+    .agent-discovery-block { padding: 24px 40px; border-bottom: 1px solid #f3f4f6; }
+    .agent-discovery-block h2 { font-size: 15px; font-weight: 800; color: #111111; margin-bottom: 4px; }
+    .agent-discovery-block .af-summary { font-size: 12px; color: #6b7280; margin-bottom: 14px; }
+    .af-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+    .af-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; background: #faf9f6; border: 1px solid #f3f4f6; border-radius: 8px; }
+    .af-icon { font-size: 13px; font-weight: 800; width: 18px; text-align: center; flex-shrink: 0; }
+    .af-icon.ok { color: #16a34a; }
+    .af-icon.warn { color: #d97706; }
+    .af-icon.bad { color: #dc2626; }
+    .af-name { font-weight: 700; color: #111111; font-size: 12px; }
+    .af-desc { color: #6b7280; font-size: 11px; margin-top: 2px; }
+
     /* ── Executive Summary ── */
     .exec-summary { padding: 32px 40px; border-bottom: 1px solid #f3f4f6; }
     .exec-summary .exec-eyebrow { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #d97706; letter-spacing: 0.08em; margin-bottom: 8px; }
@@ -396,6 +409,8 @@
       .exec-summary { padding: 24px; }
       .exec-cards, .exec-columns { grid-template-columns: 1fr; }
       .readiness-scores { padding: 24px 20px 4px; grid-template-columns: repeat(3, minmax(0,1fr)); }
+      .agent-discovery-block { padding: 20px; }
+      .af-list { grid-template-columns: 1fr; }
       .cta-block { margin: 0 20px 24px; padding: 24px 20px; }
     }
   </style>
@@ -520,6 +535,28 @@
       document.getElementById('language').value = pill.dataset.value;
     });
 
+    // ── Agent discovery file labels (Shopify's May 2026 rollout) ─────────
+    const AGENT_DISCOVERY_LABELS = {
+      agents_md: 'agents.md (canonical agent guide)',
+      llms_txt: 'llms.txt',
+      llms_full_txt: 'llms-full.txt',
+      ucp_manifest: '/.well-known/ucp (UCP manifest)',
+    };
+    const AGENT_DISCOVERY_STATUS = {
+      served_custom:  { icon: '✓', cls: 'ok',   text: 'Served and customized' },
+      served_default: { icon: '⚠', cls: 'warn', text: "Served — still Shopify's default template" },
+      redirects:      { icon: '→', cls: 'warn', text: 'Redirects to agents.md (expected)' },
+      missing:        { icon: '✕', cls: 'bad',  text: 'Not reachable' },
+      unreachable:    { icon: '✕', cls: 'bad',  text: 'Could not connect' },
+    };
+    const AGENT_DISCOVERY_CUSTOMIZATION = {
+      default_skeleton:   'Shopify default skeleton — mostly boilerplate',
+      lightly_customized: 'Lightly customized — boilerplate plus some custom content',
+      heavily_customized: 'Heavily customized — brand/product-specific content',
+      empty:              'Empty or too thin to classify',
+      unknown:             '',
+    };
+
     // ── i18n label maps ─────────────────────────────────────────────────
     const LABELS = {
       English: {
@@ -544,6 +581,7 @@
         ctaHeading: "Want us to make your store agentic-commerce ready?",
         ctaBody: "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
         ctaButton: "Book a Free Consultation",
+        agentDiscoveryHeading: "Agent Discovery Files",
       },
       German: {
         execEyebrow: "Zusammenfassung", execHeading: "Allgemeine Beobachtungen",
@@ -566,6 +604,7 @@
         ctaHeading: "Möchten Sie, dass wir Ihren Shop agentic-commerce-bereit machen?",
         ctaBody: "Unser Team kann diese Korrekturen für Sie umsetzen — von Schema- und Variantenbereinigung bis zu UCP/MCP-fähigen Shop-Daten.",
         ctaButton: "Kostenlose Beratung buchen",
+        agentDiscoveryHeading: "KI-Agenten-Discovery-Dateien",
       },
       French: {
         execEyebrow: "Résumé exécutif", execHeading: "Observations générales",
@@ -588,6 +627,7 @@
         ctaHeading: "Vous voulez que nous rendions votre boutique prête pour le commerce agentique ?",
         ctaBody: "Notre équipe peut mettre en œuvre ces corrections pour vous — du nettoyage des schémas et variantes aux données boutique compatibles UCP/MCP.",
         ctaButton: "Réserver une consultation gratuite",
+        agentDiscoveryHeading: "Fichiers de découverte pour agents IA",
       },
       Spanish: {
         execEyebrow: "Resumen ejecutivo", execHeading: "Observaciones generales",
@@ -610,6 +650,7 @@
         ctaHeading: "¿Quiere que preparemos su tienda para el comercio agéntico?",
         ctaBody: "Nuestro equipo puede implementar estas mejoras por usted — desde la limpieza de esquemas y variantes hasta datos de tienda compatibles con UCP/MCP.",
         ctaButton: "Reservar una consulta gratuita",
+        agentDiscoveryHeading: "Archivos de descubrimiento para agentes IA",
       },
       Italian: {
         execEyebrow: "Riepilogo esecutivo", execHeading: "Osservazioni generali",
@@ -632,6 +673,7 @@
         ctaHeading: "Vuoi che rendiamo il tuo store pronto per il commercio agentico?",
         ctaBody: "Il nostro team può implementare queste correzioni per te — dalla pulizia di schemi e varianti ai dati store compatibili UCP/MCP.",
         ctaButton: "Prenota una consulenza gratuita",
+        agentDiscoveryHeading: "File di scoperta per agenti IA",
       },
       Portuguese: {
         execEyebrow: "Resumo executivo", execHeading: "Observações gerais",
@@ -654,6 +696,7 @@
         ctaHeading: "Quer que deixemos sua loja pronta para o comércio agêntico?",
         ctaBody: "Nossa equipe pode implementar essas correções para você — da limpeza de esquemas e variantes a dados de loja compatíveis com UCP/MCP.",
         ctaButton: "Agendar uma consultoria gratuita",
+        agentDiscoveryHeading: "Arquivos de descoberta para agentes de IA",
       },
       Dutch: {
         execEyebrow: "Samenvatting", execHeading: "Algemene observaties",
@@ -676,6 +719,7 @@
         ctaHeading: "Wilt u dat wij uw winkel agentic-commerce-klaar maken?",
         ctaBody: "Ons team kan deze verbeteringen voor u doorvoeren — van schema- en variantopschoning tot UCP/MCP-klare winkeldata.",
         ctaButton: "Boek een gratis consult",
+        agentDiscoveryHeading: "AI-agent discovery-bestanden",
       },
       Japanese: {
         execEyebrow: "エグゼクティブサマリー", execHeading: "全体的な所見",
@@ -698,6 +742,7 @@
         ctaHeading: "ストアをエージェント型コマース対応にしませんか？",
         ctaBody: "スキーマやバリアントの整備からUCP/MCP対応のストアデータ構築まで、私たちのチームが対応いたします。",
         ctaButton: "無料相談を予約する",
+        agentDiscoveryHeading: "エージェント検出ファイル",
       },
       Chinese: {
         execEyebrow: "执行摘要", execHeading: "总体观察",
@@ -720,6 +765,7 @@
         ctaHeading: "希望我们帮您的商店做好智能体商务准备吗？",
         ctaBody: "我们的团队可以为您实施这些改进——从架构和变体清理到符合UCP/MCP标准的商店数据。",
         ctaButton: "预约免费咨询",
+        agentDiscoveryHeading: "智能体发现文件",
       },
     };
 
@@ -922,6 +968,48 @@ async function pollJob(jobId) {
       return `<div class="readiness-scores">${cards}</div>`;
     }
 
+    function renderAgentDiscovery(report, labels) {
+      const ad = report.agent_discovery;
+      if (!ad) return '';
+      const files = ad.files || {};
+      const rows = Object.entries(AGENT_DISCOVERY_LABELS).map(([key, label]) => {
+        const info = files[key] || {};
+        const s = AGENT_DISCOVERY_STATUS[info.status] || { icon: '○', cls: '', text: 'Unknown' };
+        let extra = '';
+        if (info.status !== 'missing' && info.status !== 'unreachable') {
+          const custText = AGENT_DISCOVERY_CUSTOMIZATION[info.customization] || '';
+          if (custText) extra += ` · ${custText}`;
+          if (info.mirrors_agents_md) extra += ' · mirrors agents.md (no dedicated template)';
+        }
+        return `
+          <div class="af-row">
+            <span class="af-icon ${s.cls}">${esc(s.icon)}</span>
+            <div>
+              <div class="af-name">${esc(label)}</div>
+              <div class="af-desc">${esc(s.text)}${esc(extra)}</div>
+            </div>
+          </div>`;
+      }).join('');
+
+      const recs = ad.recommendations || [];
+      const recsHtml = recs.length ? `
+          <h3 style="margin:16px 0 10px;font-size:13px;font-weight:700;color:#111111;">Shopify-Aligned Recommendations</h3>
+          ${renderRecommendations(recs, labels, 1)}
+        ` : '';
+
+      const templatesCustomized = ad.templates_customized ?? 0;
+      const templatesTotal = ad.templates_total ?? 3;
+
+      return `
+        <div class="agent-discovery-block">
+          <h2>${esc(labels.agentDiscoveryHeading || 'Agent Discovery Files')}</h2>
+          <p class="af-summary">${esc(ad.summary || '')}</p>
+          <p class="af-summary">Template readiness: ${templatesCustomized}/${templatesTotal} customized beyond Shopify's default.</p>
+          <div class="af-list">${rows}</div>
+          ${recsHtml}
+        </div>`;
+    }
+
     function renderCta(labels) {
       return `
         <div class="cta-block">
@@ -1014,6 +1102,7 @@ async function pollJob(jobId) {
             <div><div class="meta-date">${esc(now)}</div></div>
           </div>
           ${renderReadinessScores(report, labels)}
+          ${renderAgentDiscovery(report, labels)}
           ${renderExecutiveSummary(report, products, labels)}
           <div class="audit-body-content">
             <div class="panel-block-title">${esc(labels.sectionStore)}</div>

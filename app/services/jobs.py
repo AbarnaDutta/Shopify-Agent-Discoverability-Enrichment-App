@@ -31,6 +31,7 @@ from app.services.report_builder import (
     merge_reports,
     get_llm_adapter,
     get_bedrock_adapter,
+    check_agent_discovery_readiness,
 )
 from app.services.email_service import EmailService
 from app.integrations.email_clients.ses_mail import SESMail
@@ -232,6 +233,16 @@ class JobQueue:
 
             products = [compact_product(p, store_url) for p in raw_products]
             print(f"[JOB {job_id}] Fetched {len(products)} products")
+
+            print(f"[JOB {job_id}] Checking agent discovery files")
+            try:
+                agent_discovery = check_agent_discovery_readiness(store_url)
+                print(f"[JOB {job_id}] Agent discovery: {agent_discovery.get('summary')}")
+            except Exception as discovery_error:
+                print(f"[JOB {job_id}] Agent discovery check failed: {discovery_error}")
+                traceback.print_exc()
+                agent_discovery = None
+
             provider = settings["provider"]
             model = settings["model"]
             adapter, _, effective_provider = self._pick_provider(provider, model)
@@ -253,6 +264,7 @@ class JobQueue:
             report.setdefault("provider", effective_provider)
             report.setdefault("model", model)
             report.setdefault("store_url", store_url)
+            report["agent_discovery"] = agent_discovery
 
             self._update_job(job_id, report=report)
             try:
