@@ -12,3 +12,11 @@ agent_enrichment_report.pdf
 .elasticbeanstalk/*
 !.elasticbeanstalk/*.cfg.yml
 !.elasticbeanstalk/*.global.yml
+
+# Shopify app generated files
+agentic-commerce-readiness/node_modules/
+agentic-commerce-readiness/build/
+agentic-commerce-readiness/.react-router/
+agentic-commerce-readiness/prisma/dev.sqlite
+agentic-commerce-readiness/app/.DS_Store
+agentic-commerce-readiness/app/routes/.DS_Store
