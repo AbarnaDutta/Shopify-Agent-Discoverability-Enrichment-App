@@ -27,8 +27,6 @@ from app.services.report_builder import (
     LLMRateLimitError,
     LLMResponseError,
     LLMAuthError,
-    chunked,
-    merge_reports,
     get_llm_adapter,
     get_bedrock_adapter,
     check_agent_discovery_readiness,
@@ -37,6 +35,7 @@ from app.services.email_service import EmailService
 from app.integrations.email_clients.ses_mail import SESMail
 from app.services.job_repository import job_repo
 from dotenv import load_dotenv
+from app.services.audit_engine import audit_products
 
 load_dotenv()
 
@@ -248,16 +247,12 @@ class JobQueue:
             adapter, _, effective_provider = self._pick_provider(provider, model)
             print(f"[JOB {job_id}] Routed → {effective_provider}")
             start_time = time.time()
-            batch_size = int(os.getenv("MAX_PRODUCTS_PER_BATCH", "5"))
-            batches = chunked(products, batch_size)
-            batch_reports = []
-
-            for idx, batch in enumerate(batches, start=1):
-                print(f"[JOB {job_id}] Batch {idx}/{len(batches)}")
-                result = adapter.analyze(batch, store_url, job.language)
-                batch_reports.append(result)
-
-            report = merge_reports(batch_reports) if len(batch_reports) > 1 else batch_reports[0]
+            report = audit_products(
+                products=products,
+                store_url=store_url,
+                language=job.language,
+                analyzer=adapter,
+            )
 
             print(f"[JOB {job_id}] Analysis done in {time.time() - start_time:.2f}s")
 

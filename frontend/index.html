@@ -8,10 +8,10 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: #faf9f6;
+      background: #f7f5f1;
       color: #111111;
       min-height: 100vh;
-      padding: 0 0 80px;
+      padding: 0 0 100px;
     }
 
     .hero-container {
@@ -40,22 +40,26 @@
     /* ── Search Card ── */
     .search-card {
       background: #ffffff;
-      border-radius: 20px;
-      padding: 16px 16px 16px 24px;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.02);
-      border: 1px solid #f3f4f6;
-      display: flex;
-      align-items: center;
-      gap: 12px;
+      border-radius: 30px;
+      padding: 24px 28px 20px;
+      box-shadow: 0 25px 50px rgba(0,0,0,0.05), 0 2px 10px rgba(0,0,0,0.03);
+      border: 1px solid #ece8e0;
       max-width: 680px;
       margin: 0 auto;
+    }
+    .search-row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
       flex-wrap: wrap;
     }
     .search-card .input-group {
       display: flex;
       flex-direction: column;
       align-items: flex-start;
-      min-width: 0;
+      gap: 3px;
+      flex: 1;
+      min-width: 160px;
     }
     .search-card label {
       font-size: 9px;
@@ -63,7 +67,6 @@
       text-transform: uppercase;
       color: #9ca3af;
       letter-spacing: 0.05em;
-      margin-bottom: 2px;
       white-space: nowrap;
     }
     .search-card input {
@@ -76,9 +79,34 @@
     }
     .search-card input::placeholder { color: #cbd5e1; }
 
-    /* Language select styled as pill buttons */
+    .search-card .divider {
+      width: 1px;
+      height: 34px;
+      background: #e5e7eb;
+      flex-shrink: 0;
+    }
+    .run-audit-btn {
+      background: #111111;
+      color: #f5b34c;
+      border: none;
+      padding: 15px 26px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .run-audit-btn:hover { background: #222222; }
+    .run-audit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* Language pills */
     .lang-group {
-      width: 100%;
+      margin-top: 16px;
       display: flex;
       flex-direction: column;
       align-items: flex-start;
@@ -100,9 +128,9 @@
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      padding: 5px 11px;
+      padding: 7px 14px;
       border-radius: 100px;
-      font-size: 12px;
+      font-size: 12.5px;
       font-weight: 600;
       cursor: pointer;
       border: 1.5px solid #e5e7eb;
@@ -118,33 +146,7 @@
       border-color: #111111;
       color: #ffffff;
     }
-    /* Hidden real select for form submission */
     #language { display: none; }
-
-    .search-card .divider {
-      width: 1px;
-      height: 32px;
-      background: #e5e7eb;
-      flex-shrink: 0;
-    }
-    .run-audit-btn {
-      background: #111111;
-      color: #ffffff;
-      border: none;
-      padding: 14px 28px;
-      border-radius: 100px;
-      font-size: 14px;
-      font-weight: 700;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      transition: background 0.15s;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-    .run-audit-btn:hover { background: #222222; }
-    .run-audit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
     .form-meta-info {
       display: flex;
@@ -157,162 +159,166 @@
     .meta-item { display: flex; align-items: center; gap: 4px; }
     .privacy-strip { font-size: 11px; color: #9ca3af; margin-top: 12px; text-align: center; }
 
-    /* ── Status Banner ── */
+    /* ── Progress Steps / Banner ── */
     .progress-steps {
-  max-width: 680px;
-  margin: 28px auto 0;
-  display: none;
-  flex-direction: column;
-  gap: 0;
-}
-.progress-steps.visible { display: flex; }
- 
-.step-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 14px 0;
-  position: relative;
-}
-.step-row:not(:last-child)::after {
-  content: '';
-  position: absolute;
-  left: 15px;
-  top: 40px;
-  bottom: -2px;
-  width: 2px;
-  background: #e5e7eb;
-}
-.step-row.done::after   { background: #d1fae5; }
-.step-row.active::after { background: #fef3c7; }
- 
-.step-dot {
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  background: #f3f4f6;
-  color: #9ca3af;
-  border: 2px solid #e5e7eb;
-  transition: all 0.3s;
-  position: relative;
-  z-index: 1;
-}
-.step-row.done   .step-dot { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
-.step-row.active .step-dot { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
-.step-row.active .step-dot .step-spinner {
-  width: 14px; height: 14px;
-  border: 2px solid #92400e;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: spin .7s linear infinite;
-}
- 
-.step-text { padding-top: 4px; }
-.step-label {
-  font-size: 14px;
-  font-weight: 700;
-  color: #111111;
-  line-height: 1.3;
-}
-.step-row.pending .step-label { color: #9ca3af; font-weight: 500; }
-.step-sublabel {
-  font-size: 12px;
-  color: #6b7280;
-  margin-top: 2px;
-  line-height: 1.4;
-}
- 
-.status-banner {
-  max-width: 680px;
-  margin: 16px auto 0;
-  padding: 10px 18px;
-  border-radius: 30px;
-  font-size: 13px;
-  font-weight: 600;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-}
-.status-banner.visible { display: flex; }
-.status-banner.error   { background: #fee2e2; color: #991b1b; }
-.status-banner.success { background: #d1fae5; color: #065f46; }
+      max-width: 680px;
+      margin: 28px auto 0;
+      display: none;
+      flex-direction: column;
+      gap: 0;
+    }
+    .progress-steps.visible { display: flex; }
+
+    .step-row { display: flex; align-items: flex-start; gap: 14px; padding: 14px 0; position: relative; }
+    .step-row:not(:last-child)::after {
+      content: ''; position: absolute; left: 15px; top: 40px; bottom: -2px; width: 2px; background: #e5e7eb;
+    }
+    .step-row.done::after   { background: #d1fae5; }
+    .step-row.active::after { background: #fef3c7; }
+
+    .step-dot {
+      width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; background: #f3f4f6; color: #9ca3af;
+      border: 2px solid #e5e7eb; transition: all 0.3s; position: relative; z-index: 1;
+    }
+    .step-row.done   .step-dot { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
+    .step-row.active .step-dot { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+    .step-row.active .step-dot .step-spinner {
+      width: 14px; height: 14px; border: 2px solid #92400e; border-top-color: transparent;
+      border-radius: 50%; animation: spin .7s linear infinite;
+    }
+
+    .step-text { padding-top: 4px; }
+    .step-label { font-size: 14px; font-weight: 700; color: #111111; line-height: 1.3; }
+    .step-row.pending .step-label { color: #9ca3af; font-weight: 500; }
+    .step-sublabel { font-size: 12px; color: #6b7280; margin-top: 2px; line-height: 1.4; }
+
+    .status-banner {
+      max-width: 680px; margin: 16px auto 0; padding: 10px 18px; border-radius: 30px;
+      font-size: 13px; font-weight: 600; display: none; align-items: center; justify-content: center; gap: 10px;
+    }
+    .status-banner.visible { display: flex; }
+    .status-banner.error   { background: #fee2e2; color: #991b1b; }
+    .status-banner.success { background: #d1fae5; color: #065f46; }
     .status-banner.processing { background: #fef3c7; color: #92400e; }
     .spinner {
-      width: 14px; height: 14px;
-      border: 2px solid currentColor;
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
+      width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; animation: spin .7s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    
 
-    /* ── Report Container ── */
+    /* ── Report ── */
     #report-container { display: none; max-width: 780px; margin: 50px auto 0; padding: 0 16px; }
     #report-container.visible { display: block; }
 
-    .report-card {
+    .report-stack { display: flex; flex-direction: column; gap: 24px; }
+
+    /* Card 1: header + score + pills — ends here, nothing else lives in it */
+    .report-card-top {
       background: #ffffff;
-      border-radius: 16px;
-      box-shadow: 0 30px 60px rgba(0,0,0,0.025);
-      border: 1px solid #e5e7eb;
+      border-radius: 18px;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.05);
+      border: 1px solid #ece8e0;
       overflow: hidden;
     }
 
     .report-header {
       background: #111111;
       color: #ffffff;
-      padding: 24px 32px;
+      padding: 22px 32px;
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
+      gap: 10px;
     }
-    .report-header .domain-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
-    .report-header .domain-url   { font-size: 12px; color: #6b7280; margin-top: 2px; }
-    .report-header .meta-date    { font-size: 11px; color: #9ca3af; }
+    .report-header .domain-title { font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
+    .report-header .domain-url   { font-size: 12px; color: #f2b657; margin-top: 3px; }
+    .header-date { font-size: 12px; color: #9ca3af; white-space: nowrap; }
 
-    /* ── Readiness Scores ── */
-    .readiness-scores { padding: 28px 40px 4px; display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; border-bottom: 1px solid #f3f4f6; }
-    .score-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px 24px; }
-    .score-circle { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #ffffff; }
-    .score-circle span { font-size: 18px; font-weight: 800; }
-    .score-circle.strong { background: #16a34a; }
-    .score-circle.fair   { background: #d97706; }
-    .score-circle.weak   { background: #dc2626; }
-    .score-card__label { margin: 0; font-size: 10px; font-weight: 700; text-align: center; color: #6b7280; text-transform: uppercase; letter-spacing: 0.03em; line-height: 1.3; }
+    /* Score donut + bars */
+    .score-overview {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 28px;
+      align-items: center;
+      padding: 30px 40px;
+      border-bottom: 1px solid #f0ece3;
+    }
+    .score-donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .score-donut {
+      width: 130px; height: 130px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; position: relative;
+    }
+    .score-donut::before { content: ''; position: absolute; inset: 14px; border-radius: 50%; background: #ffffff; }
+    .score-donut .donut-inner { position: relative; z-index: 1; text-align: center; }
+    .score-donut .donut-pct { font-size: 25px; font-weight: 800; line-height: 1; }
+    .score-donut.strong .donut-pct { color: #16a34a; }
+    .score-donut.fair   .donut-pct { color: #d97706; }
+    .score-donut.weak   .donut-pct { color: #dc2626; }
+    .donut-status { font-size: 11px; color: #9ca3af; font-weight: 700; margin-top: 3px; }
+    .donut-caption { font-size: 12.5px; color: #4b5563; font-weight: 600; }
 
-    /* ── Agent Discovery Files ── */
-    .agent-discovery-block { padding: 24px 40px; border-bottom: 1px solid #f3f4f6; }
-    .agent-discovery-block h2 { font-size: 15px; font-weight: 800; color: #111111; margin-bottom: 4px; }
-    .agent-discovery-block .af-summary { font-size: 12px; color: #6b7280; margin-bottom: 14px; }
+    .score-bars { display: flex; flex-direction: column; gap: 14px; }
+    .score-bar-row .score-bar-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+    .score-bar-row .score-bar-label { font-size: 12.5px; font-weight: 700; color: #111111; }
+    .score-bar-row .score-bar-value { font-size: 12px; font-weight: 700; color: #6b7280; }
+    .score-bar-track { height: 7px; border-radius: 999px; background: #eee9e0; overflow: hidden; }
+    .score-bar-fill { height: 100%; border-radius: 999px; }
+    .score-bar-fill.strong { background: #16a34a; }
+    .score-bar-fill.fair   { background: #d97706; }
+    .score-bar-fill.weak   { background: #dc2626; }
+
+    /* Priority pill summary row — last thing in the top card */
+    .priority-pill-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 18px 40px 26px; }
+    .priority-summary-pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .priority-summary-pill.high   { background: #fee2e2; color: #991b1b; }
+    .priority-summary-pill.medium { background: #fef3c7; color: #92400e; }
+    .priority-summary-pill.low    { background: #d1fae5; color: #065f46; }
+    .priority-summary-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+    /* ── Section headers (used by every section below the top card) ── */
+    .section-block { }
+    .section-header {
+      display: flex; align-items: baseline; gap: 10px;
+      font-size: 12px; font-weight: 800; text-transform: uppercase; color: #111111;
+      letter-spacing: 0.08em; margin-bottom: 14px; padding-left: 2px;
+    }
+    .section-header::before { content: ''; width: 3px; height: 15px; border-radius: 2px; background: #d97706; display: inline-block; flex-shrink: 0; }
+    .section-header .count { font-weight: 600; color: #9ca3af; text-transform: none; letter-spacing: 0; }
+
+    /* Generic white card used by Agent Discovery / Executive Summary */
+    .section-card {
+      background: #ffffff;
+      border: 1px solid #ece8e0;
+      border-radius: 16px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.04);
+      padding: 26px 28px;
+    }
+    .empty-note { color: #9ca3af; font-size: 13px; font-style: italic; }
+
+    /* Agent Discovery Files */
+    .af-summary { font-size: 12px; color: #6b7280; margin-bottom: 10px; }
+    .af-summary:last-of-type { margin-bottom: 16px; }
     .af-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
-    .af-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; background: #faf9f6; border: 1px solid #f3f4f6; border-radius: 8px; }
+    .af-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 13px; background: #faf8f4; border: 1px solid #f0ece3; border-radius: 10px; }
     .af-icon { font-size: 13px; font-weight: 800; width: 18px; text-align: center; flex-shrink: 0; }
     .af-icon.ok { color: #16a34a; }
     .af-icon.warn { color: #d97706; }
     .af-icon.bad { color: #dc2626; }
     .af-name { font-weight: 700; color: #111111; font-size: 12px; }
     .af-desc { color: #6b7280; font-size: 11px; margin-top: 2px; }
+    .subhead { margin: 20px 0 10px; font-size: 13px; font-weight: 700; color: #111111; }
 
-    /* ── Executive Summary ── */
-    .exec-summary { padding: 32px 40px; border-bottom: 1px solid #f3f4f6; }
-    .exec-summary .exec-eyebrow { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #d97706; letter-spacing: 0.08em; margin-bottom: 8px; }
-    .exec-summary h2 { font-size: 19px; font-weight: 800; color: #111111; margin-bottom: 16px; }
-    .exec-summary .exec-intro { font-size: 13px; line-height: 1.6; color: #4b5563; background: #faf9f6; border: 1px solid #f3f4f6; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; }
+    /* Executive Summary */
+    .exec-intro { font-size: 13px; line-height: 1.6; color: #4b5563; background: #faf8f4; border: 1px solid #f0ece3; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; }
     .exec-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
-    .exec-card { padding: 14px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; }
+    .exec-card { padding: 14px; background: #faf8f4; border: 1px solid #f0ece3; border-radius: 10px; }
     .exec-card .eyebrow { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #9ca3af; margin-bottom: 6px; }
     .exec-card strong { display: block; font-size: 24px; font-weight: 800; color: #111111; margin-bottom: 4px; }
     .exec-card p { font-size: 12px; color: #6b7280; line-height: 1.4; }
     .exec-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .exec-panel { padding: 14px 16px; background: #faf9f6; border: 1px solid #f3f4f6; border-radius: 10px; }
+    .exec-panel { padding: 14px 16px; background: #faf8f4; border: 1px solid #f0ece3; border-radius: 10px; }
     .exec-panel h3 { font-size: 13px; font-weight: 700; color: #111111; margin-bottom: 10px; }
     .exec-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
     .exec-list li strong { display: block; font-size: 13px; color: #111111; margin-bottom: 2px; }
@@ -320,98 +326,118 @@
 
     /* ── Error Card ── */
     .error-card {
-      background: #fff5f5;
-      border: 1px solid #fecaca;
-      border-radius: 16px;
-      padding: 40px;
-      text-align: center;
+      background: #fff5f5; border: 1px solid #fecaca; border-radius: 16px; padding: 40px; text-align: center;
     }
     .error-card .error-icon { font-size: 40px; margin-bottom: 16px; }
     .error-card h3 { font-size: 18px; font-weight: 800; color: #991b1b; margin-bottom: 12px; }
     .error-card p { font-size: 14px; color: #7f1d1d; line-height: 1.6; max-width: 520px; margin: 0 auto 20px; }
     .error-card .error-hint {
-      font-size: 13px; color: #6b7280;
-      background: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px;
+      font-size: 13px; color: #6b7280; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px;
       padding: 12px 16px; max-width: 480px; margin: 0 auto 20px;
     }
     .error-retry-btn {
-      background: #111111; color: #ffffff; border: none;
-      padding: 12px 24px; border-radius: 100px;
+      background: #111111; color: #ffffff; border: none; padding: 12px 24px; border-radius: 100px;
       font-size: 14px; font-weight: 700; cursor: pointer;
     }
     .error-retry-btn:hover { background: #222222; }
 
-    /* ── Audit Body ── */
-    .audit-body-content { padding: 40px; }
-    .panel-block-title { font-size: 12px; font-weight: 800; text-transform: uppercase; color: #d97706; letter-spacing: 0.08em; margin-bottom: 24px; }
-    .recommendation-node { padding: 20px 0; border-bottom: 1px solid #f3f4f6; }
-    .recommendation-node:last-child { border-bottom: none; padding-bottom: 0; }
-    .rec-top-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-    .rec-index { font-size: 14px; font-weight: 700; color: #d1d5db; width: 20px; }
-    .priority-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.02em; }
-    .priority-badge.high   { background: #fee2e2; color: #991b1b; }
-    .priority-badge.medium { background: #fef3c7; color: #92400e; }
-    .priority-badge.low    { background: #d1fae5; color: #065f46; }
-    .rec-headline    { font-size: 14px; font-weight: 700; color: #111111; }
-    .rec-explanation { font-size: 13px; color: #4b5563; line-height: 1.5; margin-bottom: 10px; padding-left: 32px; }
-    .rec-code-snippet { font-size: 12px; background: #faf9f6; border-left: 3px solid #cbd5e1; padding: 8px 14px; color: #4b5563; margin-left: 32px; font-family: monospace; }
+    /* ── Finding cards (Priority Fixes / Shopify-Aligned Recs / per-product recs) ── */
+    .finding-card {
+      background: #ffffff;
+      border: 1px solid #ece8e0;
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 10px;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.03);
+    }
+    .finding-card:last-child { margin-bottom: 0; }
+    .finding-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+    .finding-title-wrap { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
+    .finding-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+    .finding-dot.high   { background: #dc2626; }
+    .finding-dot.medium { background: #d97706; }
+    .finding-dot.low    { background: #16a34a; }
+    .finding-title { font-size: 14px; font-weight: 700; color: #111111; }
+    .finding-pill { font-size: 10.5px; font-weight: 700; padding: 3px 11px; border-radius: 999px; white-space: nowrap; flex-shrink: 0; }
+    .finding-pill.high   { background: #fee2e2; color: #991b1b; }
+    .finding-pill.medium { background: #fef3c7; color: #92400e; }
+    .finding-pill.low    { background: #d1fae5; color: #065f46; }
+    .finding-desc { font-size: 13px; color: #4b5563; line-height: 1.5; margin: 0 0 10px 17px; }
+    .finding-example {
+      font-size: 12px; background: #faf8f4; border-left: 3px solid #cbd5e1; padding: 8px 14px;
+      color: #4b5563; font-family: monospace; border-radius: 0 6px 6px 0; margin-left: 17px;
+    }
 
-    /* ── Accordion ── */
-    .catalog-accordion-box { margin-top: 24px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
-    .accordion-trigger { padding: 20px 24px; background: #ffffff; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
-    .catalog-accordion-box:last-child .accordion-trigger { border-bottom: none; }
+    /* ── Findings accordion (per product) ── */
+    .catalog-accordion-box { margin-bottom: 12px; background: #ffffff; border: 1px solid #ece8e0; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 24px rgba(0,0,0,0.03); }
+    .catalog-accordion-box:last-child { margin-bottom: 0; }
+    .accordion-trigger { padding: 16px 18px; background: #ffffff; display: flex; justify-content: space-between; align-items: center; cursor: pointer; gap: 12px; }
+    .accordion-trigger .trigger-left { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+    .accordion-trigger .severity-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+    .severity-dot.high   { background: #dc2626; }
+    .severity-dot.medium { background: #d97706; }
+    .severity-dot.low    { background: #16a34a; }
+    .severity-dot.none   { background: #d1d5db; }
     .accordion-trigger .item-title { font-size: 14px; font-weight: 700; color: #111111; }
     .accordion-trigger .item-desc  { font-size: 12px; color: #9ca3af; margin-top: 2px; }
-    .accordion-body { display: none; padding: 24px; background: #fafafa; border-bottom: 1px solid #e5e7eb; }
+    .accordion-body { display: none; padding: 4px 18px 20px; background: #fdfcfa; border-top: 1px solid #f0ece3; }
     .accordion-body.open { display: block; }
-    .accordion-trigger .arrow-icon { font-size: 12px; color: #9ca3af; transition: transform 0.2s; }
+    .accordion-trigger .arrow-icon { font-size: 12px; color: #9ca3af; transition: transform 0.2s; flex-shrink: 0; }
     .accordion-trigger.open .arrow-icon { transform: rotate(180deg); }
-    .agent-vision-panel { background: #f3f4f6; padding: 14px 16px; border-radius: 8px; font-size: 13px; color: #1f2937; margin-bottom: 20px; line-height: 1.5; border: 1px solid #e5e7eb; }
+    .agent-vision-panel { background: #f3f1ec; padding: 14px 16px; border-radius: 8px; font-size: 13px; color: #1f2937; margin: 14px 0; line-height: 1.5; border: 1px solid #ece8e0; }
 
     /* ── CTA block ── */
     .cta-block {
-      margin: 0 40px 40px;
-      padding: 32px 30px;
-      border-radius: 16px;
-      text-align: center;
-      color: #f9f4ea;
+      padding: 32px 30px; border-radius: 16px; text-align: center; color: #f9f4ea;
       background: linear-gradient(135deg, #16302b 0%, #22594f 55%, #b86b3d 130%);
     }
     .cta-block h3 { font-size: 19px; font-weight: 800; color: #f9f4ea; margin-bottom: 10px; }
     .cta-block p { font-size: 13px; line-height: 1.6; color: #f2e7d4; max-width: 520px; margin: 0 auto 20px; }
     .cta-button-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: #ffffff;
-      color: #16302b;
-      border: none;
-      padding: 13px 28px;
-      border-radius: 100px;
-      font-size: 14px;
-      font-weight: 800;
-      text-decoration: none;
-      cursor: pointer;
-      transition: transform 0.15s, background 0.15s;
+      display: inline-flex; align-items: center; gap: 8px; background: #ffffff; color: #16302b; border: none;
+      padding: 13px 28px; border-radius: 100px; font-size: 14px; font-weight: 800; text-decoration: none;
+      cursor: pointer; transition: transform 0.15s, background 0.15s;
     }
     .cta-button-link:hover { background: #f2e7d4; transform: translateY(-1px); }
 
-    .report-footer-meta { padding: 24px 40px; border-top: 1px solid #f3f4f6; background: #faf9f6; font-size: 12px; color: #9ca3af; }
+    .report-footer-meta { padding: 22px 4px 4px; font-size: 12px; color: #9ca3af; text-align: center; }
     .report-footer-meta .footer-line { margin-bottom: 8px; }
     .report-footer-meta .powered-by { font-weight: 700; color: #22594f; }
     .report-footer-meta a { color: #17695b; text-decoration: none; font-weight: 600; }
 
+    /* ── Sticky floating consult button ── */
+    .sticky-cta {
+      position: fixed;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%) translateY(16px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      z-index: 60;
+    }
+    .sticky-cta.visible { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+    .sticky-cta-btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: linear-gradient(135deg, #f0a878, #d97757);
+      color: #ffffff; padding: 14px 26px; border-radius: 999px;
+      font-size: 14px; font-weight: 700; text-decoration: none; white-space: nowrap;
+      box-shadow: 0 16px 32px rgba(217,119,87,0.35);
+      transition: transform 0.15s;
+    }
+    .sticky-cta-btn:hover { transform: translateY(-2px); }
+
     @media (max-width: 768px) {
-      .search-card { border-radius: 20px; padding: 20px; flex-direction: column; gap: 16px; align-items: stretch; }
-      .search-card .divider { display: none; }
+      .search-card { border-radius: 24px; padding: 20px; }
+      .search-row { flex-direction: column; align-items: stretch; gap: 14px; }
+      .search-row .divider { display: none; }
       .run-audit-btn { justify-content: center; width: 100%; }
-      .audit-body-content { padding: 24px; }
-      .exec-summary { padding: 24px; }
+      .section-card { padding: 20px; }
       .exec-cards, .exec-columns { grid-template-columns: 1fr; }
-      .readiness-scores { padding: 24px 20px 4px; grid-template-columns: repeat(3, minmax(0,1fr)); }
-      .agent-discovery-block { padding: 20px; }
+      .score-overview { grid-template-columns: 1fr; padding: 24px 20px; justify-items: center; }
+      .priority-pill-row { padding: 16px 20px 22px; }
       .af-list { grid-template-columns: 1fr; }
-      .cta-block { margin: 0 20px 24px; padding: 24px 20px; }
+      .sticky-cta-btn { padding: 12px 20px; font-size: 13px; }
     }
   </style>
 </head>
@@ -425,25 +451,26 @@
 
     <form id="request-form">
       <div class="search-card">
+        <div class="search-row">
+          <!-- Store URL -->
+          <div class="input-group">
+            <label for="store_url">Shopify Store URL</label>
+            <input id="store_url" type="text" placeholder="your-store.myshopify.com" required>
+          </div>
 
-        <!-- Store URL -->
-        <div class="input-group" style="flex: 1.5; min-width: 160px;">
-          <label for="store_url">Shopify Store URL</label>
-          <input id="store_url" type="text" placeholder="your-store.myshopify.com" required>
+          <div class="divider"></div>
+
+          <!-- Email -->
+          <div class="input-group">
+            <label for="email">Email for PDF Report</label>
+            <input id="email" type="email" placeholder="you@example.com" required autocomplete="email">
+          </div>
+
+          <!-- Submit -->
+          <button class="run-audit-btn" id="submit-btn" type="submit">Run Audit →</button>
         </div>
 
-        <div class="divider"></div>
-
-        <!-- Email -->
-        <div class="input-group" style="flex: 1.2; min-width: 140px;">
-          <label for="email">Email for PDF Report</label>
-          <input id="email" type="email" placeholder="you@example.com" required autocomplete="email">
-        </div>
-
-        <!-- Submit -->
-        <button class="run-audit-btn" id="submit-btn" type="submit">Run Audit →</button>
-
-        <!-- Language pills — full width row -->
+        <!-- Language pills -->
         <div class="lang-group">
           <label>Report Language</label>
           <div class="lang-pills" id="lang-pills">
@@ -461,7 +488,6 @@
           <option value="Japanese">🇯🇵 日本語</option>
           </select>
         </div>
-
       </div>
     </form>
 
@@ -471,9 +497,9 @@
       <div class="meta-item"><span>📄</span> PDF sent to your email</div>
     </div>
     <p class="privacy-strip">Your email is used only to deliver your report. We don't store or share it.</p>
-    
+
     <div class="progress-steps" id="progress-steps">
-    
+
       <div class="step-row pending" id="step-submit">
         <div class="step-dot" id="step-submit-dot">1</div>
         <div class="step-text">
@@ -481,7 +507,7 @@
           <div class="step-sublabel">Validating URL and queuing your request</div>
         </div>
       </div>
-    
+
       <div class="step-row pending" id="step-fetch">
         <div class="step-dot" id="step-fetch-dot">2</div>
         <div class="step-text">
@@ -489,7 +515,7 @@
           <div class="step-sublabel">Reading your Shopify store's public product data</div>
         </div>
       </div>
-    
+
       <div class="step-row pending" id="step-ai">
         <div class="step-dot" id="step-ai-dot">3</div>
         <div class="step-text">
@@ -497,7 +523,7 @@
           <div class="step-sublabel" id="step-ai-sub">This takes 60–180 seconds depending on catalog size — please don't close this tab</div>
         </div>
       </div>
-    
+
       <div class="step-row pending" id="step-report">
         <div class="step-dot" id="step-report-dot">4</div>
         <div class="step-text">
@@ -505,9 +531,9 @@
           <div class="step-sublabel">Building recommendations and sending your PDF</div>
         </div>
       </div>
-    
+
     </div>
-    
+
     <div class="status-banner" id="status-banner">
       <span id="status-icon"></span>
       <span id="status-text"></span>
@@ -515,6 +541,10 @@
   </div>
 
   <div id="report-container"></div>
+
+  <div class="sticky-cta" id="sticky-cta">
+    <a class="sticky-cta-btn" id="sticky-cta-link" href="#" target="_blank" rel="noopener">Book a Free Consultation ↗</a>
+  </div>
 
   <script>
     const API_BASE = '';
@@ -524,6 +554,8 @@
     const statusIcon    = document.getElementById('status-icon');
     const submitBtn     = document.getElementById('submit-btn');
     const reportContainer = document.getElementById('report-container');
+    const stickyCta      = document.getElementById('sticky-cta');
+    const stickyCtaLink  = document.getElementById('sticky-cta-link');
     let pollTimer = null;
 
     // ── Language pill selector ──────────────────────────────────────────
@@ -570,10 +602,10 @@
         topStore: "Top store-level actions", topProducts: "Products needing the most attention",
         noStoreRecs: "No store-level recommendations returned.", noProducts: "No products returned.",
         gapsLabel: (n) => `${n} high-priority gaps`,
-        sectionStore: "Priority Store Fixes", sectionProducts: "Detailed Product Level Exceptions",
+        sectionStore: "Priority Fixes", sectionProducts: "Detailed Product Level Exceptions",
         noRecs: "No structural adjustments needed.", noProductRecs: "No item level errors flagged.",
         productId: "ID:", exampleLabel: "Example:", agentSummaryLabel: "Agent Parsing Context Summary:",
-        schemaUpdates: "schema updates pending", poweredBy: "Powered by Propero",
+        schemaUpdates: "recommendations", poweredBy: "Powered by Propero",
         verified: "Verified schema data parameters matching standard parser rules.",
         errorTitle: "We couldn't generate your report",
         scoreOverall: "Overall Readiness", scoreUcp: "UCP Commerce Flows", scoreMcp: "MCP Knowledge",
@@ -582,6 +614,8 @@
         ctaBody: "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
         ctaButton: "Book a Free Consultation",
         agentDiscoveryHeading: "Agent Discovery Files",
+        bandReady: "Agent Ready", bandNeedsWork: "Needs Work", bandNotReady: "Not Ready",
+        pillHigh: "High Priority", pillMedium: "Medium Priority", pillLow: "Low Priority",
       },
       German: {
         execEyebrow: "Zusammenfassung", execHeading: "Allgemeine Beobachtungen",
@@ -593,10 +627,10 @@
         topStore: "Wichtigste Shop-Maßnahmen", topProducts: "Produkte mit dem größten Handlungsbedarf",
         noStoreRecs: "Keine Shop-Empfehlungen.", noProducts: "Keine Produkte.",
         gapsLabel: (n) => `${n} Lücken mit hoher Priorität`,
-        sectionStore: "Wichtigste Shop-Korrekturen", sectionProducts: "Detaillierte Produktebene-Ausnahmen",
+        sectionStore: "Wichtigste Korrekturen", sectionProducts: "Detaillierte Produktebene-Ausnahmen",
         noRecs: "Keine strukturellen Anpassungen erforderlich.", noProductRecs: "Keine Fehler auf Artikelebene.",
         productId: "ID:", exampleLabel: "Beispiel:", agentSummaryLabel: "Agenten-Kontextzusammenfassung:",
-        schemaUpdates: "ausstehende Schema-Optimierungen", poweredBy: "Bereitgestellt von Propero",
+        schemaUpdates: "Empfehlungen", poweredBy: "Bereitgestellt von Propero",
         verified: "Verifizierte Schema-Datenparameter.",
         errorTitle: "Wir konnten Ihren Bericht nicht erstellen",
         scoreOverall: "Gesamtbereitschaft", scoreUcp: "UCP-Handelsabläufe", scoreMcp: "MCP-Wissen",
@@ -605,6 +639,8 @@
         ctaBody: "Unser Team kann diese Korrekturen für Sie umsetzen — von Schema- und Variantenbereinigung bis zu UCP/MCP-fähigen Shop-Daten.",
         ctaButton: "Kostenlose Beratung buchen",
         agentDiscoveryHeading: "KI-Agenten-Discovery-Dateien",
+        bandReady: "Agentenbereit", bandNeedsWork: "Optimierungsbedarf", bandNotReady: "Nicht bereit",
+        pillHigh: "Hohe Priorität", pillMedium: "Mittlere Priorität", pillLow: "Niedrige Priorität",
       },
       French: {
         execEyebrow: "Résumé exécutif", execHeading: "Observations générales",
@@ -616,10 +652,10 @@
         topStore: "Principales actions boutique", topProducts: "Produits nécessitant le plus d'attention",
         noStoreRecs: "Aucune recommandation boutique.", noProducts: "Aucun produit.",
         gapsLabel: (n) => `${n} lacunes prioritaires`,
-        sectionStore: "Principales corrections boutique", sectionProducts: "Exceptions au niveau produit",
+        sectionStore: "Corrections prioritaires", sectionProducts: "Exceptions au niveau produit",
         noRecs: "Aucun ajustement structurel requis.", noProductRecs: "Aucune erreur au niveau article.",
         productId: "ID :", exampleLabel: "Exemple :", agentSummaryLabel: "Résumé du contexte d'analyse :",
-        schemaUpdates: "mises à jour en attente", poweredBy: "Propulsé par Propero",
+        schemaUpdates: "recommandations", poweredBy: "Propulsé par Propero",
         verified: "Paramètres de schéma vérifiés.",
         errorTitle: "Nous n'avons pas pu générer votre rapport",
         scoreOverall: "Préparation globale", scoreUcp: "Flux de commerce UCP", scoreMcp: "Connaissances MCP",
@@ -628,6 +664,8 @@
         ctaBody: "Notre équipe peut mettre en œuvre ces corrections pour vous — du nettoyage des schémas et variantes aux données boutique compatibles UCP/MCP.",
         ctaButton: "Réserver une consultation gratuite",
         agentDiscoveryHeading: "Fichiers de découverte pour agents IA",
+        bandReady: "Prêt pour les agents", bandNeedsWork: "À améliorer", bandNotReady: "Non prêt",
+        pillHigh: "Priorité haute", pillMedium: "Priorité moyenne", pillLow: "Priorité basse",
       },
       Spanish: {
         execEyebrow: "Resumen ejecutivo", execHeading: "Observaciones generales",
@@ -639,10 +677,10 @@
         topStore: "Principales acciones de tienda", topProducts: "Productos que requieren más atención",
         noStoreRecs: "No se devolvieron recomendaciones.", noProducts: "No se devolvieron productos.",
         gapsLabel: (n) => `${n} brechas de alta prioridad`,
-        sectionStore: "Principales correcciones", sectionProducts: "Excepciones a nivel de producto",
+        sectionStore: "Correcciones prioritarias", sectionProducts: "Excepciones a nivel de producto",
         noRecs: "No se requieren ajustes estructurales.", noProductRecs: "No se marcaron errores.",
         productId: "ID:", exampleLabel: "Ejemplo:", agentSummaryLabel: "Resumen del contexto:",
-        schemaUpdates: "actualizaciones pendientes", poweredBy: "Desarrollado por Propero",
+        schemaUpdates: "recomendaciones", poweredBy: "Desarrollado por Propero",
         verified: "Parámetros de esquema verificados.",
         errorTitle: "No pudimos generar su informe",
         scoreOverall: "Preparación general", scoreUcp: "Flujos de comercio UCP", scoreMcp: "Conocimiento MCP",
@@ -651,6 +689,8 @@
         ctaBody: "Nuestro equipo puede implementar estas mejoras por usted — desde la limpieza de esquemas y variantes hasta datos de tienda compatibles con UCP/MCP.",
         ctaButton: "Reservar una consulta gratuita",
         agentDiscoveryHeading: "Archivos de descubrimiento para agentes IA",
+        bandReady: "Lista para agentes", bandNeedsWork: "Necesita mejoras", bandNotReady: "No lista",
+        pillHigh: "Prioridad alta", pillMedium: "Prioridad media", pillLow: "Prioridad baja",
       },
       Italian: {
         execEyebrow: "Riepilogo esecutivo", execHeading: "Osservazioni generali",
@@ -662,10 +702,10 @@
         topStore: "Principali azioni store", topProducts: "Prodotti che richiedono più attenzione",
         noStoreRecs: "Nessuna raccomandazione store.", noProducts: "Nessun prodotto.",
         gapsLabel: (n) => `${n} lacune ad alta priorità`,
-        sectionStore: "Correzioni principali store", sectionProducts: "Eccezioni a livello prodotto",
+        sectionStore: "Correzioni prioritarie", sectionProducts: "Eccezioni a livello prodotto",
         noRecs: "Nessun aggiustamento strutturale necessario.", noProductRecs: "Nessun errore a livello articolo.",
         productId: "ID:", exampleLabel: "Esempio:", agentSummaryLabel: "Riepilogo contesto agente:",
-        schemaUpdates: "aggiornamenti schema in sospeso", poweredBy: "Offerto da Propero",
+        schemaUpdates: "raccomandazioni", poweredBy: "Offerto da Propero",
         verified: "Parametri schema verificati.",
         errorTitle: "Non siamo riusciti a generare il tuo report",
         scoreOverall: "Preparazione complessiva", scoreUcp: "Flussi di commercio UCP", scoreMcp: "Conoscenza MCP",
@@ -685,10 +725,10 @@
         topStore: "Principais ações da loja", topProducts: "Produtos que precisam de mais atenção",
         noStoreRecs: "Nenhuma recomendação de loja.", noProducts: "Nenhum produto.",
         gapsLabel: (n) => `${n} lacunas de alta prioridade`,
-        sectionStore: "Principais correções da loja", sectionProducts: "Exceções no nível do produto",
+        sectionStore: "Correções prioritárias", sectionProducts: "Exceções no nível do produto",
         noRecs: "Nenhum ajuste estrutural necessário.", noProductRecs: "Nenhum erro no nível do item.",
         productId: "ID:", exampleLabel: "Exemplo:", agentSummaryLabel: "Resumo do contexto do agente:",
-        schemaUpdates: "atualizações de esquema pendentes", poweredBy: "Desenvolvido por Propero",
+        schemaUpdates: "recomendações", poweredBy: "Desenvolvido por Propero",
         verified: "Parâmetros de esquema verificados.",
         errorTitle: "Não conseguimos gerar seu relatório",
         scoreOverall: "Prontidão geral", scoreUcp: "Fluxos de comércio UCP", scoreMcp: "Conhecimento MCP",
@@ -708,10 +748,10 @@
         topStore: "Belangrijkste winkelacties", topProducts: "Producten die de meeste aandacht nodig hebben",
         noStoreRecs: "Geen winkelaanbevelingen.", noProducts: "Geen producten.",
         gapsLabel: (n) => `${n} hoge-prioriteitskloven`,
-        sectionStore: "Prioriteitswinkelcorrecties", sectionProducts: "Gedetailleerde productuitzonderingen",
+        sectionStore: "Prioriteitscorrecties", sectionProducts: "Gedetailleerde productuitzonderingen",
         noRecs: "Geen structurele aanpassingen nodig.", noProductRecs: "Geen fouten op artikelniveau.",
         productId: "ID:", exampleLabel: "Voorbeeld:", agentSummaryLabel: "Samenvatting agentcontext:",
-        schemaUpdates: "schema-updates in behandeling", poweredBy: "Aangedreven door Propero",
+        schemaUpdates: "aanbevelingen", poweredBy: "Aangedreven door Propero",
         verified: "Geverifieerde schemaparameters.",
         errorTitle: "We konden uw rapport niet genereren",
         scoreOverall: "Algehele gereedheid", scoreUcp: "UCP-handelsstromen", scoreMcp: "MCP-kennis",
@@ -731,10 +771,10 @@
         topStore: "主要なストアレベル施策", topProducts: "最も注意が必要な商品",
         noStoreRecs: "ストアの推薦事項はありません。", noProducts: "商品が返されませんでした。",
         gapsLabel: (n) => `${n}件の高優先度ギャップ`,
-        sectionStore: "主要なストア修正", sectionProducts: "商品レベルの詳細な例外",
+        sectionStore: "優先修正事項", sectionProducts: "商品レベルの詳細な例外",
         noRecs: "構造的な調整は不要です。", noProductRecs: "アイテムレベルのエラーなし。",
         productId: "ID：", exampleLabel: "例：", agentSummaryLabel: "エージェント解析サマリー：",
-        schemaUpdates: "件のスキーマ最適化が保留中", poweredBy: "Propero提供",
+        schemaUpdates: "件の推薦事項", poweredBy: "Propero提供",
         verified: "標準パーサールールに準拠した検証済みスキーマ。",
         errorTitle: "レポートを生成できませんでした",
         scoreOverall: "総合対応度", scoreUcp: "UCPコマースフロー", scoreMcp: "MCPナレッジ",
@@ -743,6 +783,8 @@
         ctaBody: "スキーマやバリアントの整備からUCP/MCP対応のストアデータ構築まで、私たちのチームが対応いたします。",
         ctaButton: "無料相談を予約する",
         agentDiscoveryHeading: "エージェント検出ファイル",
+        bandReady: "エージェント対応済み", bandNeedsWork: "要改善", bandNotReady: "未対応",
+        pillHigh: "優先度高", pillMedium: "優先度中", pillLow: "優先度低",
       },
       Chinese: {
         execEyebrow: "执行摘要", execHeading: "总体观察",
@@ -754,10 +796,10 @@
         topStore: "主要商店级操作", topProducts: "需要最多关注的产品",
         noStoreRecs: "未返回商店级建议。", noProducts: "未返回产品。",
         gapsLabel: (n) => `${n}个高优先级缺口`,
-        sectionStore: "优先商店修复", sectionProducts: "详细产品级异常",
+        sectionStore: "优先修复项", sectionProducts: "详细产品级异常",
         noRecs: "此规范无需结构调整。", noProductRecs: "未标记项目级错误。",
         productId: "ID：", exampleLabel: "示例：", agentSummaryLabel: "代理解析上下文摘要：",
-        schemaUpdates: "个架构更新待优化", poweredBy: "由Propero提供支持",
+        schemaUpdates: "条建议", poweredBy: "由Propero提供支持",
         verified: "符合标准解析器规则的已验证架构数据参数。",
         errorTitle: "我们无法生成您的报告",
         scoreOverall: "总体准备度", scoreUcp: "UCP商业流程", scoreMcp: "MCP知识",
@@ -789,124 +831,128 @@
     }
 
     // Step helpers
-let _elapsedSecs = 0;
-let _elapsedTimer = null;
- 
-function stepDone(id) {
-  const row = document.getElementById(id);
-  const dot = document.getElementById(id + '-dot');
-  row.className = 'step-row done';
-  dot.innerHTML = '✓';
-}
-function stepActive(id, subText) {
-  const row = document.getElementById(id);
-  const dot = document.getElementById(id + '-dot');
-  row.className = 'step-row active';
-  dot.innerHTML = '<div class="step-spinner"></div>';
-  if (subText) {
-    const sub = row.querySelector('.step-sublabel');
-    if (sub) sub.textContent = subText;
-  }
-}
-function stepPending(id) {
-  const row = document.getElementById(id);
-  row.className = 'step-row pending';
-}
-function resetSteps() {
-  ['step-submit','step-fetch','step-ai','step-report'].forEach(stepPending);
-  document.getElementById('step-ai-sub').textContent =
-    'This takes 30–120 seconds depending on catalog size — please don\'t close this tab';
-  document.getElementById('progress-steps').className = 'progress-steps';
-  if (_elapsedTimer) { clearInterval(_elapsedTimer); _elapsedTimer = null; }
-  _elapsedSecs = 0;
-}
-function showSteps() {
-  document.getElementById('progress-steps').className = 'progress-steps visible';
-}
- 
-function setStatus(message, type = 'info') {
-  banner.className = 'status-banner visible ' + type;
-  statusText.textContent = message;
-  statusIcon.innerHTML = type === 'success' ? '✅' : type === 'error' ? '❌' : '';
-}
-function hideStatus() {
-  banner.className = 'status-banner';
-}
- 
-let _pollCount = 0;
- 
-async function pollJob(jobId) {
-  _pollCount++;
-  try {
-    const res  = await fetch(`${API_BASE}/api/report-requests/${jobId}`);
-    if (!res.ok) throw new Error('Could not fetch job status.');
-    const data = await res.json();
- 
-    if (data.status === 'completed') {
-      clearInterval(pollTimer);
-      if (_elapsedTimer) clearInterval(_elapsedTimer);
-      stepDone('step-submit');
-      stepDone('step-fetch');
-      stepDone('step-ai');
-      stepDone('step-report');
-      hideStatus();
-      setStatus('Report ready! A PDF copy has also been sent to your email.', 'success');
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Run Audit →';
-      renderReport(data);
- 
-    } else if (data.status === 'failed') {
-      clearInterval(pollTimer);
-      if (_elapsedTimer) clearInterval(_elapsedTimer);
-      resetSteps();
-      banner.className = 'status-banner';
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Run Audit →';
-      renderErrorCard(
-        data.error || 'Something went wrong. Please try again.',
-        data.error_type || 'internal_error'
-      );
- 
-    } else {
-      // Still processing — animate steps based on elapsed time
-      if (_pollCount <= 2) {
-        stepDone('step-submit');
-        stepActive('step-fetch');
-      } else if (_pollCount <= 4) {
-        stepDone('step-submit');
-        stepDone('step-fetch');
-        stepActive('step-ai');
-        // Start elapsed counter
-        if (!_elapsedTimer) {
-          _elapsedTimer = setInterval(() => {
-            _elapsedSecs += 5;
-            const sub = document.getElementById('step-ai-sub');
-            if (sub) {
-              if (_elapsedSecs < 30) {
-                sub.textContent = 'Analyzing products with AI… please keep this tab open';
-              } else if (_elapsedSecs < 60) {
-                sub.textContent = `Still working… ${_elapsedSecs}s elapsed — larger catalogs take up to 2 minutes`;
-              } else {
-                sub.textContent = `Almost there… ${_elapsedSecs}s elapsed — nearly done, hang tight!`;
-              }
-            }
-          }, 5000);
-        }
-      } else {
-        stepDone('step-submit');
-        stepDone('step-fetch');
-        stepActive('step-ai', null); // keep existing sub text
-        stepPending('step-report');
+    let _elapsedSecs = 0;
+    let _elapsedTimer = null;
+
+    function stepDone(id) {
+      const row = document.getElementById(id);
+      const dot = document.getElementById(id + '-dot');
+      row.className = 'step-row done';
+      dot.innerHTML = '✓';
+    }
+    function stepActive(id, subText) {
+      const row = document.getElementById(id);
+      const dot = document.getElementById(id + '-dot');
+      row.className = 'step-row active';
+      dot.innerHTML = '<div class="step-spinner"></div>';
+      if (subText) {
+        const sub = row.querySelector('.step-sublabel');
+        if (sub) sub.textContent = subText;
       }
     }
-  } catch (err) {
-    console.warn(err);
-  }
-}
+    function stepPending(id) {
+      const row = document.getElementById(id);
+      row.className = 'step-row pending';
+    }
+    function resetSteps() {
+      ['step-submit','step-fetch','step-ai','step-report'].forEach(stepPending);
+      document.getElementById('step-ai-sub').textContent =
+        'This takes 30–120 seconds depending on catalog size — please don\'t close this tab';
+      document.getElementById('progress-steps').className = 'progress-steps';
+      if (_elapsedTimer) { clearInterval(_elapsedTimer); _elapsedTimer = null; }
+      _elapsedSecs = 0;
+    }
+    function showSteps() {
+      document.getElementById('progress-steps').className = 'progress-steps visible';
+    }
+
+    function setStatus(message, type = 'info') {
+      banner.className = 'status-banner visible ' + type;
+      statusText.textContent = message;
+      statusIcon.innerHTML = type === 'success' ? '✅' : type === 'error' ? '❌' : '';
+    }
+    function hideStatus() {
+      banner.className = 'status-banner';
+    }
+
+    let _pollCount = 0;
+
+    async function pollJob(jobId) {
+      _pollCount++;
+      try {
+        const res  = await fetch(`${API_BASE}/api/report-requests/${jobId}`);
+        if (!res.ok) throw new Error('Could not fetch job status.');
+        const data = await res.json();
+
+        if (data.status === 'completed') {
+          clearInterval(pollTimer);
+          if (_elapsedTimer) clearInterval(_elapsedTimer);
+          stepDone('step-submit');
+          stepDone('step-fetch');
+          stepDone('step-ai');
+          stepDone('step-report');
+          hideStatus();
+          setStatus('Report ready! A PDF copy has also been sent to your email.', 'success');
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Run Audit →';
+          renderReport(data);
+
+        } else if (data.status === 'failed') {
+          clearInterval(pollTimer);
+          if (_elapsedTimer) clearInterval(_elapsedTimer);
+          resetSteps();
+          banner.className = 'status-banner';
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Run Audit →';
+          renderErrorCard(
+            data.error || 'Something went wrong. Please try again.',
+            data.error_type || 'internal_error'
+          );
+
+        } else {
+          // Still processing — animate steps based on elapsed time
+          if (_pollCount <= 2) {
+            stepDone('step-submit');
+            stepActive('step-fetch');
+          } else if (_pollCount <= 4) {
+            stepDone('step-submit');
+            stepDone('step-fetch');
+            stepActive('step-ai');
+            if (!_elapsedTimer) {
+              _elapsedTimer = setInterval(() => {
+                _elapsedSecs += 5;
+                const sub = document.getElementById('step-ai-sub');
+                if (sub) {
+                  if (_elapsedSecs < 30) {
+                    sub.textContent = 'Analyzing products with AI… please keep this tab open';
+                  } else if (_elapsedSecs < 60) {
+                    sub.textContent = `Still working… ${_elapsedSecs}s elapsed — larger catalogs take up to 2 minutes`;
+                  } else {
+                    sub.textContent = `Almost there… ${_elapsedSecs}s elapsed — nearly done, hang tight!`;
+                  }
+                }
+              }, 5000);
+            }
+          } else {
+            stepDone('step-submit');
+            stepDone('step-fetch');
+            stepActive('step-ai', null);
+            stepPending('step-report');
+          }
+        }
+      } catch (err) {
+        console.warn(err);
+      }
+    }
 
     function esc(str) {
       if (str == null) return '';
       return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function capitalize(str) {
+      if (!str) return '';
+      return String(str).charAt(0).toUpperCase() + String(str).slice(1);
     }
 
     function renderErrorCard(message, errorType) {
@@ -928,17 +974,21 @@ async function pollJob(jobId) {
       reportContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function renderRecommendations(recs, labels, startIndex = 1) {
-      if (!recs || !recs.length) return `<p style="color:#9ca3af;font-size:13px;font-style:italic;padding-left:32px">${esc(labels.noRecs)}</p>`;
-      return recs.map((r, i) => `
-        <div class="recommendation-node">
-          <div class="rec-top-row">
-            <span class="rec-index">${startIndex + i}</span>
-            <span class="priority-badge ${r.priority || 'medium'}">${esc(r.priority)}</span>
-            <span class="rec-headline">${esc(r.enrichment)}</span>
+    // Used for Priority Fixes, Shopify-Aligned Recommendations, and per-product findings.
+    // No numbering, no invented tag codes — a color dot + right-aligned priority pill, per the design spec.
+    function renderRecommendations(recs, labels) {
+      if (!recs || !recs.length) return `<p class="empty-note">${esc(labels.noRecs)}</p>`;
+      return recs.map(r => `
+        <div class="finding-card">
+          <div class="finding-top">
+            <div class="finding-title-wrap">
+              <span class="finding-dot ${r.priority || 'medium'}"></span>
+              <span class="finding-title">${esc(r.enrichment)}</span>
+            </div>
+            <span class="finding-pill ${r.priority || 'medium'}">${esc(capitalize(r.priority))}</span>
           </div>
-          <div class="rec-explanation">${esc(r.why_it_matters_for_agents)}</div>
-          <div class="rec-code-snippet"><strong>${esc(labels.exampleLabel)}</strong> ${esc(r.example)}</div>
+          <div class="finding-desc">${esc(r.why_it_matters_for_agents)}</div>
+          <div class="finding-example"><strong>${esc(labels.exampleLabel)}</strong> ${esc(r.example)}</div>
         </div>`).join('');
     }
 
@@ -948,26 +998,75 @@ async function pollJob(jobId) {
       return 'weak';
     }
 
+    function bandLabel(value, labels) {
+      if (value >= 70) return labels.bandReady || 'Agent Ready';
+      if (value >= 40) return labels.bandNeedsWork || 'Needs Work';
+      return labels.bandNotReady || 'Not Ready';
+    }
+
+    // Overall score → donut (band label lives inside the ring), remaining 4 scores → bars
     function renderReadinessScores(report, labels) {
       const s = report.readiness_scores || {};
-      const items = [
-        [labels.scoreOverall, s.overall],
+      const overall = Number.isFinite(s.overall) ? Math.max(0, Math.min(100, Math.round(s.overall))) : 0;
+      const band = scoreBand(overall);
+      const donutColor = band === 'strong' ? '#16a34a' : band === 'fair' ? '#d97706' : '#dc2626';
+
+      const barItems = [
         [labels.scoreUcp, s.ucp_commerce_flows],
         [labels.scoreMcp, s.mcp_knowledge],
         [labels.scoreCatalog, s.catalog_enrichment],
         [labels.scoreSafety, s.safety_policies],
       ];
-      const cards = items.map(([label, raw]) => {
+
+      const bars = barItems.map(([label, raw]) => {
         const value = Number.isFinite(raw) ? Math.max(0, Math.min(100, Math.round(raw))) : 0;
+        const b = scoreBand(value);
         return `
-          <div class="score-card">
-            <div class="score-circle ${scoreBand(value)}"><span>${value}</span></div>
-            <p class="score-card__label">${esc(label)}</p>
+          <div class="score-bar-row">
+            <div class="score-bar-top">
+              <span class="score-bar-label">${esc(label)}</span>
+              <span class="score-bar-value">${value}/100</span>
+            </div>
+            <div class="score-bar-track"><div class="score-bar-fill ${b}" style="width:${value}%"></div></div>
           </div>`;
       }).join('');
-      return `<div class="readiness-scores">${cards}</div>`;
+
+      return `
+        <div class="score-overview">
+          <div class="score-donut-wrap">
+            <div class="score-donut ${band}" style="background: conic-gradient(${donutColor} ${overall * 3.6}deg, #eee9e0 0deg);">
+              <div class="donut-inner">
+                <div class="donut-pct">${overall}%</div>
+                <div class="donut-status">${esc(bandLabel(overall, labels))}</div>
+              </div>
+            </div>
+            <div class="donut-caption">${esc(labels.scoreOverall)}</div>
+          </div>
+          <div class="score-bars">${bars}</div>
+        </div>`;
     }
 
+    // Priority pill row — counts of high/medium/low across store + product recommendations
+    function renderPriorityPills(report, products, labels) {
+      const storeRecs = report.store_level_recommendations || [];
+      let high = 0, medium = 0, low = 0;
+      const tally = (r) => {
+        if (r.priority === 'high') high++;
+        else if (r.priority === 'low') low++;
+        else medium++;
+      };
+      storeRecs.forEach(tally);
+      products.forEach(p => (p.missing_enrichments || []).forEach(tally));
+
+      return `
+        <div class="priority-pill-row">
+          <span class="priority-summary-pill high"><span class="dot"></span>${high} ${esc(labels.pillHigh || 'High Priority')}</span>
+          <span class="priority-summary-pill medium"><span class="dot"></span>${medium} ${esc(labels.pillMedium || 'Medium Priority')}</span>
+          <span class="priority-summary-pill low"><span class="dot"></span>${low} ${esc(labels.pillLow || 'Low Priority')}</span>
+        </div>`;
+    }
+
+    // Its own card, headed externally by the "Agent Discovery Files" section header
     function renderAgentDiscovery(report, labels) {
       const ad = report.agent_discovery;
       if (!ad) return '';
@@ -993,16 +1092,15 @@ async function pollJob(jobId) {
 
       const recs = ad.recommendations || [];
       const recsHtml = recs.length ? `
-          <h3 style="margin:16px 0 10px;font-size:13px;font-weight:700;color:#111111;">Shopify-Aligned Recommendations</h3>
-          ${renderRecommendations(recs, labels, 1)}
+          <h3 class="subhead">Shopify-Aligned Recommendations</h3>
+          ${renderRecommendations(recs, labels)}
         ` : '';
 
       const templatesCustomized = ad.templates_customized ?? 0;
       const templatesTotal = ad.templates_total ?? 3;
 
       return `
-        <div class="agent-discovery-block">
-          <h2>${esc(labels.agentDiscoveryHeading || 'Agent Discovery Files')}</h2>
+        <div class="section-card">
           <p class="af-summary">${esc(ad.summary || '')}</p>
           <p class="af-summary">Template readiness: ${templatesCustomized}/${templatesTotal} customized beyond Shopify's default.</p>
           <div class="af-list">${rows}</div>
@@ -1019,6 +1117,7 @@ async function pollJob(jobId) {
         </div>`;
     }
 
+    // Its own card, headed externally by the "Executive Summary" section header
     function renderExecutiveSummary(report, products, labels) {
       const storeRecs = report.store_level_recommendations || [];
       const highCount = products.reduce((n, p) => n + (p.missing_enrichments||[]).filter(r=>r.priority==='high').length, 0);
@@ -1038,7 +1137,7 @@ async function pollJob(jobId) {
       const storeItems = storeRecs.slice(0,3).map(r => `
         <li><strong>${esc(r.enrichment)}</strong><span>${esc(r.why_it_matters_for_agents)}</span></li>`).join('');
 
-      const attentionItems = [...products]
+      const attentionProducts = [...products]
         .sort((a,b) => (b.missing_enrichments||[]).filter(r=>r.priority==='high').length - (a.missing_enrichments||[]).filter(r=>r.priority==='high').length)
         .slice(0,3)
         .map(p => {
@@ -1047,9 +1146,7 @@ async function pollJob(jobId) {
         }).join('');
 
       return `
-        <div class="exec-summary">
-          <div class="exec-eyebrow">${esc(labels.execEyebrow)}</div>
-          <h2>${esc(labels.execHeading)}</h2>
+        <div class="section-card">
           <div class="exec-intro">${esc(observation)}</div>
           <div class="exec-cards">${cardsHtml}</div>
           <div class="exec-columns">
@@ -1059,10 +1156,17 @@ async function pollJob(jobId) {
             </div>
             <div class="exec-panel">
               <h3>${esc(labels.topProducts)}</h3>
-              <ul class="exec-list">${attentionItems || `<li><span>${esc(labels.noProducts)}</span></li>`}</ul>
+              <ul class="exec-list">${attentionProducts || `<li><span>${esc(labels.noProducts)}</span></li>`}</ul>
             </div>
           </div>
         </div>`;
+    }
+
+    function highestSeverity(recs) {
+      if (!recs || !recs.length) return 'none';
+      if (recs.some(r => r.priority === 'high')) return 'high';
+      if (recs.some(r => r.priority === 'medium')) return 'medium';
+      return 'low';
     }
 
     function renderReport(data) {
@@ -1074,52 +1178,82 @@ async function pollJob(jobId) {
       const now = new Date().toLocaleDateString(undefined, {year:'numeric',month:'2-digit',day:'2-digit'});
       const labels = getLabels();
 
+      const totalProductRecs = products.reduce((n,p) => n + (p.missing_enrichments||[]).length, 0);
+
       const accordions = products.map((p, i) => {
         const recs = p.missing_enrichments || [];
+        const severity = highestSeverity(recs);
         return `
           <div class="catalog-accordion-box">
             <div class="accordion-trigger" id="toggle-${i}" onclick="toggleItem(${i})">
-              <div>
-                <span class="item-title">${esc(p.title||'Untitled product')}</span>
-                <div class="item-desc">${esc(labels.productId)} ${esc(p.product_id)} · ${recs.length} ${esc(labels.schemaUpdates)}</div>
+              <div class="trigger-left">
+                <div>
+                  <span class="item-title">${esc(p.title||'Untitled product')}</span>
+                  <div class="item-desc">${esc(labels.productId)} ${esc(p.product_id)} · ${recs.length} ${esc(labels.schemaUpdates)}</div>
+                </div>
               </div>
               <span class="arrow-icon" id="arrow-${i}">▼</span>
             </div>
             <div class="accordion-body" id="body-${i}">
               ${p.agent_summary ? `<div class="agent-vision-panel"><strong>${esc(labels.agentSummaryLabel)}</strong><br>${esc(p.agent_summary)}</div>` : ''}
-              ${renderRecommendations(recs, labels, 1)}
+              ${renderRecommendations(recs, labels)}
             </div>
           </div>`;
       }).join('');
 
-      reportContainer.innerHTML = `
-        <div class="report-card">
-          <div class="report-header">
-            <div>
-              <div class="domain-title">${esc(cleanDomain)}</div>
-              <div class="domain-url">${esc(storeUrl)}</div>
-            </div>
-            <div><div class="meta-date">${esc(now)}</div></div>
-          </div>
-          ${renderReadinessScores(report, labels)}
+      const agentDiscoveryBlock = report.agent_discovery ? `
+        <div class="section-block">
+          <div class="section-header">${esc(labels.agentDiscoveryHeading || 'Agent Discovery Files')}</div>
           ${renderAgentDiscovery(report, labels)}
-          ${renderExecutiveSummary(report, products, labels)}
-          <div class="audit-body-content">
-            <div class="panel-block-title">${esc(labels.sectionStore)}</div>
-            ${renderRecommendations(storeRecs, labels, 1)}
+        </div>` : '';
+
+      reportContainer.innerHTML = `
+        <div class="report-stack">
+
+          <div class="report-card-top">
+            <div class="report-header">
+              <div>
+                <div class="domain-title">${esc(cleanDomain)}</div>
+                <div class="domain-url">${esc(storeUrl)}</div>
+              </div>
+              <div class="header-date">${esc(now)}</div>
+            </div>
+            ${renderReadinessScores(report, labels)}
+            ${renderPriorityPills(report, products, labels)}
           </div>
-          <div class="audit-body-content" style="border-top:1px solid #f3f4f6;background:#fafafa">
-            <div class="panel-block-title">${esc(labels.sectionProducts)}</div>
-            ${accordions || `<p style="color:#9ca3af;font-size:13px">${esc(labels.noProductRecs)}</p>`}
+
+          ${agentDiscoveryBlock}
+
+          <div class="section-block">
+            <div class="section-header">${esc(labels.execEyebrow)}</div>
+            ${renderExecutiveSummary(report, products, labels)}
           </div>
+
+          <div class="section-block">
+            <div class="section-header">${esc(labels.sectionStore)} <span class="count">· ${storeRecs.length}</span></div>
+            ${renderRecommendations(storeRecs, labels)}
+          </div>
+
+          <div class="section-block">
+            <div class="section-header">${esc(labels.sectionProducts)} <span class="count">· ${totalProductRecs} ${esc(labels.schemaUpdates)}</span></div>
+            ${accordions || `<p class="empty-note">${esc(labels.noProductRecs)}</p>`}
+          </div>
+
           ${renderCta(labels)}
+
           <div class="report-footer-meta">
             <div class="footer-line">${esc(labels.verified)}</div>
             <div><span class="powered-by">${esc(labels.poweredBy)}</span> · <a href="https://www.propero.in" target="_blank">propero.in</a></div>
           </div>
+
         </div>`;
 
       reportContainer.className = 'visible';
+
+      stickyCtaLink.href = BOOKING_URL;
+      stickyCtaLink.textContent = (labels.ctaButton || 'Book a Free Consultation') + ' ↗';
+      stickyCta.classList.add('visible');
+
       reportContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
@@ -1137,6 +1271,7 @@ async function pollJob(jobId) {
       if (pollTimer) clearInterval(pollTimer);
       reportContainer.className = '';
       reportContainer.innerHTML = '';
+      stickyCta.classList.remove('visible');
 
       submitBtn.disabled = true;
       submitBtn.textContent = 'Checking…';
@@ -1161,7 +1296,7 @@ async function pollJob(jobId) {
         if (!res.ok) throw new Error(data.detail || data.message || 'Submission rejected.');
 
         stepDone('step-submit');
-    stepActive('step-fetch', 'Connecting to your Shopify catalog…');
+        stepActive('step-fetch', 'Connecting to your Shopify catalog…');
         pollTimer = setInterval(() => pollJob(data.job_id), 5500);
         pollJob(data.job_id);
 
