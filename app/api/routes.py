@@ -5,9 +5,16 @@ from fastapi import APIRouter, HTTPException
 from app.api.schemas import QueueResponse, ReportRequestCreate, ReportRequestResponse
 from app.services.jobs import job_queue
 from app.services.product_fetcher import InvalidStoreURLError, normalize_store_url
+from pydantic import BaseModel
 
 
 router = APIRouter()
+
+class ShopifyAppReportRequest(BaseModel):
+    email: str
+    shop_domain: str
+    access_token: str
+    language: str = "English"
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -43,6 +50,42 @@ def create_report_request(payload: ReportRequestCreate) -> QueueResponse:
     language = payload.language or "English"
     job = job_queue.submit(payload.email, normalized_url, language)
     return QueueResponse(job_id=job.job_id, status="queued", message="Report request queued.")
+
+@router.post("/shopify-app/report-requests", response_model=QueueResponse)
+def create_shopify_app_report_request(
+    payload: ShopifyAppReportRequest,
+) -> QueueResponse:
+
+    _validate_email(payload.email)
+
+    if not payload.shop_domain.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Shopify shop domain is required.",
+        )
+
+    if not payload.access_token.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Shopify access token is required.",
+        )
+
+    store_url = f"https://{payload.shop_domain.strip()}"
+
+    job = job_queue.submit(
+        email=payload.email,
+        store_url=store_url,
+        language=payload.language or "English",
+        source="shopify_app",
+        shop_domain=payload.shop_domain.strip(),
+        access_token=payload.access_token.strip(),
+    )
+
+    return QueueResponse(
+        job_id=job.job_id,
+        status="queued",
+        message="Shopify app report request queued.",
+    )
 
 
 @router.get("/report-requests/{job_id}", response_model=ReportRequestResponse)

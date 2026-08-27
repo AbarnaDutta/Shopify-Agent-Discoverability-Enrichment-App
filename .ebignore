@@ -5,3 +5,4 @@ __pycache__/
 .gitignore
 .github/
 .dockerignore
+agentic-commerce-readiness/

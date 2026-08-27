@@ -21,6 +21,10 @@ from app.services.product_fetcher import (
     compact_product,
     normalize_store_url,
 )
+from app.services.shopify_admin_fetcher import (
+    ShopifyAdminAPIError,
+    fetch_products_admin,
+)
 import contextlib
 from app.services.report_builder import (
     LLMQuotaExceededError,
@@ -53,6 +57,9 @@ class ReportJob:
     email: str
     store_url: str
     language: str = "English"
+    source: str = "website"
+    shop_domain: str | None = None
+    access_token: str | None = None
     status: str = "queued"
     created_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat() + "Z")
     updated_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat() + "Z")
@@ -135,12 +142,15 @@ class JobQueue:
             worker.start()
         print(f"[JobQueue] Started {num_workers} workers")
 
-    def submit(self, email: str, store_url: str, language: str = "English") -> ReportJob:
+    def submit(self, email: str, store_url: str, language: str = "English", source: str = "website", shop_domain: str | None = None, access_token: str | None = None,) -> ReportJob:
         job = ReportJob(
             job_id=str(uuid.uuid4()),
             email=email.strip(),
             store_url=store_url,
             language=language,
+            source=source,
+            shop_domain=shop_domain,
+            access_token=access_token,
         )
         job_repo.create(job.job_id, job.email, job.store_url, job.language)
         with self._lock:
@@ -224,13 +234,53 @@ class JobQueue:
             print(f"[JOB {job_id}] Store: {job.store_url}")
             print(f"[JOB {job_id}] Language: {job.language}")
             settings = get_app_settings()
-            store_url = normalize_store_url(job.store_url)
-            raw_products = fetch_products_public(store_url, settings["max_products"])
+            if job.source == "shopify_app":
+                if not job.shop_domain:
+                    raise ValueError("Shopify shop domain is missing.")
 
-            if not raw_products:
-                raise EmptyStoreError(f"'{store_url}' has no publicly visible products.")
+                if not job.access_token:
+                    raise ValueError("Shopify access token is missing.")
 
-            products = [compact_product(p, store_url) for p in raw_products]
+                print(
+                    f"[JOB {job_id}] Fetching products through Shopify Admin API"
+                )
+
+                products = fetch_products_admin(
+                    shop_domain=job.shop_domain,
+                    access_token=job.access_token,
+                    max_products=10,
+                    api_version="2026-07",
+                )
+
+                if not products:
+                    raise EmptyStoreError(
+                        f"'{job.shop_domain}' has no products available through "
+                        "the Shopify Admin API."
+                    )
+
+                store_url = f"https://{job.shop_domain}"
+
+            else:
+                print(
+                    f"[JOB {job_id}] Fetching products through public storefront"
+                )
+
+                store_url = normalize_store_url(job.store_url)
+
+                raw_products = fetch_products_public(
+                    store_url,
+                    settings["max_products"],
+                )
+
+                if not raw_products:
+                    raise EmptyStoreError(
+                        f"'{store_url}' has no publicly visible products."
+                    )
+
+                products = [
+                    compact_product(p, store_url)
+                    for p in raw_products
+                ]
             print(f"[JOB {job_id}] Fetched {len(products)} products")
 
             print(f"[JOB {job_id}] Checking agent discovery files")
