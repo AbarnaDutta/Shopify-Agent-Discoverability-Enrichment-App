@@ -1,5 +1,16 @@
-import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
-import "./styles/tailwind.css";
+// app/root.jsx
+import {
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+} from "react-router";
+import tailwindStyles from "./styles/tailwind.css";
+
+export function links() {
+  return [{ rel: "stylesheet", href: tailwindStyles }];
+}
 
 export default function App() {
   return (
