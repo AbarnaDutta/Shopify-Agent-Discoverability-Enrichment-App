@@ -1,4 +1,5 @@
 // app/root.jsx
+
 import {
   Links,
   Meta,
@@ -6,28 +7,37 @@ import {
   Scripts,
   ScrollRestoration,
 } from "react-router";
-import tailwindStyles from "./styles/tailwind.css";
 
-export function links() {
-  return [{ rel: "stylesheet", href: tailwindStyles }];
-}
+import "./styles/tailwind.css";
 
 export default function App() {
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <link rel="preconnect" href="https://cdn.shopify.com/" />
+
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1"
+        />
+
+        <link
+          rel="preconnect"
+          href="https://cdn.shopify.com/"
+        />
+
         <link
           rel="stylesheet"
           href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
         />
+
         <Meta />
         <Links />
       </head>
+
       <body>
         <Outlet />
+
         <ScrollRestoration />
         <Scripts />
       </body>
