@@ -38,6 +38,7 @@ from app.services.report_builder import (
 from app.services.email_service import EmailService
 from app.integrations.email_clients.ses_mail import SESMail
 from app.services.job_repository import job_repo
+from app.services.audit_repository import audit_repo
 from dotenv import load_dotenv
 from app.services.audit_engine import audit_products
 
@@ -50,6 +51,7 @@ email_service = EmailService(
         smtp_password = os.getenv("SES_SMTP_PASSWORD"),
     )
 )
+
 
 @dataclass
 class ReportJob:
@@ -312,6 +314,25 @@ class JobQueue:
             report["agent_discovery"] = agent_discovery
 
             self._update_job(job_id, report=report)
+
+            if job.source == "shopify_app":
+                print(f"[JOB {job_id}] Recording audit history")
+                try:
+                    audit_id = audit_repo.record_audit(
+                        shop_domain=job.shop_domain, 
+                        report=report,
+                        job_id=job_id,
+                        provider=effective_provider,
+                        model=model,
+                    )
+                    if audit_id:
+                        print(f"[JOB {job_id}] Audit history recorded: {audit_id}")
+                    else:
+                        print(f"[JOB {job_id}] Audit history skipped (DB unavailable)")
+                except Exception as audit_error:
+                    print(f"[JOB {job_id}] Failed to record audit history (report still complete): {audit_error}")
+                    traceback.print_exc()
+
             try:
                 print(f"[JOB {job_id}] Sending email")
                 email_service.send_report_email(

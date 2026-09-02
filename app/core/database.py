@@ -10,6 +10,8 @@ from typing import Any, Generator
 from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy import ForeignKey, Integer
+from sqlalchemy.orm import relationship
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +36,110 @@ class ReportRequest(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False,
                         default=lambda: dt.datetime.now(dt.timezone.utc),
                         onupdate=lambda: dt.datetime.now(dt.timezone.utc))
+
+
+class Store(Base):
+    __tablename__ = "stores"
+
+    id            = Column(String(36),  primary_key=True)
+    shop_domain   = Column(String(255), nullable=False, unique=True, index=True)
+    email         = Column(String(320), nullable=True)
+    installed_at  = Column(DateTime(timezone=True), nullable=False,
+                           default=lambda: dt.datetime.now(dt.timezone.utc))
+    last_audit_at = Column(DateTime(timezone=True), nullable=True)
+    created_at    = Column(DateTime(timezone=True), nullable=False,
+                           default=lambda: dt.datetime.now(dt.timezone.utc))
+    updated_at    = Column(DateTime(timezone=True), nullable=False,
+                           default=lambda: dt.datetime.now(dt.timezone.utc),
+                           onupdate=lambda: dt.datetime.now(dt.timezone.utc))
+
+    audits = relationship(
+        "Audit",
+        back_populates="store",
+        cascade="all, delete-orphan",
+        order_by="Audit.created_at.desc()",
+    )
+
+
+class Audit(Base):
+    __tablename__ = "audits"
+
+    id                = Column(String(36),  primary_key=True)
+    store_id          = Column(String(36),  ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id            = Column(String(36),  ForeignKey("report_requests.job_id"), nullable=True)
+    status            = Column(String(32),  nullable=False, default="completed")
+    overall_score     = Column(Integer,     nullable=True)
+    dimension_scores  = Column(JSON,        nullable=False, default=dict)
+    products_scanned  = Column(Integer,     nullable=False, default=0)
+    issues_found      = Column(Integer,     nullable=False, default=0)
+    provider          = Column(String(64),  nullable=True)
+    model             = Column(String(64),  nullable=True)
+    created_at        = Column(DateTime(timezone=True), nullable=False, index=True,
+                               default=lambda: dt.datetime.now(dt.timezone.utc))
+
+    store = relationship("Store", back_populates="audits")
+    report_request = relationship("ReportRequest")  
+
+    products = relationship(
+        "AuditProduct",
+        back_populates="audit",
+        cascade="all, delete-orphan",
+        order_by="AuditProduct.score.asc()",
+    )
+    store_recommendations = relationship(
+        "AuditStoreRecommendation",
+        back_populates="audit",
+        cascade="all, delete-orphan",
+    )
+    agent_discovery = relationship(
+        "AuditAgentDiscovery",
+        back_populates="audit",
+        uselist=False,  
+        cascade="all, delete-orphan",
+    )
+
+
+class AuditProduct(Base):
+    __tablename__ = "audit_products"
+
+    id                  = Column(String(36),  primary_key=True)
+    audit_id            = Column(String(36),  ForeignKey("audits.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id          = Column(String(255), nullable=False, index=True)
+    title               = Column(String(512), nullable=True)
+    score               = Column(Integer,     nullable=True, index=True)
+    issue_count         = Column(Integer,     nullable=False, default=0)
+    high_priority_count = Column(Integer,     nullable=False, default=0)
+    agent_summary       = Column(Text,        nullable=True)
+    missing_enrichments = Column(JSON,        nullable=False, default=list)
+
+    audit = relationship("Audit", back_populates="products")
+
+
+class AuditStoreRecommendation(Base):
+    __tablename__ = "audit_store_recommendations"
+
+    id                        = Column(String(36), primary_key=True)
+    audit_id                  = Column(String(36), ForeignKey("audits.id", ondelete="CASCADE"), nullable=False, index=True)
+    enrichment                = Column(Text,       nullable=True)
+    priority                  = Column(String(16), nullable=True)
+    why_it_matters_for_agents = Column(Text,       nullable=True)
+    example                   = Column(Text,       nullable=True)
+
+    audit = relationship("Audit", back_populates="store_recommendations")
+
+
+class AuditAgentDiscovery(Base):
+    __tablename__ = "audit_agent_discovery"
+
+    audit_id             = Column(String(36), ForeignKey("audits.id", ondelete="CASCADE"), primary_key=True)
+    summary              = Column(Text,    nullable=True)
+    templates_customized = Column(Integer, nullable=True)
+    templates_total      = Column(Integer, nullable=True)
+    files                = Column(JSON,    nullable=True)
+    recommendations      = Column(JSON,    nullable=True)
+
+    audit = relationship("Audit", back_populates="agent_discovery")
+
 
 _engine = None
 _SessionLocal = None
