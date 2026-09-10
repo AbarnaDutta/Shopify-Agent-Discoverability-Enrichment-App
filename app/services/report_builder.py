@@ -214,7 +214,58 @@ Analyze the raw payload attributes and extract/build out:
    when an agent should not act without human review).
 4. Natural language agent summaries designed specifically to be parsed by LLM search vector indexes.
 5. Trust signals, strict policy context, and a machine-readable FAQ map.
-6. A `readiness_scores` object with integer scores from 0-100 for:
+6.  STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` RULES:
+
+- `store_level_recommendations` are recommendations that apply at the Shopify
+  store/catalog level rather than only to one individual product.
+
+- Store-level recommendations MUST include:
+  - `priority`
+  - `enrichment`
+  - `why_it_matters_for_agents`
+  - `example`
+  - `affected_product_ids`
+
+- `affected_product_ids` must contain the exact product IDs from the Products
+  Catalogue Payload ONLY when the recommendation specifically applies to one
+  or more identifiable products.
+
+- If the recommendation applies to the entire store/catalog or to information
+  that is not product-specific, set `affected_product_ids` to an empty array.
+
+- Do NOT force a store-level recommendation to reference products merely because
+  product IDs are available.
+
+- Examples of genuinely store-wide recommendations include:
+  - UCP commerce-flow readiness
+  - MCP/agent knowledge readiness
+  - shipping, returns, refund, privacy or other store policies
+  - trust signals
+  - brand/store identity
+  - store-level FAQs or shopping guidance
+  - agent discovery files and machine-readable store context
+  - safety policies and autonomous-agent guardrails
+  - checkout or transaction-level requirements
+  - other catalog-wide configuration or information that cannot be attributed
+    to specific products.
+
+- Examples of product-specific store-level recommendations include a catalog-wide
+  consistency problem where only a known subset of products is affected.
+  In that case, list the exact affected product IDs.
+
+- Never invent product IDs.
+- Never infer affected products merely because they have a similar
+  `missing_enrichments` entry.
+- Product-level recommendations belong under
+  `products[].missing_enrichments` and must remain specific to that product.
+
+- The `example` field must be concrete and appropriate to the scope:
+  - For a store-wide recommendation, provide a concrete store-level fix or
+    example configuration/content. Do not invent product-specific values.
+  - For a recommendation affecting specific products, provide a concrete fix
+    covering every product in `affected_product_ids`, using each product's
+    actual title/attributes where relevant.
+7. A `readiness_scores` object with integer scores from 0-100 for:
    - ucp_commerce_flows: can an agent reliably search, filter, compare, build carts and check out
      using this catalog's structure?
    - mcp_knowledge: how clear/complete is the information an MCP-style agent would need to answer
@@ -223,21 +274,6 @@ Analyze the raw payload attributes and extract/build out:
    - safety_policies: clarity of negative-use-cases and guardrails for when agents should NOT
      autonomously recommend or transact
    - overall: the average of the four scores above
-
-STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` AND `example` RULES:
-- Every object in `store_level_recommendations` MUST include an `affected_product_ids` array listing
-  the exact `id` (or `product_id`, whichever key is present) values from the Products Catalogue
-  Payload below that this recommendation applies to. Only reference product ids that actually appear
-  in the payload. If a recommendation genuinely applies to the entire catalogue, list every product id
-  — do not leave the array empty and do not invent ids.
-- The `example` field MUST NOT be a generic template or abstract placeholder. It must be a concrete,
-  compiled fix that actually covers every product listed in `affected_product_ids` — work out the real
-  fix for each of those products individually (using that product's actual title/attributes from the
-  payload) and combine them into a single example, e.g. one line per affected product naming the
-  product and its specific fixed value. Every product id in `affected_product_ids` must have a
-  corresponding concrete fix inside `example` — none may be left uncovered or reduced to a placeholder.
-  Product-level recommendations under `products[].missing_enrichments` keep their own `example`
-  specific to that one product.
 
 CRITICAL CONSTRAINTS:
 - Write the entire response, including all values, summaries, and structural examples, strictly in the requested language: {language}.
@@ -337,13 +373,15 @@ def enrichment_report_schema() -> dict[str, Any]:
                 ),
             },
             "affected_product_ids": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"},
-                "description": (
-                    "The product id values from the Products Catalogue Payload that this "
-                    "recommendation applies to."
-                ),
-            },
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+            "description": (
+                "Exact product IDs from the Products Catalogue Payload that are "
+                "specifically affected by this store-level recommendation. Use an "
+                "empty array when the recommendation is genuinely store-wide or "
+                "does not apply to specific products. Never invent product IDs."
+            ),
+        },
         },
         "required": [
             "priority",
@@ -598,15 +636,16 @@ def analyze_with_bedrock_claude(
         '"missing_enrichments": [{"priority": "...", "enrichment": "...", '
         '"why_it_matters_for_agents": "...", "example": "..."}]}]} '
         "readiness_scores values are integers 0-100. "
-        "affected_product_ids on each store_level_recommendations entry MUST list the exact product "
-        "ids (from the Products Catalogue Payload) that recommendation applies to — never leave it "
-        "empty and never invent ids. The example field on each store_level_recommendations entry MUST "
-        "NOT be a generic template or placeholder — it must be a concrete, compiled fix that actually "
-        "covers every product listed in affected_product_ids: work out the real fix for each of those "
-        "products individually (using that product's actual title/attributes) and combine them into "
-        "one example, e.g. one line per affected product naming it and its specific fixed value. Every "
-        "affected product id must be addressed inside the example, none left uncovered. Product-level "
-        "examples under each product's own missing_enrichments stay specific to that one product."
+        "`affected_product_ids` on each `store_level_recommendations` entry MUST contain"
+        "only the exact product IDs from the Products Catalogue Payload that are"
+        "specifically affected by that recommendation."
+        "If the recommendation is genuinely store-wide or does not apply to specific"
+        "products, `affected_product_ids` MUST be an empty array."
+        "Never invent product IDs and never force a store-level recommendation to reference"
+        "products when the issue is about store-level policies, UCP/MCP readiness, trust,"
+        "safety, brand identity, agent discovery, checkout flows, FAQs, or other store-wide concerns."
+        "For recommendations with affected products, the `example` must provide a concrete fix covering every affected product. "
+        "For genuinely store-wide recommendations, the `example` must instead provide a concrete store-level fix and must not invent product-specific values."
     )
 
     payload = {
@@ -1108,20 +1147,12 @@ def render_recommendations(
     items = []
     for rec in recommendations:
         priority = priority_class(rec.get("priority"))
-        affected_ids = rec.get("affected_product_ids")
-        affected_badge = ""
-        if isinstance(affected_ids, list) and affected_ids:
-            affected_badge = (
-                f'<span class="pill pill--affected">'
-                f'{escape_html(labels.get("affects_products", "Applies to {n} products").replace("{n}", str(len(affected_ids))))}'
-                f"</span>"
-            )
+    
         items.append(
             f"""
             <article class="recommendation">
               <div class="recommendation__header">
                 <span class="pill pill--{priority}">{escape_html(priority)}</span>
-                {affected_badge}
                 <h4>{escape_html(rec.get("enrichment"))}</h4>
               </div>
               <p>{escape_html(rec.get("why_it_matters_for_agents"))}</p>
