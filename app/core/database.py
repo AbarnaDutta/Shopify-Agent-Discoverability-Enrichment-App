@@ -124,6 +124,7 @@ class AuditStoreRecommendation(Base):
     priority                  = Column(String(16), nullable=True)
     why_it_matters_for_agents = Column(Text,       nullable=True)
     example                   = Column(Text,       nullable=True)
+    affected_product_ids      = Column(JSON,       nullable=False, default=list)
 
     audit = relationship("Audit", back_populates="store_recommendations")
 

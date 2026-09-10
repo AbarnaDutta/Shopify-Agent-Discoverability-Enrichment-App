@@ -215,7 +215,6 @@ Analyze the raw payload attributes and extract/build out:
 4. Natural language agent summaries designed specifically to be parsed by LLM search vector indexes.
 5. Trust signals, strict policy context, and a machine-readable FAQ map.
 6. A `readiness_scores` object with integer scores from 0-100 for:
-   - overall: holistic agentic-commerce readiness
    - ucp_commerce_flows: can an agent reliably search, filter, compare, build carts and check out
      using this catalog's structure?
    - mcp_knowledge: how clear/complete is the information an MCP-style agent would need to answer
@@ -223,12 +222,29 @@ Analyze the raw payload attributes and extract/build out:
    - catalog_enrichment: depth/consistency of product data (identifiers, variants, descriptions)
    - safety_policies: clarity of negative-use-cases and guardrails for when agents should NOT
      autonomously recommend or transact
+   - overall: the average of the four scores above
+
+STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` AND `example` RULES:
+- Every object in `store_level_recommendations` MUST include an `affected_product_ids` array listing
+  the exact `id` (or `product_id`, whichever key is present) values from the Products Catalogue
+  Payload below that this recommendation applies to. Only reference product ids that actually appear
+  in the payload. If a recommendation genuinely applies to the entire catalogue, list every product id
+  — do not leave the array empty and do not invent ids.
+- The `example` field MUST NOT be a generic template or abstract placeholder. It must be a concrete,
+  compiled fix that actually covers every product listed in `affected_product_ids` — work out the real
+  fix for each of those products individually (using that product's actual title/attributes from the
+  payload) and combine them into a single example, e.g. one line per affected product naming the
+  product and its specific fixed value. Every product id in `affected_product_ids` must have a
+  corresponding concrete fix inside `example` — none may be left uncovered or reduced to a placeholder.
+  Product-level recommendations under `products[].missing_enrichments` keep their own `example`
+  specific to that one product.
 
 CRITICAL CONSTRAINTS:
 - Write the entire response, including all values, summaries, and structural examples, strictly in the requested language: {language}.
 - Do not mix languages.
 - Ensure all numbers use standard floats/integers where applicable, and do not append descriptive text inside clean value arrays.
-- readiness_scores values must be plain integers between 0 and 100 (no % sign, no text).
+- readiness_scores category values must be plain integers between 0 and 100. `overall` should be
+  roughly their average — (no % sign, no text).
 
 Store URL: {store_url}
 
@@ -241,7 +257,10 @@ def analyze_with_ollama(products: list[dict[str, Any]], store_url: str, model: s
         "model": model,
         "prompt": (
             build_prompt(products, store_url, language)
-            + "\n\nReturn only valid JSON with keys: readiness_scores, store_level_recommendations and products."
+            + "\n\nReturn only valid JSON with keys: readiness_scores, store_level_recommendations and "
+              "products. Each store_level_recommendations entry must include affected_product_ids "
+              "(array of product id strings) alongside priority, enrichment, why_it_matters_for_agents, "
+              "and example."
         ),
         "stream": False,
         "format": "json",
@@ -298,6 +317,42 @@ def enrichment_report_schema() -> dict[str, Any]:
             "example",
         ],
     }
+    store_recommendation_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "priority": {
+                "type": "STRING",
+                "enum": ["high", "medium", "low"],
+            },
+            "enrichment":                  {"type": "STRING"},
+            "why_it_matters_for_agents":   {"type": "STRING"},
+            "example": {
+                "type": "STRING",
+                "description": (
+                    "A concrete, compiled fix covering every product in affected_product_ids — not a "
+                    "generic template. Work out the actual fix for each affected product individually "
+                    "and combine them into one example (e.g. one line per product naming it and its "
+                    "specific fixed value); every affected product id must be addressed, none left as "
+                    "a placeholder."
+                ),
+            },
+            "affected_product_ids": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+                "description": (
+                    "The product id values from the Products Catalogue Payload that this "
+                    "recommendation applies to."
+                ),
+            },
+        },
+        "required": [
+            "priority",
+            "enrichment",
+            "why_it_matters_for_agents",
+            "example",
+            "affected_product_ids",
+        ],
+    }
     readiness_scores_schema = {
         "type": "OBJECT",
         "properties": {
@@ -321,7 +376,7 @@ def enrichment_report_schema() -> dict[str, Any]:
             "readiness_scores": readiness_scores_schema,
             "store_level_recommendations": {
                 "type": "ARRAY",
-                "items": recommendation_schema,
+                "items": store_recommendation_schema,
             },
             "products": {
                 "type": "ARRAY",
@@ -537,11 +592,21 @@ def analyze_with_bedrock_claude(
         '{"readiness_scores": {"overall": 0, "ucp_commerce_flows": 0, "mcp_knowledge": 0, '
         '"catalog_enrichment": 0, "safety_policies": 0}, '
         '"store_level_recommendations": [{"priority": "high|medium|low", '
-        '"enrichment": "...", "why_it_matters_for_agents": "...", "example": "..."}], '
+        '"enrichment": "...", "why_it_matters_for_agents": "...", "example": "...", '
+        '"affected_product_ids": ["..."]}], '
         '"products": [{"product_id": "...", "title": "...", "agent_summary": "...", '
         '"missing_enrichments": [{"priority": "...", "enrichment": "...", '
         '"why_it_matters_for_agents": "...", "example": "..."}]}]} '
-        "readiness_scores values are integers 0-100."
+        "readiness_scores values are integers 0-100. "
+        "affected_product_ids on each store_level_recommendations entry MUST list the exact product "
+        "ids (from the Products Catalogue Payload) that recommendation applies to — never leave it "
+        "empty and never invent ids. The example field on each store_level_recommendations entry MUST "
+        "NOT be a generic template or placeholder — it must be a concrete, compiled fix that actually "
+        "covers every product listed in affected_product_ids: work out the real fix for each of those "
+        "products individually (using that product's actual title/attributes) and combine them into "
+        "one example, e.g. one line per affected product naming it and its specific fixed value. Every "
+        "affected product id must be addressed inside the example, none left uncovered. Product-level "
+        "examples under each product's own missing_enrichments stay specific to that one product."
     )
 
     payload = {
@@ -624,7 +689,15 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
                     "role": "system",
                     "content": (
                         "You return concise JSON for ecommerce enrichment work. "
-                        "Prioritize specific, actionable changes."
+                        "Prioritize specific, actionable changes. Every store_level_recommendations "
+                        "entry must include affected_product_ids listing the exact product ids it "
+                        "applies to. Its example must NOT be a generic template — it must be a "
+                        "concrete, compiled fix that actually covers every product in "
+                        "affected_product_ids, working out the real fix per product (using that "
+                        "product's actual title/attributes) and combining them into one example, e.g. "
+                        "one line per affected product naming it and its specific fixed value; none "
+                        "may be left uncovered or reduced to a placeholder. Product-specific examples "
+                        "belong separately under each product's own missing_enrichments."
                     ),
                 },
                 {"role": "user", "content": build_prompt(products, store_url, language)},
@@ -641,7 +714,7 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
                             "readiness_scores": {"$ref": "#/$defs/readiness_scores"},
                             "store_level_recommendations": {
                                 "type": "array",
-                                "items": {"$ref": "#/$defs/recommendation"},
+                                "items": {"$ref": "#/$defs/store_recommendation"},
                             },
                             "products": {
                                 "type": "array",
@@ -704,7 +777,31 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
                                     "why_it_matters_for_agents",
                                     "example",
                             ],
-                        }
+                        },
+                            "store_recommendation": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "priority": {
+                                        "type": "string",
+                                        "enum": ["high", "medium", "low"],
+                                    },
+                                    "enrichment": {"type": "string"},
+                                    "why_it_matters_for_agents": {"type": "string"},
+                                    "example": {"type": "string"},
+                                    "affected_product_ids": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                },
+                                "required": [
+                                    "priority",
+                                    "enrichment",
+                                    "why_it_matters_for_agents",
+                                    "example",
+                                    "affected_product_ids",
+                                ],
+                            }
                         },
                     },
                 }
@@ -754,7 +851,6 @@ def escape_html(value: Any) -> str:
 
 
 _READINESS_KEYS = (
-    "overall",
     "ucp_commerce_flows",
     "mcp_knowledge",
     "catalog_enrichment",
@@ -772,6 +868,7 @@ def normalize_readiness_scores(raw: Any) -> dict[str, int]:
         except (TypeError, ValueError):
             value = 0
         scores[key] = max(0, min(100, value))
+    scores["overall"] = round(sum(scores[key] for key in _READINESS_KEYS) / len(_READINESS_KEYS))
     return scores
 
 
@@ -821,6 +918,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "example_label":      "Example:",
         "provider_label":     "Provider:",
         "generated_label":    "Generated",
+        "affects_products":   "Applies to {n} products",
         "footer":             "Generated from Shopify product data. Review recommendations before publishing product or policy changes.",
         "powered_by": "Powered by Propero",
     },
@@ -862,6 +960,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "example_label":      "Beispiel:",
         "provider_label":     "Anbieter:",
         "generated_label":    "Erstellt",
+        "affects_products":   "Betrifft {n} Produkte",
         "footer":             "Erstellt aus Shopify-Produktdaten. Empfehlungen vor der Veröffentlichung von Produkt- oder Richtlinienänderungen prüfen.",
         "powered_by":          "Bereitgestellt von Propero",
     },
@@ -903,6 +1002,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "example_label":      "Exemple :",
         "provider_label":     "Fournisseur :",
         "generated_label":    "Généré le",
+        "affects_products":   "S'applique à {n} produits",
         "footer":             "Généré à partir des données produits Shopify. Vérifiez les recommandations avant de publier des modifications de produits ou de politiques.",
         "powered_by":         "Propulsé par Propero",
     },
@@ -944,6 +1044,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "example_label":      "Ejemplo:",
         "provider_label":     "Proveedor:",
         "generated_label":    "Generado",
+        "affects_products":   "Se aplica a {n} productos",
         "footer":             "Generado a partir de datos de productos de Shopify. Revise las recomendaciones antes de publicar cambios en productos o políticas.",
         "powered_by":         "Desarrollado por Propero",
     },
@@ -985,6 +1086,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "example_label":      "例：",
         "provider_label":     "プロバイダー：",
         "generated_label":    "生成日時",
+        "affects_products":   "{n}件の商品に適用",
         "footer":             "Shopify商品データから生成されました。商品やポリシーの変更を公開する前に推薦事項を確認してください。",
         "powered_by":         "Propero提供",
     },
@@ -1006,11 +1108,20 @@ def render_recommendations(
     items = []
     for rec in recommendations:
         priority = priority_class(rec.get("priority"))
+        affected_ids = rec.get("affected_product_ids")
+        affected_badge = ""
+        if isinstance(affected_ids, list) and affected_ids:
+            affected_badge = (
+                f'<span class="pill pill--affected">'
+                f'{escape_html(labels.get("affects_products", "Applies to {n} products").replace("{n}", str(len(affected_ids))))}'
+                f"</span>"
+            )
         items.append(
             f"""
             <article class="recommendation">
               <div class="recommendation__header">
                 <span class="pill pill--{priority}">{escape_html(priority)}</span>
+                {affected_badge}
                 <h4>{escape_html(rec.get("enrichment"))}</h4>
               </div>
               <p>{escape_html(rec.get("why_it_matters_for_agents"))}</p>
@@ -1219,11 +1330,12 @@ def render_pdf_html(
     .summary-list span {{ display: block; color: #4b5567; }}
     .recommendation-list {{ display: grid; gap: 10px; }}
     .recommendation {{ padding: 12px 13px; background: #ffffff; border: 1px solid #ded6c8; border-radius: 8px; break-inside: avoid; }}
-    .recommendation__header {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 7px; }}
+    .recommendation__header {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 7px; flex-wrap: wrap; }}
     .recommendation p {{ margin: 0 0 8px; color: #3f4a5a; }}
     .example {{ padding: 8px 9px; color: #324150; background: #f4efe6; border-left: 3px solid #c47d52; border-radius: 5px; }}
     .pill {{ display: inline-block; min-width: 44px; padding: 3px 7px; border-radius: 999px; color: #ffffff; font-size: 8px; font-weight: 800; text-align: center; text-transform: uppercase; letter-spacing: .05em; }}
     .pill--high {{ background: #b43d31; }} .pill--medium {{ background: #b87524; }} .pill--low {{ background: #3d756b; }}
+    .pill--affected {{ background: #17695b; }}
     .product-card {{ margin-bottom: 18px; padding: 18px; background: #ffffff; border: 1px solid #ded6c8; border-radius: 8px; break-inside: avoid; }}
     .product-card__top {{ display: flex; justify-content: space-between; gap: 16px; margin-bottom: 12px; }}
     .score {{
@@ -1780,9 +1892,12 @@ def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
         key: round(score_totals[key] / score_counts[key]) if score_counts[key] else 0
         for key in _READINESS_KEYS
     }
+    merged["readiness_scores"]["overall"] = round(
+        sum(merged["readiness_scores"][key] for key in _READINESS_KEYS) / len(_READINESS_KEYS)
+    )
 
-    seen_store = set()
-    deduped_store = []
+    seen_store: dict[tuple, dict[str, Any]] = {}
+    deduped_store: list[dict[str, Any]] = []
     for rec in merged["store_level_recommendations"]:
         key = (
             rec.get("priority"),
@@ -1791,8 +1906,13 @@ def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
             rec.get("example"),
         )
         if key in seen_store:
+            existing = seen_store[key]
+            existing_ids = existing.get("affected_product_ids") or []
+            new_ids = rec.get("affected_product_ids") or []
+            merged_ids = list(dict.fromkeys([*existing_ids, *new_ids]))
+            existing["affected_product_ids"] = merged_ids
             continue
-        seen_store.add(key)
+        seen_store[key] = rec
         deduped_store.append(rec)
 
     merged["store_level_recommendations"] = deduped_store

@@ -6,7 +6,7 @@ from app.api.schemas import QueueResponse, ReportRequestCreate, ReportRequestRes
 from app.services.jobs import job_queue
 from app.services.product_fetcher import InvalidStoreURLError, normalize_store_url
 from pydantic import BaseModel
-
+from app.services.audit_repository import audit_repo
 
 router = APIRouter()
 
@@ -95,3 +95,105 @@ def get_report_request(job_id: str) -> ReportRequestResponse:
         raise HTTPException(status_code=404, detail="Report request not found.")
     return ReportRequestResponse(**job_queue.serialize(job))
 
+@router.get("/audits/history")
+def get_audit_history(
+    shop_domain: str,
+    page: int = 1,
+    page_size: int = 5,
+) -> dict:
+
+    if page < 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Page must be 1 or greater.",
+        )
+
+    if page_size < 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Page size must be greater than 0.",
+        )
+
+    return audit_repo.list_audits(
+        shop_domain=shop_domain.strip(),
+        page=page,
+        page_size=page_size,
+    )
+
+@router.get("/audits/latest")
+def get_latest_audit(shop_domain: str) -> dict:
+    if not shop_domain.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Shop domain is required.",
+        )
+
+    audit = audit_repo.get_latest_audit(shop_domain.strip())
+
+    if audit is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No audit found for this Shopify store.",
+        )
+
+    return audit
+
+@router.get("/audits/{audit_id}/products")
+def get_audit_products(audit_id: str) -> dict:
+    products = audit_repo.get_audit_products(audit_id)
+
+    return {
+        "audit_id": audit_id,
+        "products": products,
+        "total": len(products),
+    }
+
+@router.get("/products")
+def get_all_products(shop_domain: str) -> dict:
+    if not shop_domain.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Shop domain is required.",
+        )
+
+    result = audit_repo.get_all_unique_products(shop_domain.strip())
+
+    return {
+        "shop_domain": shop_domain.strip(),
+        "products": result["products"],
+        "total": len(result["products"]),
+        "audit_count": result["audit_count"],
+    }
+
+@router.get("/products/detail")
+def get_product(
+    product_id: str,
+    shop_domain: str,
+) -> dict:
+    if not shop_domain.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Shop domain is required.",
+        )
+
+    if not product_id.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Product ID is required.",
+        )
+
+    product = audit_repo.get_unique_product(
+        shop_domain=shop_domain.strip(),
+        product_id=product_id.strip(),
+    )
+
+    if product is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Product has not been audited for this Shopify store.",
+        )
+
+    return {
+        "shop_domain": shop_domain.strip(),
+        "product": product,
+    }

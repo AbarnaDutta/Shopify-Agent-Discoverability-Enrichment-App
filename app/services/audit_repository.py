@@ -101,6 +101,7 @@ class AuditRepository:
                     priority=r.get("priority"),
                     why_it_matters_for_agents=r.get("why_it_matters_for_agents"),
                     example=r.get("example"),
+                    affected_product_ids=r.get("affected_product_ids") or [],
                 ))
 
             if agent_discovery:
@@ -141,24 +142,80 @@ class AuditRepository:
             )
             return self._serialize_audit(audit, include_children=True) if audit else None
 
-    def list_audits(self, shop_domain: str, limit: int = 20) -> list[dict[str, Any]]:
+    def list_audits(
+        self,
+        shop_domain: str,
+        page: int = 1,
+        page_size: int = 5,
+    ) -> dict[str, Any]:
+
         with safe_db("list_audits") as db:
             if db is None:
-                return []
-            store = db.query(Store).filter(Store.shop_domain == shop_domain).one_or_none()
-            if store is None:
-                return []
-            return [
-                {
-                    "id": a.id,
-                    "created_at": a.created_at.isoformat(),
-                    "overall_score": a.overall_score,
-                    "products_scanned": a.products_scanned,
-                    "issues_found": a.issues_found,
+                return {
+                    "items": [],
+                    "page": page,
+                    "page_size": page_size,
+                    "total": 0,
+                    "total_pages": 0,
                 }
-                for a in store.audits[:limit]
-            ]
 
+            store = (
+                db.query(Store)
+                .filter(Store.shop_domain == shop_domain)
+                .one_or_none()
+            )
+
+            if store is None:
+                return {
+                    "items": [],
+                    "page": page,
+                    "page_size": page_size,
+                    "total": 0,
+                    "total_pages": 0,
+                }
+
+            query = (
+                db.query(Audit)
+                .filter(Audit.store_id == store.id)
+                .order_by(Audit.created_at.asc())
+            )
+
+            total = query.count()
+
+            total_pages = (
+                (total + page_size - 1) // page_size
+                if total > 0
+                else 0
+            )
+
+            reverse_page = total_pages - page + 1
+
+            offset = (reverse_page - 1) * page_size
+
+            audits = (
+                query
+                .offset(offset)
+                .limit(page_size)
+                .all()
+            )
+
+            return {
+                "items": [
+                    {
+                        "id": audit.id,
+                        "created_at": audit.created_at.isoformat(),
+                        "overall_score": audit.overall_score,
+                        "products_scanned": audit.products_scanned,
+                        "issues_found": audit.issues_found,
+                    }
+                    for audit in audits
+                ],
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+            }
+        
     def get_audit_products(self, audit_id: str) -> list[dict[str, Any]]:
         with safe_db("get_audit_products") as db:
             if db is None:
@@ -184,6 +241,95 @@ class AuditRepository:
             )
             return self._serialize_product(row) if row else None
 
+    def get_all_unique_products(self, shop_domain: str) -> dict[str, Any]:
+        with safe_db("get_all_unique_products") as db:
+            if db is None:
+                return {
+                    "products": [],
+                    "audit_count": 0,
+                }
+
+            store = (
+                db.query(Store)
+                .filter(Store.shop_domain == shop_domain)
+                .one_or_none()
+            )
+
+            if store is None:
+                return {
+                    "products": [],
+                    "audit_count": 0,
+                }
+
+            audits = (
+                db.query(Audit)
+                .filter(
+                    Audit.store_id == store.id,
+                    Audit.status == "completed",
+                )
+                .order_by(Audit.created_at.desc())
+                .all()
+            )
+
+            rows = []
+
+            for audit in audits:
+                rows.extend(audit.products)
+
+            unique_products: dict[str, AuditProduct] = {}
+
+            for product in rows:
+                product_id = str(product.product_id or "").strip()
+
+                if not product_id:
+                    continue
+
+                if product_id not in unique_products:
+                    unique_products[product_id] = product
+
+            return {
+                "products": [
+                    self._serialize_product(product)
+                    for product in unique_products.values()
+                ],
+                "audit_count": len(audits),
+            }
+
+    def get_unique_product(
+        self,
+        shop_domain: str,
+        product_id: str,
+    ) -> dict[str, Any] | None:
+        with safe_db("get_unique_product") as db:
+            if db is None:
+                return None
+
+            store = (
+                db.query(Store)
+                .filter(Store.shop_domain == shop_domain)
+                .one_or_none()
+            )
+
+            if store is None:
+                return None
+
+            row = (
+                db.query(AuditProduct)
+                .join(Audit, AuditProduct.audit_id == Audit.id)
+                .filter(
+                    Audit.store_id == store.id,
+                    AuditProduct.product_id == str(product_id),
+                    Audit.status == "completed",
+                )
+                .order_by(Audit.created_at.desc())
+                .first()
+            )
+
+            if row is None:
+                return None
+
+            return self._serialize_product(row)
+
     def _serialize_audit(self, audit: Audit, include_children: bool = False) -> dict[str, Any]:
         data = {
             "id": audit.id,
@@ -204,6 +350,7 @@ class AuditRepository:
                     "priority": r.priority,
                     "why_it_matters_for_agents": r.why_it_matters_for_agents,
                     "example": r.example,
+                    "affected_product_ids": r.affected_product_ids or [],
                 }
                 for r in audit.store_recommendations
             ]

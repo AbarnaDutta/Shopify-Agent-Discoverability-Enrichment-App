@@ -3,12 +3,13 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
 
-export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-
-  // eslint-disable-next-line no-undef
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
-};
+export async function loader({ request }) {
+  const { session } = await authenticate.admin(request);
+  return {
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+    shopDomain: session?.shop || null,
+  };
+}
 
 export default function App() {
   const { apiKey } = useLoaderData();

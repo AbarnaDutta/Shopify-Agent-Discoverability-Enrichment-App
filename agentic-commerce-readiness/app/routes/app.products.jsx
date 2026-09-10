@@ -1,173 +1,93 @@
+//agentic-commerce-readiness/app/routes/app.products.jsx
 import { useEffect, useMemo, useState } from "react";
-import { Search, ChevronRight, Package } from "lucide-react";
-import { useNavigate } from "react-router";
+import { Search, Package } from "lucide-react";
+import { useNavigate, useRouteLoaderData } from "react-router";
 
-const STORAGE_KEY = "acr_latest_report";
-
-function getProductScore(product) {
-  if (typeof product.readiness_score === "number") {
-    return Math.max(0, Math.min(100, Math.round(product.readiness_score)));
-  }
-
-  if (typeof product.score === "number") {
-    return Math.max(0, Math.min(100, Math.round(product.score)));
-  }
-
+function getProductStatus(product) {
   const issues = product.missing_enrichments || [];
 
-  if (!issues.length) return 100;
+  const hasHigh = issues.some((item) => item.priority === "high");
+  const hasOtherIssues = issues.some(
+    (item) => item.priority === "medium" || item.priority === "low"
+  );
 
-  const high = issues.filter((item) => item.priority === "high").length;
-  const medium = issues.filter((item) => item.priority === "medium").length;
-  const low = issues.filter((item) => item.priority === "low").length;
-
-  const penalty = high * 20 + medium * 10 + low * 5;
-
-  return Math.max(0, Math.min(100, 100 - penalty));
-}
-
-function getStatus(score) {
-  if (score >= 80) {
+  if (hasHigh) {
     return {
-      label: "Ready",
-      className: "bg-green-50 text-[var(--app-green)]",
+      label: "Critical",
+      className: "bg-[#FFF0EF] text-[#D72C0D] border border-[#FFC9C5]",
     };
   }
 
-  if (score >= 50) {
+  if (hasOtherIssues) {
     return {
-      label: "Needs Work",
-      className: "bg-orange-50 text-orange-700",
+      label: "Needs attention",
+      className: "bg-[#FFF5E5] text-[#8A6116] border border-[#FFE0A3]",
     };
   }
 
   return {
-    label: "Not Ready",
-    className: "bg-red-50 text-red-700",
+    label: "Ready",
+    className: "bg-[#E6F4EA] text-[#008060] border border-[#B4E3C8]",
   };
 }
 
-function ScoreBadge({ score }) {
-  const status = getStatus(score);
-
+function MetricCard({ label, value, labelClassName, valueClassName }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-sm font-extrabold text-[var(--app-text)]">
-        {score}
-      </span>
-
-      <span
-        className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${status.className}`}
-      >
-        {status.label}
-      </span>
+    <div className="rounded-xl border border-[#E1E3E5] bg-white p-5 shadow-sm">
+      <span className={`block text-xs font-bold uppercase ${labelClassName}`}>{label}</span>
+      <span className={`mt-1 block text-2xl font-bold ${valueClassName}`}>{value}</span>
     </div>
   );
 }
 
-function ProductRow({ product, onClick }) {
-  const score = getProductScore(product);
-  const issues = product.missing_enrichments || [];
-
-  const high = issues.filter((item) => item.priority === "high").length;
-  const medium = issues.filter((item) => item.priority === "medium").length;
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group grid w-full grid-cols-1 gap-4 border-b border-[var(--app-border)] px-5 py-5 text-left transition-colors hover:bg-[var(--app-bg)] md:grid-cols-[minmax(0,1fr)_120px_150px_40px] md:items-center"
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)]">
-          {product.image_url || product.image ? (
-            <img
-              src={product.image_url || product.image}
-              alt=""
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <Package size={19} className="text-[var(--app-muted)]" />
-          )}
-        </div>
-
-        <div className="min-w-0">
-          <div className="truncate text-sm font-bold text-[var(--app-green)]">
-            {product.title || "Untitled product"}
-          </div>
-
-          <div className="mt-1 truncate text-xs text-[var(--app-muted)]">
-            {product.product_id
-              ? `Product ID: ${product.product_id}`
-              : "Product ID unavailable"}
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)] md:hidden">
-          Readiness
-        </div>
-
-        <div className="mt-1 md:mt-0">
-          <ScoreBadge score={score} />
-        </div>
-      </div>
-
-      <div>
-        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)] md:hidden">
-          Issues
-        </div>
-
-        <div className="mt-1 flex items-center gap-2 md:mt-0">
-          {high > 0 && (
-            <span className="rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-bold text-red-700">
-              {high} High
-            </span>
-          )}
-
-          {medium > 0 && (
-            <span className="rounded-full bg-orange-50 px-2.5 py-1 text-[10px] font-bold text-orange-700">
-              {medium} Medium
-            </span>
-          )}
-
-          {!high && !medium && (
-            <span className="text-xs font-semibold text-[var(--app-green)]">
-              No issues
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="hidden justify-end md:flex">
-        <ChevronRight
-          size={18}
-          className="text-[var(--app-muted)] transition-transform group-hover:translate-x-1"
-        />
-      </div>
-    </button>
-  );
-}
+const PAGE_SIZE = 10;
 
 export default function Products() {
   const navigate = useNavigate();
+  const { shopDomain } = useRouteLoaderData("routes/app");
 
   const [report, setReport] = useState(null);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState("All");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (!shopDomain) return;
 
-      if (stored) {
-        setReport(JSON.parse(stored));
+    let cancelled = false;
+
+    const loadProducts = async () => {
+      try {
+        setError(null);
+
+        const response = await fetch(
+          `https://geo.properoapps.in/api/products?shop_domain=${encodeURIComponent(shopDomain)}`
+        );
+
+        if (response.status === 404) {
+          if (!cancelled) setReport(null);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Failed to load products: ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!cancelled) setReport(data);
+      } catch (err) {
+        console.error("Failed to load audited products:", err);
+        if (!cancelled) setError("Could not load audited products.");
       }
-    } catch (error) {
-      console.warn("Could not load stored audit report.", error);
-    }
-  }, []);
+    };
+
+    loadProducts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shopDomain]);
 
   const products = report?.products || [];
 
@@ -177,189 +97,239 @@ export default function Products() {
     return products.filter((product) => {
       const title = String(product.title || "").toLowerCase();
       const id = String(product.product_id || "").toLowerCase();
+      const matchesSearch = !query || title.includes(query) || id.includes(query);
 
-      const score = getProductScore(product);
-
-      const matchesSearch =
-        !query || title.includes(query) || id.includes(query);
-
-      const matchesStatus =
-        status === "all" ||
-        (status === "ready" && score >= 80) ||
-        (status === "needs-work" && score >= 50 && score < 80) ||
-        (status === "not-ready" && score < 50);
+      const productStatus = getProductStatus(product).label;
+      const matchesStatus = status === "All" || productStatus === status;
 
       return matchesSearch && matchesStatus;
     });
   }, [products, search, status]);
 
-  const readyCount = products.filter(
-    (product) => getProductScore(product) >= 80
-  ).length;
+  useEffect(() => {
+    setPage(1);
+  }, [search, status, products.length]);
 
-  const needsWorkCount = products.filter((product) => {
-    const score = getProductScore(product);
-    return score >= 50 && score < 80;
-  }).length;
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
+  const pagedProducts = filteredProducts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const notReadyCount = products.filter(
-    (product) => getProductScore(product) < 50
+  const readyCount = products.filter((p) => getProductStatus(p).label === "Ready").length;
+  const needsAttentionCount = products.filter(
+    (p) => getProductStatus(p).label === "Needs attention"
   ).length;
+  const criticalCount = products.filter((p) => getProductStatus(p).label === "Critical").length;
+
+  const goToProduct = (product) => {
+    if (!product.product_id) return;
+    navigate(`/app/products/detail?id=${encodeURIComponent(product.product_id)}`);
+  };
 
   return (
-    <div className="min-h-screen bg-[var(--app-bg)] px-5 py-8 text-[var(--app-text)] md:px-8">
-      <div className="mx-auto max-w-6xl">
-        {/* Header */}
-        <div className="mb-7">
-          <div className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.1em] text-[var(--app-orange)]">
-            Catalog
-          </div>
-
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div>
-              <h1 className="text-3xl font-extrabold tracking-tight text-[var(--app-green)]">
-                Products
-              </h1>
-
-              <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-[var(--app-muted)]">
-                Review product-level readiness and identify the catalog
-                attributes that need attention for agentic commerce.
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-[var(--app-border)] bg-white px-4 py-3">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-                Products Analyzed
-              </div>
-
-              <div className="mt-0.5 text-2xl font-extrabold text-[var(--app-green)]">
-                {products.length}
-              </div>
-            </div>
-          </div>
+    <div className="p-8 max-w-7xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-[#202223]">Products</h1>
+          <p className="text-sm text-[#6D7175] mt-0.5">
+            Review product-level readiness from your completed audits. Only audited
+            products appear here — not your full Shopify catalog.
+          </p>
         </div>
+      </div>
 
-        {/* Status summary */}
-        <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl border border-[var(--app-border)] bg-white p-4">
-            <div className="text-xs font-bold text-[var(--app-muted)]">
-              Ready
-            </div>
+      {/* Metric cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
+          label="Products Audited"
+          value={products.length}
+          labelClassName="text-[#6D7175]"
+          valueClassName="text-[#202223]"
+        />
+        <MetricCard
+          label="Needs Attention"
+          value={needsAttentionCount}
+          labelClassName="text-[#8A6116]"
+          valueClassName="text-[#8A6116]"
+        />
+        <MetricCard
+          label="Ready"
+          value={readyCount}
+          labelClassName="text-[#008060]"
+          valueClassName="text-[#008060]"
+        />
+        <MetricCard
+          label="Critical"
+          value={criticalCount}
+          labelClassName="text-[#D72C0D]"
+          valueClassName="text-[#D72C0D]"
+        />
+      </div>
 
-            <div className="mt-1 text-2xl font-extrabold text-[var(--app-green)]">
-              {readyCount}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[var(--app-border)] bg-white p-4">
-            <div className="text-xs font-bold text-[var(--app-muted)]">
-              Needs Work
-            </div>
-
-            <div className="mt-1 text-2xl font-extrabold text-orange-700">
-              {needsWorkCount}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[var(--app-border)] bg-white p-4">
-            <div className="text-xs font-bold text-[var(--app-muted)]">
-              Not Ready
-            </div>
-
-            <div className="mt-1 text-2xl font-extrabold text-red-700">
-              {notReadyCount}
-            </div>
-          </div>
-        </div>
-
-        {/* Search + filter */}
-        <div className="mb-5 flex flex-col gap-3 md:flex-row">
+      {/* Search + filter */}
+      <div className="bg-white rounded-xl border border-[#E1E3E5] p-4 shadow-sm">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
           <div className="relative flex-1">
-            <Search
-              size={17}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--app-muted)]"
-            />
-
+            <Search className="w-4 h-4 text-[#6D7175] absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
+              placeholder="Search products by title or product ID..."
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search products..."
-              className="h-11 w-full rounded-xl border border-[var(--app-border)] bg-white pl-10 pr-4 text-sm text-[var(--app-text)] outline-none focus:border-[var(--app-green)]"
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 text-xs rounded-md border border-[#E1E3E5] focus:border-[#008060] focus:ring-1 focus:ring-[#008060] outline-none text-[#202223] placeholder:text-[#6D7175]"
             />
           </div>
 
           <select
             value={status}
-            onChange={(event) => setStatus(event.target.value)}
-            className="h-11 rounded-xl border border-[var(--app-border)] bg-white px-4 text-sm font-semibold text-[var(--app-text)] outline-none"
+            onChange={(e) => setStatus(e.target.value)}
+            className="bg-[#F6F6F7] border border-[#E1E3E5] rounded-md py-1.5 px-2.5 font-semibold text-[#202223] text-xs outline-none focus:border-[#008060]"
           >
-            <option value="all">All products</option>
-            <option value="ready">Ready</option>
-            <option value="needs-work">Needs Work</option>
-            <option value="not-ready">Not Ready</option>
+            <option value="All">All Status</option>
+            <option value="Critical">Critical</option>
+            <option value="Needs attention">Needs attention</option>
+            <option value="Ready">Ready</option>
           </select>
         </div>
+      </div>
 
-        {/* Product table */}
-        <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-white">
-          <div className="hidden grid-cols-[minmax(0,1fr)_120px_150px_40px] gap-4 border-b border-[var(--app-border)] bg-[var(--app-bg)] px-5 py-3 text-[10px] font-extrabold uppercase tracking-wider text-[var(--app-muted)] md:grid">
-            <div>Product</div>
-            <div>Readiness</div>
-            <div>Issues</div>
-            <div />
+      {/* Products table */}
+      <div className="bg-white rounded-xl border border-[#E1E3E5] shadow-sm overflow-hidden">
+        {pagedProducts.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-[#F8F9FA] text-[10px] font-bold text-[#6D7175] uppercase tracking-wider">
+                <tr>
+                  <th className="py-3 px-6 border-b border-[#E1E3E5]">Product</th>
+                  <th className="py-3 px-6 border-b border-[#E1E3E5]">Issues</th>
+                  <th className="py-3 px-6 border-b border-[#E1E3E5]">Status</th>
+                  <th className="py-3 px-6 border-b border-[#E1E3E5] text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E1E3E5] text-xs">
+                {pagedProducts.map((product) => {
+                  const productStatus = getProductStatus(product);
+                  const issues = product.missing_enrichments || [];
+                  const high = issues.filter((i) => i.priority === "high").length;
+                  const medium = issues.filter((i) => i.priority === "medium").length;
+
+                  return (
+                    <tr
+                      key={product.product_id}
+                      onClick={() => goToProduct(product)}
+                      className="hover:bg-[#F9FAFB] transition-colors cursor-pointer group"
+                    >
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-md border border-[#E1E3E5] bg-[#F1F2F3] flex items-center justify-center shrink-0">
+                            <Package size={16} className="text-[#6D7175]" />
+                          </div>
+                          <div>
+                            <div className="font-semibold text-[#202223] group-hover:text-[#008060] transition-colors">
+                              {product.title || "Untitled product"}
+                            </div>
+                            <div className="text-[11px] text-[#6D7175] font-mono mt-0.5 truncate max-w-[220px]">
+                              {product.product_id || "ID unavailable"}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="py-4 px-6 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          {high > 0 && (
+                            <span className="rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-bold text-red-700">
+                              {high} High
+                            </span>
+                          )}
+                          {medium > 0 && (
+                            <span className="rounded-full bg-orange-50 px-2.5 py-1 text-[10px] font-bold text-orange-700">
+                              {medium} Medium
+                            </span>
+                          )}
+                          {!high && !medium && (
+                            <span className="text-[#6D7175] font-medium">No issues</span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="py-4 px-6 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${productStatus.className}`}
+                        >
+                          {productStatus.label}
+                        </span>
+                      </td>
+
+                      <td
+                        className="py-4 px-6 text-right whitespace-nowrap"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          onClick={() => goToProduct(product)}
+                          className="px-3 py-1 rounded text-xs font-semibold text-[#008060] hover:underline cursor-pointer"
+                        >
+                          {productStatus.label === "Critical" ? "Review" : "View"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
+        ) : (
+          <div className="px-6 py-16 text-center">
+            <Package size={28} className="mx-auto mb-3 text-[#6D7175]" />
+            {!report ? (
+              <>
+                <h2 className="text-lg font-extrabold text-[#008060]">
+                  No audit report available
+                </h2>
+                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-[#6D7175]">
+                  Run an audit from the Dashboard first. Your analyzed products will
+                  appear here after the audit completes.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-lg font-extrabold text-[#008060]">No products found</h2>
+                <p className="mt-2 text-sm text-[#6D7175]">
+                  Try changing your search or filter.
+                </p>
+              </>
+            )}
+          </div>
+        )}
 
-          {filteredProducts.length > 0 ? (
-            filteredProducts.map((product, index) => (
-              <ProductRow
-                key={product.product_id || product.id || index}
-                product={product}
-                onClick={() => {
-                  const id = product.product_id || product.id;
+        {filteredProducts.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between border-t border-[#E1E3E5] px-6 py-4">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="rounded-lg border border-[#E1E3E5] px-4 py-2 text-sm font-semibold text-[#202223] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Previous
+            </button>
 
-                  if (id) {
-                    navigate(`/app/products/${encodeURIComponent(id)}`);
-                  }
-                }}
-              />
-            ))
-          ) : (
-            <div className="px-6 py-16 text-center">
-              <Package
-                size={28}
-                className="mx-auto mb-3 text-[var(--app-muted)]"
-              />
+            <span className="text-sm text-[#6D7175]">
+              Page {page} of {totalPages}
+            </span>
 
-              {!report ? (
-                <>
-                  <h2 className="text-lg font-extrabold text-[var(--app-green)]">
-                    No audit report available
-                  </h2>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="rounded-lg border border-[#E1E3E5] px-4 py-2 text-sm font-semibold text-[#202223] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
 
-                  <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-[var(--app-muted)]">
-                    Run an audit from the Dashboard first. Your analyzed
-                    products will appear here after the audit completes.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <h2 className="text-lg font-extrabold text-[var(--app-green)]">
-                    No products found
-                  </h2>
-
-                  <p className="mt-2 text-sm text-[var(--app-muted)]">
-                    Try changing your search or filter.
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-5 text-center text-xs text-[var(--app-muted)]">
-          Showing {filteredProducts.length} of {products.length} products
-        </div>
+      <div className="text-center text-xs text-[#6D7175]">
+        Showing {pagedProducts.length} of {filteredProducts.length} products
       </div>
     </div>
   );
