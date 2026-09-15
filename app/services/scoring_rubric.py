@@ -15,13 +15,14 @@ CHECKS: dict[str, list[dict]] = {
         {"id": "variant_selection",    "level": "product", "desc": "Variants/options let an agent pick the exact SKU: option names meaningful, selectedOptions complete and consistent."},
         {"id": "pricing_clarity",      "level": "product", "desc": "Every variant has a real, non-zero, non-placeholder price."},
         {"id": "availability_signals", "level": "product", "desc": "Inventory/status fields exist and are usable to determine buyable-now."},
-        {"id": "fulfillment_context",  "level": "store",   "desc": "Store-level shipping policy / fulfillment info is present and non-empty."},
+        {"id": "fulfillment_context",  "level":  "store",  "desc": "Operational fulfillment information is present and actionable, such as delivery speed, shipping methods, pickup availability, and domestic vs international coverage; a shipping-policy page alone is not sufficient."},
     ],
     "mcp_knowledge": [
         {"id": "product_understanding", "level": "product", "desc": "title + descriptionHtml + attributes clearly answer what the product is, who it's for, and what's included/excluded."},
         {"id": "comparable_attributes", "level": "product", "desc": "productType/tags/options/metafields are structured enough to filter, sort, and compare against similar products."},
-        {"id": "policy_coverage",       "level": "store",   "desc": "shop.privacyPolicy, refundPolicy, shippingPolicy, termsOfService are all present and substantive."},
+        {"id": "policy_semantics", "level": "store", "desc": "Policy text is specific enough that an agent can answer edge cases (deadlines, exceptions, regions) without guessing."},
         {"id": "faq_or_guidance",       "level": "store",   "desc": "FAQ content, metaobjects, or shopping-guidance text exists."},
+        {"id": "product_clarity", "level": "product",  "desc": "Description clearly states what/included/how-to-use, no unclarified medical/financial claims."},
     ],
     "catalog_enrichment": [
         {"id": "identifiers",     "level": "product", "desc": "Variant sku present and non-empty; barcode/GTIN/MPN present where applicable."},
@@ -32,23 +33,22 @@ CHECKS: dict[str, list[dict]] = {
     "safety_policies": [
         {"id": "product_guardrails", "level": "product", "desc": "IF this product is in a risky category (age-restricted, medical, weapons, financial, children's safety-critical), it carries matching guardrail metafields (age limit, warnings, human-review flag). Mark 'na' if not a risky category."},
         {"id": "store_guardrails",   "level": "store",   "desc": "Store-level guardrail metafields or policy text exist (age gating, region limits, manual-approval categories)."},
-    ],
-    "trust_signals": [
         {"id": "legal_pages",     "level": "store",   "desc": "All four policy bodies (privacy, refund, shipping, terms) present and non-placeholder."},
         {"id": "contact_brand",   "level": "store",   "desc": "Contact details or brand/about content discoverable via shop metafields/metaobjects."},
-        {"id": "product_clarity", "level": "product",  "desc": "Description clearly states what/included/how-to-use, no unclarified medical/financial claims."},
+        {"id": "fulfillment_context",  "level":  "store",  "desc": "Operational fulfillment information is present and actionable, such as delivery speed, shipping methods, pickup availability, and domestic vs international coverage; a shipping-policy page alone is not sufficient."},
+        {"id": "policy_semantics", "level": "store", "desc": "Policy text is specific enough that an agent can answer edge cases (deadlines, exceptions, regions) without guessing."},
+        {"id": "faq_or_guidance",       "level": "store",   "desc": "FAQ content, metaobjects, or shopping-guidance text exists."},
+        
     ],
 }
 
 ALL_CHECK_IDS: list[str] = [c["id"] for checks in CHECKS.values() for c in checks]
 CHECK_BY_ID: dict[str, dict] = {c["id"]: {**c, "category": cat} for cat, checks in CHECKS.items() for c in checks}
 
-# Category → severity tier, exactly per the client-facing story.
 _CATEGORY_SEVERITY = {
     "ucp_commerce_flows": "critical",
     "safety_policies":    "critical",
     "mcp_knowledge":       "high",
-    "trust_signals":       "high",
     "catalog_enrichment":  "moderate",
 }
 
@@ -90,7 +90,6 @@ def compute_scores(
         "mcp_knowledge",
         "catalog_enrichment",
         "safety_policies",
-        "trust_signals",
     ):
         check_scores = []
         for check in CHECKS[category]:
@@ -157,7 +156,7 @@ def build_store_recommendations(
             recs.append({
                 "check_id": check_id,
                 "priority": priority_for(check_id, "fail"),
-                "enrichment": f"Catalog-wide: {CHECK_BY_ID[check_id]['desc']}",
+                "enrichment": f"{CHECK_BY_ID[check_id]['desc']}",
                 "why_it_matters_for_agents": CHECK_BY_ID[check_id]["desc"],
                 "example": f"{len(ids)} products affected — see each product's own missing_enrichments for specifics.",
                 "affected_product_ids": ids,

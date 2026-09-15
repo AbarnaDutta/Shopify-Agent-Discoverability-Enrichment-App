@@ -326,25 +326,12 @@ def fetch_products_admin(
 # ── STORE CONTEXT FOR AUDIT ───────────────────────────────────────────
 
 _STORE_CONTEXT_QUERY = """
-query StoreContextForAudit {
+query StoreContextForAuditAdmin {
   shop {
     id
     name
     primaryDomain {
       url
-    }
-
-    privacyPolicy {
-      body
-    }
-    refundPolicy {
-      body
-    }
-    shippingPolicy {
-      body
-    }
-    termsOfService {
-      body
     }
 
     metafields(first: 20) {
@@ -373,22 +360,27 @@ query StoreContextForAudit {
     }
   }
 
-  metaobjects(first: 50) {
+  metaobjectDefinitions(first: 100) {
     edges {
       node {
         id
         type
-        handle
-        fields {
+        name
+        description
+        displayNameKey
+        fieldDefinitions {
           key
-          value
+          name
+          description
+          type {
+            name
+          }
         }
       }
     }
   }
 }
 """
-
 
 def fetch_store_context_admin(
     shop_domain: str,
@@ -397,16 +389,74 @@ def fetch_store_context_admin(
 ) -> dict[str, Any]:
     """
     Fetch store-level context for readiness scoring:
-    - Policies
+    - Basic shop information
     - Shop metafields
     - Product metafield definitions
-    - Metaobjects (e.g., FAQs, size charts)
+    - Metaobject definitions
     """
+
     result = _graphql_request(
         shop_domain=shop_domain,
         access_token=access_token,
         api_version=api_version,
         query=_STORE_CONTEXT_QUERY,
     )
+
     data = result.get("data") or {}
+
     return data
+
+def fetch_store_policies(
+    shop_domain: str,
+    access_token: str,
+    api_version: str,
+) -> list[dict[str, Any]]:
+    """
+    Fetch store policies from Shopify Admin REST.
+    """
+
+    if not shop_domain:
+        raise ValueError("shop_domain is required.")
+
+    if not access_token:
+        raise ValueError("access_token is required.")
+
+    url = (
+        f"https://{shop_domain}/admin/api/"
+        f"{api_version}/policies.json"
+    )
+
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Accept": "application/json",
+            "X-Shopify-Access-Token": access_token,
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            body = response.read().decode("utf-8")
+
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+
+        raise ShopifyAdminAPIError(
+            f"Shopify Admin REST API HTTP {error.code}: {body}"
+        ) from error
+
+    except urllib.error.URLError as error:
+        raise ShopifyAdminAPIError(
+            f"Could not connect to Shopify Admin REST API: {error.reason}"
+        ) from error
+
+    try:
+        result = json.loads(body)
+
+    except json.JSONDecodeError as error:
+        raise ShopifyAdminAPIError(
+            "Shopify Admin REST API returned invalid JSON."
+        ) from error
+
+    return result.get("policies") or []

@@ -293,7 +293,7 @@ Fixed rubric checks:
 STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` RULES:
 - Only include product IDs in `affected_product_ids` when a PER-PRODUCT check_id you evaluated
   applies to specific identifiable products beyond a single product's own missing_enrichments.
-- Store-wide checks (fulfillment_context, policy_coverage, faq_or_guidance, consistency,
+- Store-wide checks (fulfillment_context, policy_semantics, faq_or_guidance, consistency,
   store_guardrails, legal_pages, contact_brand) always use an empty array — they are not
   product-specific by definition.
 - Never invent product IDs.
@@ -309,7 +309,7 @@ Store Context:
 NA / unavailable evidence:
 - If store_context is unavailable or empty, mark these store-level checks as "na":
   - fulfillment_context
-  - policy_coverage
+  - policy_semantics
   - faq_or_guidance
   - store_guardrails
   - legal_pages
@@ -389,8 +389,19 @@ def _check_verdict_schema() -> dict:
 
 
 def enrichment_report_schema() -> dict[str, Any]:
-    product_check_ids = [c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "product"]
-    store_check_ids = [c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "store"]
+    product_check_ids = list(dict.fromkeys(
+        c["id"]
+        for checks in CHECKS.values()
+        for c in checks
+        if c["level"] == "product"
+    ))
+
+    store_check_ids = list(dict.fromkeys(
+        c["id"]
+        for checks in CHECKS.values()
+        for c in checks
+        if c["level"] == "store"
+    ))
 
     return {
         "type": "OBJECT",
@@ -484,6 +495,7 @@ def enrichment_report_schema() -> dict[str, Any]:
             "consistency_observations",
         ],
     }
+
 def _extract_verdicts_and_texts(product_entry: dict, check_ids: list[str]) -> tuple[dict, dict]:
     verdicts, texts = {}, {}
     raw = product_entry.get("verdicts", {})
@@ -979,7 +991,6 @@ _READINESS_KEYS = [
     "mcp_knowledge",
     "catalog_enrichment",
     "safety_policies",
-    "trust_signals",
 ]
 
 
@@ -1016,7 +1027,6 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "MCP Knowledge",
         "score_catalog":      "Catalog Enrichment",
         "score_safety":       "Safety & Policies",
-        "score_trust":        "Trust Signals",
         "cta_heading":        "Want us to make your store agentic-commerce ready?",
         "cta_body":           "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
         "cta_button":         "Book a Free Consultation",
@@ -1059,7 +1069,6 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "MCP-Wissen",
         "score_catalog":      "Katalog-Anreicherung",
         "score_safety":       "Sicherheit & Richtlinien",
-        "score_trust":        "Vertrauenssignale",
         "cta_heading":        "Möchten Sie, dass wir Ihren Shop agentic-commerce-bereit machen?",
         "cta_body":           "Unser Team kann diese Korrekturen für Sie umsetzen — von Schema- und Variantenbereinigung bis zu UCP/MCP-fähigen Shop-Daten.",
         "cta_button":         "Kostenlose Beratung buchen",
@@ -1102,7 +1111,6 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "Connaissances MCP",
         "score_catalog":      "Enrichissement du catalogue",
         "score_safety":       "Sécurité et politiques",
-        "score_trust":        "Signaux de confiance",
         "cta_heading":        "Vous voulez que nous rendions votre boutique prête pour le commerce agentique ?",
         "cta_body":           "Notre équipe peut mettre en œuvre ces corrections pour vous — du nettoyage des schémas et variantes aux données boutique compatibles UCP/MCP.",
         "cta_button":         "Réserver une consultation gratuite",
@@ -1145,7 +1153,6 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "Conocimiento MCP",
         "score_catalog":      "Enriquecimiento del catálogo",
         "score_safety":       "Seguridad y políticas",
-        "score_trust":        "Signales de confianza",
         "cta_heading":        "¿Quiere que preparemos su tienda para el comercio agéntico?",
         "cta_body":           "Nuestro equipo puede implementar estas mejoras por usted — desde la limpieza de esquemas y variantes hasta datos de tienda compatibles con UCP/MCP.",
         "cta_button":         "Reservar una consulta gratuita",
@@ -1188,7 +1195,6 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "MCPナレッジ",
         "score_catalog":      "カタログの充実度",
         "score_safety":       "安全性とポリシー",
-        "score_trust":        "Trust Signals",
         "cta_heading":        "ストアをエージェント型コマース対応にしませんか？",
         "cta_body":           "スキーマやバリアントの整備からUCP/MCP対応のストアデータ構築まで、私たちのチームが対応いたします。",
         "cta_button":         "無料相談を予約する",
@@ -1352,7 +1358,6 @@ def render_readiness_scores(scores: dict[str, int], labels: dict[str, str]) -> s
         (labels["score_mcp"], scores.get("mcp_knowledge", 0)),
         (labels["score_catalog"], scores.get("catalog_enrichment", 0)),
         (labels["score_safety"], scores.get("safety_policies", 0)),
-        (labels["score_trust"], scores.get("trust_signals", 0)),
         
     ]
 
@@ -1584,12 +1589,7 @@ def chunked(items: list[Any], size: int) -> list[list[Any]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-# ── Agent discovery file readiness (Shopify's May 2026 rollout) ────────
-# Shopify now auto-serves /agents.md (canonical), /llms.txt and
-# /llms-full.txt (mirror/redirect to agents.md by default), and a
-# /.well-known/ucp manifest on every storefront. Existence isn't the
-# signal anymore — every merchant has these. Customization is.
-
+# ── Agent discovery file readiness ────────
 _AGENT_DISCOVERY_PATHS = {
     "agents_md":     "/agents.md",
     "llms_txt":      "/llms.txt",
@@ -1597,17 +1597,12 @@ _AGENT_DISCOVERY_PATHS = {
     "ucp_manifest":  "/.well-known/ucp",
 }
 
-# Markers that indicate Shopify's stock template hasn't been customized.
 _DEFAULT_FILE_MARKERS = (
     "shopify.com/start",
     "this file was automatically generated by shopify",
     "powered by shopify",
 )
 
-# Structural fingerprints of Shopify's shipped agents.md.liquid default —
-# per Shopify's docs, the stock template is a generic UCP/MCP protocol
-# reference, not brand- or product-specific content. The more of these
-# that appear, the more the body still looks like the unedited default.
 _BOILERPLATE_SIGNATURES = (
     "agent instructions —",
     "commerce protocol (ucp)",
@@ -1623,30 +1618,6 @@ _HERO_WORDS = ("best seller", "bestseller", "hero product", "top collection", "f
 
 _MIRROR_SIMILARITY_THRESHOLD = 0.9
 
-
-def _agent_discovery_base_url(store_url: str) -> str:
-    """
-    Build a bare origin URL (scheme + host, no path/query) for agent-discovery
-    probes. Deliberately independent of normalize_store_url(), which is tuned
-    for locating a store's product feed and may reject/rewrite custom domains
-    (e.g. domesticappliances.philips.co.in) in ways that break here.
-    """
-    from urllib.parse import urlparse
-
-    candidate = (store_url or "").strip()
-    parsed = urlparse(candidate)
-    if not parsed.scheme:
-        parsed = urlparse(f"https://{candidate}")
-    if not parsed.netloc:
-        raise ValueError(f"Could not parse a host from store_url: {store_url!r}")
-    return f"{parsed.scheme}://{parsed.netloc}"
-
-
-# A real browser UA. Some storefronts sit behind a WAF/CDN (Akamai,
-# Cloudflare, Shopify's own bot protection) that silently blocks or
-# challenges requests carrying an obviously-scripted User-Agent — which
-# would make every one of these checks look "missing" even though a
-# person's browser (or a competitor's tool) can load the same file fine.
 _AGENT_DISCOVERY_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -1667,7 +1638,7 @@ def _fetch_agent_discovery_url(url: str, timeout: int = 15) -> dict[str, Any]:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             final_url = response.geturl()
             status = response.status
-            raw = response.read(200_000)  # these are meant to be small text files
+            raw = response.read(200_000) 
     except urllib.error.HTTPError as error:
         return {
             "status": "missing",
@@ -1708,7 +1679,7 @@ def _fetch_agent_discovery_url(url: str, timeout: int = 15) -> dict[str, Any]:
         "final_url": final_url,
         "word_count": word_count,
         "looks_customized": state == "served_custom",
-        "_body": text,  # stripped out before the result leaves check_agent_discovery_readiness
+        "_body": text,  
     }
 
 
@@ -2195,8 +2166,6 @@ def run_store_analysis(
     provider = settings["provider"]
     model = settings["model"]
     batch_size = max(1, int(os.getenv("MAX_PRODUCTS_PER_BATCH", "5")))
-    # Before: batches = chunked(products, batch_size)
-    # Sort to prevent API response order variations between requests
     products.sort(key=lambda p: str(p.get("product_id") or p.get("id") or p.get("title", "")))
     batches = chunked(products, batch_size)
     batch_reports: list[dict[str, Any]] = []
@@ -2207,7 +2176,6 @@ def run_store_analysis(
         print(f"[{provider}] Products in batch: {len(batch)}")
         start = time.time()
 
-        # Every provider receives the SAME store context + current product batch.
         result = analyze_products(
             batch,
             store_context or {},
@@ -2223,15 +2191,12 @@ def run_store_analysis(
             f"{time.time() - start:.2f}s"
         )
 
-   # Merge raw verdicts across all batches first, then calculate scores/recommendations once.
     raw_report = merge_reports(batch_reports)
 
-    # Store-context-dependent checks cannot be evaluated when store_context
-    # was not available. Mark them NA so they do not deduct from the score.
     if not store_context:
         unavailable_store_checks = {
             "fulfillment_context",
-            "policy_coverage",
+            "policy_semantics",
             "faq_or_guidance",
             "store_guardrails",
             "legal_pages",

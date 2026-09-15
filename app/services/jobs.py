@@ -24,7 +24,8 @@ from app.services.product_fetcher import (
 from app.services.shopify_admin_fetcher import (
     ShopifyAdminAPIError,
     fetch_products_admin,
-    fetch_store_context_admin, 
+    fetch_store_context_admin,
+    fetch_store_policies,
 )
 import contextlib
 from app.services.report_builder import (
@@ -255,16 +256,38 @@ class JobQueue:
                         f"'{job.shop_domain}' has no products available through the Shopify Admin API."
                     )
 
-                print(f"[JOB {job_id}] Fetching store context (policies, metafields, metaobjects)")
+                print(f"[JOB {job_id}] Fetching store context")
+
                 try:
                     store_context = fetch_store_context_admin(
                         shop_domain=job.shop_domain,
                         access_token=job.access_token,
                         api_version="2026-07",
                     )
+
+                    print(f"[JOB {job_id}] Admin store context fetched successfully")
+
                 except ShopifyAdminAPIError as ctx_error:
-                    print(f"[JOB {job_id}] Store context fetch failed: {ctx_error}")
-                    store_context = None
+                    print(f"[JOB {job_id}] Admin store context fetch failed: {ctx_error}")
+                    store_context = {}
+
+                try:
+                    policies = fetch_store_policies(
+                        shop_domain=job.shop_domain,
+                        access_token=job.access_token,
+                        api_version="2026-07",
+                    )
+
+                    store_context["policies"] = policies
+
+                    print(
+                        f"[JOB {job_id}] Store policies fetched: "
+                        f"{len(policies)} policies"
+                    )
+
+                except ShopifyAdminAPIError as policy_error:
+                    print(f"[JOB {job_id}] Store policy fetch failed: {policy_error}")
+                    store_context["policies"] = []
 
                 store_url = f"https://{job.shop_domain}"
 

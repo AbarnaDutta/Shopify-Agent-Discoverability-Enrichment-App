@@ -42,7 +42,6 @@ const LABELS = {
   scoreMcp: "MCP Knowledge",
   scoreCatalog: "Catalog Enrichment",
   scoreSafety: "Safety & Policies",
-  scoreTrust: "Trust Signals",
   ctaHeading: "Want us to make your store agentic-commerce ready?",
   ctaBody:
     "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
@@ -336,7 +335,6 @@ function ReadinessScores({ report }) {
     [LABELS.scoreMcp, s.mcp_knowledge],
     [LABELS.scoreCatalog, s.catalog_enrichment],
     [LABELS.scoreSafety, s.safety_policies],
-    [LABELS.scoreTrust, s.trust_signals],
   ];
 
   return (
