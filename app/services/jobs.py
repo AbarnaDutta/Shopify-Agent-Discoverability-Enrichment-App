@@ -24,6 +24,7 @@ from app.services.product_fetcher import (
 from app.services.shopify_admin_fetcher import (
     ShopifyAdminAPIError,
     fetch_products_admin,
+    fetch_store_context_admin, 
 )
 import contextlib
 from app.services.report_builder import (
@@ -239,50 +240,42 @@ class JobQueue:
             if job.source == "shopify_app":
                 if not job.shop_domain:
                     raise ValueError("Shopify shop domain is missing.")
-
                 if not job.access_token:
                     raise ValueError("Shopify access token is missing.")
 
-                print(
-                    f"[JOB {job_id}] Fetching products through Shopify Admin API"
-                )
-
+                print(f"[JOB {job_id}] Fetching products through Shopify Admin API")
                 products = fetch_products_admin(
                     shop_domain=job.shop_domain,
                     access_token=job.access_token,
                     max_products=10,
                     api_version="2026-07",
                 )
-
                 if not products:
                     raise EmptyStoreError(
-                        f"'{job.shop_domain}' has no products available through "
-                        "the Shopify Admin API."
+                        f"'{job.shop_domain}' has no products available through the Shopify Admin API."
                     )
+
+                print(f"[JOB {job_id}] Fetching store context (policies, metafields, metaobjects)")
+                try:
+                    store_context = fetch_store_context_admin(
+                        shop_domain=job.shop_domain,
+                        access_token=job.access_token,
+                        api_version="2026-07",
+                    )
+                except ShopifyAdminAPIError as ctx_error:
+                    print(f"[JOB {job_id}] Store context fetch failed: {ctx_error}")
+                    store_context = None
 
                 store_url = f"https://{job.shop_domain}"
 
             else:
-                print(
-                    f"[JOB {job_id}] Fetching products through public storefront"
-                )
-
+                print(f"[JOB {job_id}] Fetching products through public storefront")
                 store_url = normalize_store_url(job.store_url)
-
-                raw_products = fetch_products_public(
-                    store_url,
-                    settings["max_products"],
-                )
-
+                raw_products = fetch_products_public(store_url, settings["max_products"])
                 if not raw_products:
-                    raise EmptyStoreError(
-                        f"'{store_url}' has no publicly visible products."
-                    )
-
-                products = [
-                    compact_product(p, store_url)
-                    for p in raw_products
-                ]
+                    raise EmptyStoreError(f"'{store_url}' has no publicly visible products.")
+                products = [compact_product(p, store_url) for p in raw_products]
+                store_context = None
             print(f"[JOB {job_id}] Fetched {len(products)} products")
 
             print(f"[JOB {job_id}] Checking agent discovery files")
@@ -296,15 +289,22 @@ class JobQueue:
 
             provider = settings["provider"]
             model = settings["model"]
+
             adapter, _, effective_provider = self._pick_provider(provider, model)
+
             print(f"[JOB {job_id}] Routed → {effective_provider}")
+
             start_time = time.time()
-            report = audit_products(
-                products=products,
+            result = audit_products(
+                raw_products=products,
+                store_context=store_context or {},
                 store_url=store_url,
+                provider=effective_provider,
+                model=model,
                 language=job.language,
                 analyzer=adapter,
             )
+            report = result.report
 
             print(f"[JOB {job_id}] Analysis done in {time.time() - start_time:.2f}s")
 
@@ -322,8 +322,8 @@ class JobQueue:
                         shop_domain=job.shop_domain, 
                         report=report,
                         job_id=job_id,
-                        provider=effective_provider,
-                        model=model,
+                        provider=report.get("provider", effective_provider),
+                         model=report.get("model", model),
                     )
                     if audit_id:
                         print(f"[JOB {job_id}] Audit history recorded: {audit_id}")

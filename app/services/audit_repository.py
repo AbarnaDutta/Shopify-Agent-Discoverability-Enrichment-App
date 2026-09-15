@@ -77,8 +77,8 @@ class AuditRepository:
                 dimension_scores=scores,
                 products_scanned=len(products),
                 issues_found=issues_found,
-                provider=provider,
-                model=model,
+                provider=report.get("provider", provider),
+                model=report.get("model", model),
             )
 
             for p in products:
@@ -90,7 +90,6 @@ class AuditRepository:
                     score=p.get("score"),
                     issue_count=len(enrichments),
                     high_priority_count=sum(1 for r in enrichments if r.get("priority") == "high"),
-                    agent_summary=p.get("agent_summary"),
                     missing_enrichments=enrichments,
                 ))
 
@@ -173,11 +172,10 @@ class AuditRepository:
                     "total": 0,
                     "total_pages": 0,
                 }
-
             query = (
                 db.query(Audit)
                 .filter(Audit.store_id == store.id)
-                .order_by(Audit.created_at.asc())
+                .order_by(Audit.created_at.desc())
             )
 
             total = query.count()
@@ -188,9 +186,8 @@ class AuditRepository:
                 else 0
             )
 
-            reverse_page = total_pages - page + 1
-
-            offset = (reverse_page - 1) * page_size
+            chunk_index_from_newest = total_pages - page
+            offset = chunk_index_from_newest * page_size
 
             audits = (
                 query
@@ -371,7 +368,6 @@ class AuditRepository:
             "score": p.score,
             "issue_count": p.issue_count,
             "high_priority_count": p.high_priority_count,
-            "agent_summary": p.agent_summary,
             "missing_enrichments": p.missing_enrichments,
         }
 

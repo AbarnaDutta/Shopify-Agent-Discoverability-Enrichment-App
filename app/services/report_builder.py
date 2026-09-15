@@ -23,6 +23,10 @@ from app.services.product_fetcher import (
     normalize_store_url,
     EmptyStoreError,
 )
+from app.services.scoring_rubric import (
+    CHECKS, ALL_CHECK_IDS, CHECK_BY_ID,
+    compute_scores, build_product_recommendations, build_store_recommendations,
+)
 
 import tempfile
 
@@ -33,6 +37,7 @@ class LLMAdapter(Protocol):
     def analyze(
         self,
         products: list[dict[str, Any]],
+        store_context: dict[str, Any],
         store_url: str,
         language: str,
     ) -> dict[str, Any]:
@@ -43,32 +48,34 @@ class GeminiAdapter:
     def __init__(self, model: str) -> None:
         self.model = model
 
-    def analyze(self, products, store_url, language="English"):
-        return analyze_with_gemini(products, store_url, self.model, language)
+    def analyze(self, products, store_context, store_url, language="English"):
+        return analyze_with_gemini(
+            products, store_context, store_url, self.model, language
+        )
 
 
 class BedrockAdapter:
     def __init__(self, model: str = "global.anthropic.claude-opus-4-5-20251101-v1:0") -> None:
         self.model = model
 
-    def analyze(self, products, store_url, language="English"):
-        return analyze_with_bedrock_claude(products, store_url, self.model, language)
+    def analyze(self, products, store_context, store_url, language="English"):
+        return analyze_with_bedrock_claude(products, store_context, store_url, self.model, language)
 
 
 class OpenAIAdapter:
     def __init__(self, model: str) -> None:
         self.model = model
 
-    def analyze(self, products, store_url, language="English"):
-        return analyze_with_openai(products, store_url, self.model, language)
+    def analyze(self, products, store_context, store_url, language="English"):
+        return analyze_with_openai(products, store_context, store_url, self.model, language)
 
 
 class OllamaAdapter:
     def __init__(self, model: str) -> None:
         self.model = model
 
-    def analyze(self, products, store_url, language="English"):
-        return analyze_with_ollama(products, store_url, self.model, language)
+    def analyze(self, products, store_context, store_url, language="English"):
+        return analyze_with_ollama(products, store_context, store_url, self.model, language)
 
 
 def get_llm_adapter(provider: str, model: str) -> LLMAdapter:
@@ -190,113 +197,140 @@ def _classify_llm_error(message: str, status_code: int | None = None) -> None:
             f"Provider message: {message[:300]}"
         )
 
-def build_prompt(products: list[dict[str, Any]], store_url: str, language: str = "English") -> str:
+def _rubric_prompt_block() -> str:
+    lines = []
+    for category, checks in CHECKS.items():
+        for c in checks:
+            scope = "STORE-WIDE (evaluate once for the whole store)" if c["level"] == "store" else "PER-PRODUCT (evaluate for each product)"
+            lines.append(f"- [{c['id']}] ({scope}) {c['desc']}")
+    return "\n".join(lines)
+
+
+def build_prompt(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, language: str = "English") -> str:
     return f"""
 You are an ecommerce data strategist helping a Shopify merchant prepare their store for AI commerce
 agents that use Shopify's Universal Commerce Protocol (UCP) and Storefront Model Context Protocol (MCP).
-Your job is to make products discoverable, understandable, and safely recommendable/actionable by
-those agents.
 
-Analyze the raw Shopify product data provided below. Your task is to:
-- Assess the store's readiness for agentic commerce (UCP-style agents that search, compare, build
-  carts, and create checkouts) and produce numeric readiness scores.
-- Identify and generate deep structural data enrichments to help autonomous AI shopping agents answer
-  customer queries, compare features, verify fitment, match user intent, and safely execute purchase
-  decisions.
+STEP 1 — UNDERSTAND FIRST:
+Before evaluating anything, read the entire Products Catalogue Payload below in full: every
+product's title, description, options, variants, metafields, and any store-level context provided.
+Build a full picture of what this store sells and how its data is structured before judging it.
 
-Analyze the raw payload attributes and extract/build out:
-1. Missing explicit identifiers (e.g., GTIN, MPN, precise global synonyms).
-2. Deep variant attributes (e.g., precise material blends, sizing dimensions, exact color tokens),
-   and flag any variant hygiene issues that would confuse an agent building a cart (e.g. many
-   "Default Title" variants, inconsistent option names like "Option1"/"Custom1", zero-priced or
-   placeholder variants).
-3. Clear compatibility rules, target use cases, and negative use cases (when NOT to recommend, or
-   when an agent should not act without human review).
-4. Natural language agent summaries designed specifically to be parsed by LLM search vector indexes.
-5. Trust signals, strict policy context, and a machine-readable FAQ map.
-6.  STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` RULES:
+STEP 2 — CLASSIFY AGAINST THE FIXED RUBRIC BELOW, NOTHING ELSE:
+For every check_id listed, and for every product this batch contains (for PER-PRODUCT checks) or once
+for the whole store (for STORE-WIDE checks), return a verdict of "pass", "partial", "fail", or "na",
+plus one line of evidence citing the exact field/metafield/value you observed (or "absent").
+VERDICT RULES:
 
-- `store_level_recommendations` are recommendations that apply at the Shopify
-  store/catalog level rather than only to one individual product.
+- PASS: All applicable requirements/criteria of the check are satisfied.
+- PARTIAL: At least one applicable requirement/criterion is not satisfied,
+  but the check is not fundamentally failed.
+- FAIL: The check is fundamentally not satisfied based on the supplied data.
+- NA: The check is genuinely not applicable or there is nothing to evaluate.
 
-- Store-level recommendations MUST include:
-  - `priority`
-  - `enrichment`
-  - `why_it_matters_for_agents`
-  - `example`
-  - `affected_product_ids`
+IMPORTANT:
+- Do not hardcode a verdict based on a particular field/value.
+- Evaluate the actual data against the check description.
+- PASS means everything required by the check is present/correct.
+- PARTIAL means some requirements are satisfied and some are not.
+- FAIL means the core requirement of the check is not met.
+- NA should only be used when the check genuinely cannot be evaluated or does not apply.
+- Do not invent fields, values, or assumptions.
+- Evidence must cite the actual fields/values that caused the verdict.
+- Do not calculate scores. Python calculates all scores after the AI returns the verdicts.
+CONSISTENCY OBSERVATIONS FOR THIS BATCH:
 
-- `affected_product_ids` must contain the exact product IDs from the Products
-  Catalogue Payload ONLY when the recommendation specifically applies to one
-  or more identifiable products.
+The `consistency` check is a STORE-WIDE check, but products are analyzed in batches.
+For this batch, do not decide the final store-wide consistency verdict.
 
-- If the recommendation applies to the entire store/catalog or to information
-  that is not product-specific, set `affected_product_ids` to an empty array.
+Instead, inspect the products in this batch and return concise factual observations
+about how catalog data is represented.
 
-- Do NOT force a store-level recommendation to reference products merely because
-  product IDs are available.
+Look for patterns and variations that are actually visible in this batch, including
+where applicable:
+- metafield keys and their value representations
+- attribute names
+- option names
+- product types
+- units and measurement representations
+- value formats
+- naming conventions
+- missing fields among otherwise similar products
+- different representations of the same kind of information
 
-- Examples of genuinely store-wide recommendations include:
-  - UCP commerce-flow readiness
-  - MCP/agent knowledge readiness
-  - shipping, returns, refund, privacy or other store policies
-  - trust signals
-  - brand/store identity
-  - store-level FAQs or shopping guidance
-  - agent discovery files and machine-readable store context
-  - safety policies and autonomous-agent guardrails
-  - checkout or transaction-level requirements
-  - other catalog-wide configuration or information that cannot be attributed
-    to specific products.
+Do not assume predefined fields, units, product categories, or formats.
+Discover them from the supplied product data.
 
-- Examples of product-specific store-level recommendations include a catalog-wide
-  consistency problem where only a known subset of products is affected.
-  In that case, list the exact affected product IDs.
+Return these observations in the `consistency_observations` field.
+Do not make a final pass/partial/fail decision for consistency in this batch.
+Do not invent values or observations that are not present in the supplied payload.
+The response must be valid JSON matching the provided response schema.
 
+It must contain:
+- `store_verdicts`: verdicts for all STORE-WIDE checks.
+- `products`: one entry for every product in this batch, with its product_id, title, and all PER-PRODUCT check verdicts/evidence/recommendations.
+- `consistency_observations`: factual observations about catalog consistency found ONLY within this batch.
+
+For `consistency_observations`:
+- Do not provide a final verdict for the `consistency` check.
+- Do not score consistency.
+- Do not invent fields, units, formats, or patterns.
+- Only report patterns or differences actually visible in this batch.
+- If no consistency issue is observed, return empty `issues` and still populate the other observation fields from the data that is present.
+- Do NOT invent a check that is not in this list.
+- Do NOT skip a check.
+- Mark "fail" ONLY if the relevant field is genuinely absent from the payload shown — never fail a
+  check based on assumptions about data not shown to you.
+- Mark "na" only for product_guardrails when the product is clearly not in a risky category.
+- Do NOT compute or output any aggregate score — scoring is calculated separately from your verdicts.
+- For any check you mark "partial" or "fail", also write a short human-readable "enrichment" name,
+  a 1-2 sentence "why_it_matters_for_agents", and a concrete "example" fix for that specific
+  product/store using its actual title/attributes — not a generic template.
+
+Fixed rubric checks:
+{_rubric_prompt_block()}
+
+STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` RULES:
+- Only include product IDs in `affected_product_ids` when a PER-PRODUCT check_id you evaluated
+  applies to specific identifiable products beyond a single product's own missing_enrichments.
+- Store-wide checks (fulfillment_context, policy_coverage, faq_or_guidance, consistency,
+  store_guardrails, legal_pages, contact_brand) always use an empty array — they are not
+  product-specific by definition.
 - Never invent product IDs.
-- Never infer affected products merely because they have a similar
-  `missing_enrichments` entry.
-- Product-level recommendations belong under
-  `products[].missing_enrichments` and must remain specific to that product.
-
-- The `example` field must be concrete and appropriate to the scope:
-  - For a store-wide recommendation, provide a concrete store-level fix or
-    example configuration/content. Do not invent product-specific values.
-  - For a recommendation affecting specific products, provide a concrete fix
-    covering every product in `affected_product_ids`, using each product's
-    actual title/attributes where relevant.
-7. A `readiness_scores` object with integer scores from 0-100 for:
-   - ucp_commerce_flows: can an agent reliably search, filter, compare, build carts and check out
-     using this catalog's structure?
-   - mcp_knowledge: how clear/complete is the information an MCP-style agent would need to answer
-     shopper questions (policies, FAQs, trust signals) based on what's inferable from this data?
-   - catalog_enrichment: depth/consistency of product data (identifiers, variants, descriptions)
-   - safety_policies: clarity of negative-use-cases and guardrails for when agents should NOT
-     autonomously recommend or transact
-   - overall: the average of the four scores above
 
 CRITICAL CONSTRAINTS:
-- Write the entire response, including all values, summaries, and structural examples, strictly in the requested language: {language}.
+- Write the entire response, including all values and examples, strictly in the requested language: {language}.
 - Do not mix languages.
-- Ensure all numbers use standard floats/integers where applicable, and do not append descriptive text inside clean value arrays.
-- readiness_scores category values must be plain integers between 0 and 100. `overall` should be
-  roughly their average — (no % sign, no text).
 
 Store URL: {store_url}
 
+Store Context:
+{json.dumps(store_context, ensure_ascii=False, indent=2)}
+NA / unavailable evidence:
+- If store_context is unavailable or empty, mark these store-level checks as "na":
+  - fulfillment_context
+  - policy_coverage
+  - faq_or_guidance
+  - store_guardrails
+  - legal_pages
+  - contact_brand
+- Do NOT mark them as fail merely because store_context is unavailable.
+- "consistency" must still be evaluated from the product data provided.
+- Product-level checks must still be evaluated normally from the product payload.
+- product_guardrails may be "na" when the product is clearly not a risky category.
 Products Catalogue Payload:
 {json.dumps(products, ensure_ascii=False, indent=2)}
 """.strip()
 
-def analyze_with_ollama(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
+def analyze_with_ollama(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, model: str, language="English") -> dict[str, Any]:
     payload = {
         "model": model,
         "prompt": (
-            build_prompt(products, store_url, language)
-            + "\n\nReturn only valid JSON with keys: readiness_scores, store_level_recommendations and "
-              "products. Each store_level_recommendations entry must include affected_product_ids "
-              "(array of product id strings) alongside priority, enrichment, why_it_matters_for_agents, "
-              "and example."
+            build_prompt(products, store_context, store_url, language)
+            + "\n\nReturn ONLY valid JSON matching the rubric schema: "
+              "store_verdicts and products. Each product must contain product_id, title, and verdicts. "
+              "Each verdict must contain verdict and evidence, plus enrichment/why_it_matters_for_agents/example "
+              "when verdict is partial or fail. Do not return readiness_scores, priorities, or aggregate recommendations."
         ),
         "stream": False,
         "format": "json",
@@ -334,115 +368,218 @@ def analyze_with_ollama(products: list[dict[str, Any]], store_url: str, model: s
     return report
 
 
-def enrichment_report_schema() -> dict[str, Any]:
-    recommendation_schema = {
-        "type": "OBJECT",
-        "properties": {
-            "priority": {
-                "type": "STRING",
-                "enum": ["high", "medium", "low"],
-            },
-            "enrichment":                  {"type": "STRING"},
-            "why_it_matters_for_agents":   {"type": "STRING"},
-            "example":                     {"type": "STRING"},
-        },
-        "required": [
-            "priority",
-            "enrichment",
-            "why_it_matters_for_agents",
-            "example",
-        ],
-    }
-    store_recommendation_schema = {
-        "type": "OBJECT",
-        "properties": {
-            "priority": {
-                "type": "STRING",
-                "enum": ["high", "medium", "low"],
-            },
-            "enrichment":                  {"type": "STRING"},
-            "why_it_matters_for_agents":   {"type": "STRING"},
-            "example": {
-                "type": "STRING",
-                "description": (
-                    "A concrete, compiled fix covering every product in affected_product_ids — not a "
-                    "generic template. Work out the actual fix for each affected product individually "
-                    "and combine them into one example (e.g. one line per product naming it and its "
-                    "specific fixed value); every affected product id must be addressed, none left as "
-                    "a placeholder."
-                ),
-            },
-            "affected_product_ids": {
-            "type": "ARRAY",
-            "items": {"type": "STRING"},
-            "description": (
-                "Exact product IDs from the Products Catalogue Payload that are "
-                "specifically affected by this store-level recommendation. Use an "
-                "empty array when the recommendation is genuinely store-wide or "
-                "does not apply to specific products. Never invent product IDs."
-            ),
-        },
-        },
-        "required": [
-            "priority",
-            "enrichment",
-            "why_it_matters_for_agents",
-            "example",
-            "affected_product_ids",
-        ],
-    }
-    readiness_scores_schema = {
-        "type": "OBJECT",
-        "properties": {
-            "overall":             {"type": "INTEGER"},
-            "ucp_commerce_flows":  {"type": "INTEGER"},
-            "mcp_knowledge":       {"type": "INTEGER"},
-            "catalog_enrichment":  {"type": "INTEGER"},
-            "safety_policies":     {"type": "INTEGER"},
-        },
-        "required": [
-            "overall",
-            "ucp_commerce_flows",
-            "mcp_knowledge",
-            "catalog_enrichment",
-            "safety_policies",
-        ],
-    }
+def _check_verdict_schema() -> dict:
     return {
         "type": "OBJECT",
         "properties": {
-            "readiness_scores": readiness_scores_schema,
-            "store_level_recommendations": {
-                "type": "ARRAY",
-                "items": store_recommendation_schema,
+            "verdict": {"type": "STRING", "enum": ["pass", "partial", "fail", "na"]},
+            "evidence": {"type": "STRING"},
+            "enrichment": {"type": "STRING"},
+            "why_it_matters_for_agents": {"type": "STRING"},
+            "example": {"type": "STRING"},
+        },
+        "required": [
+            "verdict",
+            "evidence",
+            "enrichment",
+            "why_it_matters_for_agents",
+            "example",
+        ],
+    }
+
+
+def enrichment_report_schema() -> dict[str, Any]:
+    product_check_ids = [c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "product"]
+    store_check_ids = [c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "store"]
+
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "store_verdicts": {
+                "type": "OBJECT",
+                "properties": {cid: _check_verdict_schema() for cid in store_check_ids},
+                "required": store_check_ids,
             },
             "products": {
                 "type": "ARRAY",
                 "items": {
                     "type": "OBJECT",
                     "properties": {
-                        "product_id":          {"type": "STRING"},
-                        "title":               {"type": "STRING"},
-                        "agent_summary":       {"type": "STRING"},
-                        "missing_enrichments": {
-                            "type": "ARRAY",
-                            "items": recommendation_schema,
+                        "product_id": {"type": "STRING"},
+                        "title": {"type": "STRING"},
+                        "verdicts": {
+                            "type": "OBJECT",
+                            "properties": {cid: _check_verdict_schema() for cid in product_check_ids},
+                            "required": product_check_ids,
                         },
                     },
-                    "required": [
-                        "product_id",
-                        "title",
-                        "agent_summary",
-                        "missing_enrichments",
-                    ],
+                    "required": ["product_id", "title", "verdicts"],
                 },
             },
+            "consistency_observations": {
+                "type": "object",
+                "description": "Batch-level factual observations about catalog consistency. Do not include a final consistency verdict.",
+                "properties": {
+                    "fields_observed": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "option_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "product_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "format_variations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "field": {"type": "string"},
+                                "formats": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["field", "formats"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "issues": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "field": {"type": "string"},
+                                "description": {"type": "string"},
+                                "affected_product_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["type", "field", "description", "affected_product_ids"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": [
+                    "fields_observed",
+                    "option_names",
+                    "product_types",
+                    "format_variations",
+                    "issues",
+                ],
+                "additionalProperties": False,
+            },
         },
-        "required": ["readiness_scores", "store_level_recommendations", "products"],
+        "required": [
+            "store_verdicts",
+            "products",
+            "consistency_observations",
+        ],
+    }
+def _extract_verdicts_and_texts(product_entry: dict, check_ids: list[str]) -> tuple[dict, dict]:
+    verdicts, texts = {}, {}
+    raw = product_entry.get("verdicts", {})
+    for cid in check_ids:
+        entry = raw.get(cid)
+
+        if not entry:
+            raise LLMResponseError(
+                f"LLM response missing required check: {cid}"
+            )
+
+        verdict = entry.get("verdict")
+
+        if verdict not in ("pass", "partial", "fail", "na"):
+            raise LLMResponseError(
+                f"Invalid verdict for {cid}: {verdict!r}"
+            )
+
+        if verdict in ("partial", "fail"):
+            required = (
+                "enrichment",
+                "why_it_matters_for_agents",
+                "example",
+            )
+
+            for field in required:
+                if not entry.get(field):
+                    raise LLMResponseError(
+                        f"LLM response missing required field "
+                        f"{field!r} for {cid} ({verdict})"
+                    )
+
+        verdicts[cid] = verdict
+
+        texts[cid] = {
+            k: entry.get(k, "")
+            for k in ("enrichment", "why_it_matters_for_agents", "example")
+        }
+    return verdicts, texts
+
+
+def assemble_report_from_verdicts(
+    raw_response: dict[str, Any],
+    store_check_ids: list[str],
+    product_check_ids: list[str],
+) -> dict[str, Any]:
+    store_verdicts, store_texts = _extract_verdicts_and_texts(
+        {"verdicts": raw_response.get("store_verdicts", {})},
+        store_check_ids,
+    )
+
+    consistency_observations = raw_response.get("consistency_observations") or {
+        "fields_observed": {},
+        "option_names": [],
+        "product_types": [],
+        "format_variations": [],
+        "issues": [],
     }
 
+    consistency_result = evaluate_consistency_observations(
+        consistency_observations,
+        total_product_count=len(raw_response.get("products", [])),
+    )
 
-def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
+    store_verdicts["consistency"] = consistency_result["verdict"]
+    store_texts["consistency"] = {
+        key: consistency_result.get(key, "")
+        for key in ("enrichment", "why_it_matters_for_agents", "example")
+    }
+
+    all_product_verdicts = {}
+    all_product_texts: dict[str, dict] = {}
+    products_out = []
+
+    for p in raw_response.get("products", []):
+        pid = p.get("product_id")
+        v, t = _extract_verdicts_and_texts(p, product_check_ids)
+        all_product_verdicts[pid] = v
+        all_product_texts[pid] = t
+        products_out.append({
+            "product_id": pid,
+            "title": p.get("title"),
+            "missing_enrichments": build_product_recommendations(v, t),
+        })
+
+    scores = compute_scores(all_product_verdicts, store_verdicts)
+    store_recs = build_store_recommendations(store_verdicts, store_texts, all_product_verdicts, all_product_texts)
+
+    return {
+    "readiness_scores": scores,
+    "store_level_recommendations": store_recs,
+    "products": products_out,
+    "consistency_observations": consistency_observations,
+}
+
+def analyze_with_gemini(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, model: str, language="English") -> dict[str, Any]:
     _gemini_rate_limit()
     request_id = random.randint(10000, 99999)
 
@@ -452,7 +589,7 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
         raise RuntimeError("Set GEMINI_API_KEY in .env. You can create one in Google AI Studio.")
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    prompt = build_prompt(products, store_url, language)
+    prompt = build_prompt(products, store_context, store_url, language)
     
     payload = {
         "contents": [
@@ -464,6 +601,13 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseJsonSchema": enrichment_report_schema(),
+            "temperature": 0.0,
+            "topK": 1,
+            "topP": 1.0,
+            "seed": 42,
+            "thinkingConfig": {
+                "thinkingBudget": 0
+            },
          },
     }
 
@@ -552,7 +696,7 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
                 f"falling back to Bedrock Claude ({fallback_model})..."
             )
             return analyze_with_bedrock_claude(
-                products, store_url, fallback_model, language
+                products, store_context, store_url, fallback_model, language
             )
         raise last_error
 
@@ -581,6 +725,7 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
 
         try:
             report = json.loads(text)
+            
         except json.JSONDecodeError:
             raise LLMResponseError(
                 f"Gemini returned plain text instead of JSON:\n{text[:1000]}"
@@ -590,13 +735,13 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_url: str, model: s
             f"Unexpected Gemini API response structure: {json.dumps(body)[:500]}"
         ) from error
 
-    report.setdefault("provider", "Propero")
+    report.setdefault("provider", "gemini")
     report.setdefault("store_url", store_url)
-    
     return report
 
 def analyze_with_bedrock_claude(
     products: list[dict[str, Any]],
+    store_context: dict[str, Any],
     store_url: str,
     model: str = "global.anthropic.claude-opus-4-5-20251101-v1:0",
     language: str = "English",
@@ -615,37 +760,17 @@ def analyze_with_bedrock_claude(
         f"/model/{model}/invoke"
     )
 
-    prompt = build_prompt(products, store_url, language)
+    prompt = build_prompt(products, store_context, store_url, language)
 
     system = (
-       "You are an expert e-commerce data strategist and data engineer. "
-    "Your job is to analyze raw Shopify product data catalogs and return structured, "
-    "highly actionable JSON enrichments to make products perfectly discoverable by AI shopping agents. "
-    "You must prioritize specific, technical, machine-readable attributes (like exact dimensions, materials, "
-    "GTIN/MPN identifiers, precise compatibility mappings, and structured FAQs). "
-    "Do not include generic marketing fluff or standard SEO advice. "
-    "You must return ONLY a raw JSON object that strictly adheres to the requested JSON schema. "
-    "Do not include any markdown formatting, backticks (```json), or introductory/concluding prose text."
-    "Return ONLY valid JSON matching this exact schema — no markdown, no preamble:\n"
-        '{"readiness_scores": {"overall": 0, "ucp_commerce_flows": 0, "mcp_knowledge": 0, '
-        '"catalog_enrichment": 0, "safety_policies": 0}, '
-        '"store_level_recommendations": [{"priority": "high|medium|low", '
-        '"enrichment": "...", "why_it_matters_for_agents": "...", "example": "...", '
-        '"affected_product_ids": ["..."]}], '
-        '"products": [{"product_id": "...", "title": "...", "agent_summary": "...", '
-        '"missing_enrichments": [{"priority": "...", "enrichment": "...", '
-        '"why_it_matters_for_agents": "...", "example": "..."}]}]} '
-        "readiness_scores values are integers 0-100. "
-        "`affected_product_ids` on each `store_level_recommendations` entry MUST contain"
-        "only the exact product IDs from the Products Catalogue Payload that are"
-        "specifically affected by that recommendation."
-        "If the recommendation is genuinely store-wide or does not apply to specific"
-        "products, `affected_product_ids` MUST be an empty array."
-        "Never invent product IDs and never force a store-level recommendation to reference"
-        "products when the issue is about store-level policies, UCP/MCP readiness, trust,"
-        "safety, brand identity, agent discovery, checkout flows, FAQs, or other store-wide concerns."
-        "For recommendations with affected products, the `example` must provide a concrete fix covering every affected product. "
-        "For genuinely store-wide recommendations, the `example` must instead provide a concrete store-level fix and must not invent product-specific values."
+        "You are an expert e-commerce data strategist and data engineer. "
+        "Analyze the supplied Shopify store context and product batch against ONLY the fixed rubric in the user prompt. "
+        "Return ONLY raw JSON matching the requested verdict schema. "
+        "Do not calculate readiness scores or generate final recommendations outside each verdict entry. "
+        "Every store check must appear in store_verdicts. Every product check must appear in each product's verdicts. "
+        "Use pass, partial, fail, or na. Include exact evidence. For partial/fail, include a concrete enrichment, "
+        "why_it_matters_for_agents, and example based only on the supplied data. "
+        "Never invent product IDs or values. No markdown or prose outside JSON."
     )
 
     payload = {
@@ -707,7 +832,67 @@ def analyze_with_bedrock_claude(
     report.setdefault("store_url", store_url)
     return report
 
-def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: str, language="English") -> dict[str, Any]:
+def _openai_verdict_schema() -> dict[str, Any]:
+    product_check_ids = [
+        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "product"
+    ]
+    store_check_ids = [
+        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "store"
+    ]
+
+    verdict = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "verdict": {"type": "string", "enum": ["pass", "partial", "fail", "na"]},
+            "evidence": {"type": "string"},
+            "enrichment": {"type": "string"},
+            "why_it_matters_for_agents": {"type": "string"},
+            "example": {"type": "string"},
+        },
+        "required": ["verdict", "evidence", "enrichment", "why_it_matters_for_agents", "example"],
+    }
+
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "store_verdicts": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {cid: verdict for cid in store_check_ids},
+                "required": store_check_ids,
+            },
+            "products": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "product_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "verdicts": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {cid: verdict for cid in product_check_ids},
+                            "required": product_check_ids,
+                        },
+                    },
+                    "required": ["product_id", "title", "verdicts"],
+                },
+            },
+        },
+        "required": ["store_verdicts", "products"],
+    }
+
+
+def analyze_with_openai(
+    products: list[dict[str, Any]],
+    store_context: dict[str, Any],
+    store_url: str,
+    model: str,
+    language="English",
+) -> dict[str, Any]:
     try:
         openai_module = importlib.import_module("openai")
         OpenAI = getattr(openai_module, "OpenAI")
@@ -727,122 +912,21 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
                 {
                     "role": "system",
                     "content": (
-                        "You return concise JSON for ecommerce enrichment work. "
-                        "Prioritize specific, actionable changes. Every store_level_recommendations "
-                        "entry must include affected_product_ids listing the exact product ids it "
-                        "applies to. Its example must NOT be a generic template — it must be a "
-                        "concrete, compiled fix that actually covers every product in "
-                        "affected_product_ids, working out the real fix per product (using that "
-                        "product's actual title/attributes) and combining them into one example, e.g. "
-                        "one line per affected product naming it and its specific fixed value; none "
-                        "may be left uncovered or reduced to a placeholder. Product-specific examples "
-                        "belong separately under each product's own missing_enrichments."
+                        "Return only raw JSON matching the supplied fixed rubric schema. "
+                        "Do not calculate scores or generate aggregate recommendations. "
+                        "Every store check must be in store_verdicts and every product check must be in each product verdicts. "
+                        "Use only evidence present in the supplied store context and product payload. "
+                        "Never invent product IDs or values."
                     ),
                 },
-                {"role": "user", "content": build_prompt(products, store_url, language)},
+                {"role": "user", "content": build_prompt(products, store_context, store_url, language)},
             ],
             text={
                 "format": {
                     "type": "json_schema",
-                    "name": "shopify_agent_discoverability_report",
+                    "name": "shopify_agent_discoverability_verdicts",
                     "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "readiness_scores": {"$ref": "#/$defs/readiness_scores"},
-                            "store_level_recommendations": {
-                                "type": "array",
-                                "items": {"$ref": "#/$defs/store_recommendation"},
-                            },
-                            "products": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "additionalProperties": False,
-                                    "properties": {
-                                        "product_id": {"type": ["integer", "string", "null"]},
-                                        "title": {"type": ["string", "null"]},
-                                      "agent_summary": {"type": "string"},
-                                        "missing_enrichments": {
-                                            "type": "array",
-                                            "items": {"$ref": "#/$defs/recommendation"},
-                                        },
-                                    },
-                                    "required": [
-                                    "product_id",
-                                    "title",
-                                  "agent_summary",
-                                    "missing_enrichments",
-                                    ],
-                                },
-                            },
-                        },
-                        "required": ["readiness_scores", "store_level_recommendations", "products"],
-                        "$defs": {
-                            "readiness_scores": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "properties": {
-                                    "overall": {"type": "integer"},
-                                    "ucp_commerce_flows": {"type": "integer"},
-                                    "mcp_knowledge": {"type": "integer"},
-                                    "catalog_enrichment": {"type": "integer"},
-                                    "safety_policies": {"type": "integer"},
-                                },
-                                "required": [
-                                    "overall",
-                                    "ucp_commerce_flows",
-                                    "mcp_knowledge",
-                                    "catalog_enrichment",
-                                    "safety_policies",
-                                ],
-                            },
-                            "recommendation": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "properties": {
-                                    "priority": {
-                                        "type": "string",
-                                        "enum": ["high", "medium", "low"],
-                                    },
-                                    "enrichment": {"type": "string"},
-                                    "why_it_matters_for_agents": {"type": "string"},
-                                    "example": {"type": "string"},
-                                },
-                                "required": [
-                                    "priority",
-                                    "enrichment",
-                                    "why_it_matters_for_agents",
-                                    "example",
-                            ],
-                        },
-                            "store_recommendation": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "properties": {
-                                    "priority": {
-                                        "type": "string",
-                                        "enum": ["high", "medium", "low"],
-                                    },
-                                    "enrichment": {"type": "string"},
-                                    "why_it_matters_for_agents": {"type": "string"},
-                                    "example": {"type": "string"},
-                                    "affected_product_ids": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                    },
-                                },
-                                "required": [
-                                    "priority",
-                                    "enrichment",
-                                    "why_it_matters_for_agents",
-                                    "example",
-                                    "affected_product_ids",
-                                ],
-                            }
-                        },
-                    },
+                    "schema": _openai_verdict_schema(),
                 }
             },
         )
@@ -870,31 +954,33 @@ def analyze_with_openai(products: list[dict[str, Any]], store_url: str, model: s
 
 def analyze_products(
     products: list[dict[str, Any]],
+    store_context: dict[str, Any],
     store_url: str,
     provider: str,
     model: str,
     language: str = "English",
 ) -> dict[str, Any]:
     if provider == "gemini":
-        return analyze_with_gemini(products, store_url, model, language)
+        return analyze_with_gemini(products, store_context, store_url, model, language)
     if provider == "ollama":
-        return analyze_with_ollama(products, store_url, model, language)
+        return analyze_with_ollama(products, store_context, store_url, model, language)
     if provider == "openai":
-        return analyze_with_openai(products, store_url, model, language)
+        return analyze_with_openai(products, store_context, store_url, model, language)
     if provider == "bedrock":
-        return analyze_with_bedrock_claude(products, store_url, model, language)
+        return analyze_with_bedrock_claude(products, store_context, store_url, model, language)
     raise ValueError(f"Unsupported provider: {provider!r}")
 
 def escape_html(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
-_READINESS_KEYS = (
+_READINESS_KEYS = [
     "ucp_commerce_flows",
     "mcp_knowledge",
     "catalog_enrichment",
     "safety_policies",
-)
+    "trust_signals",
+]
 
 
 def normalize_readiness_scores(raw: Any) -> dict[str, int]:
@@ -930,6 +1016,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "MCP Knowledge",
         "score_catalog":      "Catalog Enrichment",
         "score_safety":       "Safety & Policies",
+        "score_trust":        "Trust Signals",
         "cta_heading":        "Want us to make your store agentic-commerce ready?",
         "cta_body":           "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
         "cta_button":         "Book a Free Consultation",
@@ -972,6 +1059,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "MCP-Wissen",
         "score_catalog":      "Katalog-Anreicherung",
         "score_safety":       "Sicherheit & Richtlinien",
+        "score_trust":        "Vertrauenssignale",
         "cta_heading":        "Möchten Sie, dass wir Ihren Shop agentic-commerce-bereit machen?",
         "cta_body":           "Unser Team kann diese Korrekturen für Sie umsetzen — von Schema- und Variantenbereinigung bis zu UCP/MCP-fähigen Shop-Daten.",
         "cta_button":         "Kostenlose Beratung buchen",
@@ -1014,6 +1102,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "Connaissances MCP",
         "score_catalog":      "Enrichissement du catalogue",
         "score_safety":       "Sécurité et politiques",
+        "score_trust":        "Signaux de confiance",
         "cta_heading":        "Vous voulez que nous rendions votre boutique prête pour le commerce agentique ?",
         "cta_body":           "Notre équipe peut mettre en œuvre ces corrections pour vous — du nettoyage des schémas et variantes aux données boutique compatibles UCP/MCP.",
         "cta_button":         "Réserver une consultation gratuite",
@@ -1056,6 +1145,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "Conocimiento MCP",
         "score_catalog":      "Enriquecimiento del catálogo",
         "score_safety":       "Seguridad y políticas",
+        "score_trust":        "Signales de confianza",
         "cta_heading":        "¿Quiere que preparemos su tienda para el comercio agéntico?",
         "cta_body":           "Nuestro equipo puede implementar estas mejoras por usted — desde la limpieza de esquemas y variantes hasta datos de tienda compatibles con UCP/MCP.",
         "cta_button":         "Reservar una consulta gratuita",
@@ -1098,6 +1188,7 @@ _PDF_LABELS: dict[str, dict[str, str]] = {
         "score_mcp":          "MCPナレッジ",
         "score_catalog":      "カタログの充実度",
         "score_safety":       "安全性とポリシー",
+        "score_trust":        "Trust Signals",
         "cta_heading":        "ストアをエージェント型コマース対応にしませんか？",
         "cta_body":           "スキーマやバリアントの整備からUCP/MCP対応のストアデータ構築まで、私たちのチームが対応いたします。",
         "cta_button":         "無料相談を予約する",
@@ -1261,6 +1352,8 @@ def render_readiness_scores(scores: dict[str, int], labels: dict[str, str]) -> s
         (labels["score_mcp"], scores.get("mcp_knowledge", 0)),
         (labels["score_catalog"], scores.get("catalog_enrichment", 0)),
         (labels["score_safety"], scores.get("safety_policies", 0)),
+        (labels["score_trust"], scores.get("trust_signals", 0)),
+        
     ]
 
     def band(value: int) -> str:
@@ -1308,7 +1401,6 @@ def render_pdf_html(
               <p class="muted">{escape_html(labels["product_id"])} {escape_html(product.get("product_id"))}</p>
             </div>
           </div>
-          <p class="summary">{escape_html(product.get("agent_summary"))}</p>
           <div class="recommendation-list">
             {render_recommendations(product.get("missing_enrichments") or [], labels)}
           </div>
@@ -1434,7 +1526,10 @@ def render_pdf_html(
       <div class="metric"><span class="eyebrow">{escape_html(labels["meta_actions"])}</span><strong>{len(report.get("store_level_recommendations") or [])}</strong></div>
     </section>
     <main>
-      {render_readiness_scores(normalize_readiness_scores(report.get("readiness_scores")), labels)}
+      {render_readiness_scores(
+            report.get("readiness_scores") or {},
+            labels
+        )}
       {render_agent_discovery(report.get("agent_discovery"), labels)}
       {render_executive_summary(report, product_reports, labels)}
       <section class="section">
@@ -1857,9 +1952,11 @@ def render_agent_discovery(agent_discovery: dict[str, Any] | None, labels: dict[
         icon, text = _AGENT_DISCOVERY_STATUS.get(info.get("status"), ("○", "Unknown"))
         extra = ""
         if info.get("status") not in ("missing", "unreachable"):
-            cust_text = _CUSTOMIZATION_LABELS.get(info.get("customization"), "")
-            if cust_text:
-                extra += f" · {cust_text}"
+            if not info.get("mirrors_agents_md"):
+                cust_text = _CUSTOMIZATION_LABELS.get(info.get("customization"), "")
+                if cust_text:
+                    extra += f" · {cust_text}"
+
             if info.get("mirrors_agents_md"):
                 extra += " · mirrors agents.md (no dedicated template)"
         rows.append(
@@ -1897,59 +1994,183 @@ def render_agent_discovery(agent_discovery: dict[str, Any] | None, labels: dict[
 
 
 
-def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
-    merged = {
-        "readiness_scores": {},
-        "store_level_recommendations": [],
-        "products": [],
-    }
+def _merge_store_verdicts(reports: list[dict[str, Any]], store_check_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Merge repeated store-level evaluations by majority verdict, preserving one evidence payload."""
+    order = {
+    "na": 0,
+    "pass": 1,
+    "partial": 2,
+    "fail": 3,
+}
+    merged: dict[str, dict[str, Any]] = {}
 
-    score_totals = {key: 0 for key in _READINESS_KEYS}
-    score_counts = {key: 0 for key in _READINESS_KEYS}
+    for cid in store_check_ids:
+        candidates = []
+        for report in reports:
+            entry = (report.get("store_verdicts") or {}).get(cid)
+            if isinstance(entry, dict) and entry.get("verdict") in order:
+                candidates.append(entry)
 
-    for report in reports:
-        merged["store_level_recommendations"].extend(
-            report.get("store_level_recommendations") or []
-        )
-        merged["products"].extend(report.get("products") or [])
-
-        batch_scores = normalize_readiness_scores(report.get("readiness_scores"))
-        if report.get("readiness_scores"):
-            for key in _READINESS_KEYS:
-                score_totals[key] += batch_scores[key]
-                score_counts[key] += 1
-
-    merged["readiness_scores"] = {
-        key: round(score_totals[key] / score_counts[key]) if score_counts[key] else 0
-        for key in _READINESS_KEYS
-    }
-    merged["readiness_scores"]["overall"] = round(
-        sum(merged["readiness_scores"][key] for key in _READINESS_KEYS) / len(_READINESS_KEYS)
-    )
-
-    seen_store: dict[tuple, dict[str, Any]] = {}
-    deduped_store: list[dict[str, Any]] = []
-    for rec in merged["store_level_recommendations"]:
-        key = (
-            rec.get("priority"),
-            rec.get("enrichment"),
-            rec.get("why_it_matters_for_agents"),
-            rec.get("example"),
-        )
-        if key in seen_store:
-            existing = seen_store[key]
-            existing_ids = existing.get("affected_product_ids") or []
-            new_ids = rec.get("affected_product_ids") or []
-            merged_ids = list(dict.fromkeys([*existing_ids, *new_ids]))
-            existing["affected_product_ids"] = merged_ids
+        if not candidates:
+            merged[cid] = {
+                "verdict": "fail",
+                "evidence": "not returned by model",
+                "enrichment": "",
+                "why_it_matters_for_agents": "",
+                "example": "",
+            }
             continue
-        seen_store[key] = rec
-        deduped_store.append(rec)
 
-    merged["store_level_recommendations"] = deduped_store
+        counts: dict[str, int] = {}
+        for entry in candidates:
+            counts[entry["verdict"]] = counts.get(entry["verdict"], 0) + 1
+        # Majority wins; on an exact tie, choose the more conservative verdict.
+        winning_verdict = max(counts, key=lambda v: (counts[v], order[v]))
+        merged[cid] = next(
+            entry for entry in candidates if entry.get("verdict") == winning_verdict
+        )
+
     return merged
 
-def run_store_analysis(store_url: str, language: str = "English") -> dict[str, Any]:
+
+def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge raw batch verdicts and consistency observations."""
+    store_check_ids = [
+        c["id"]
+        for checks in CHECKS.values()
+        for c in checks
+        if c["level"] == "store" and c["id"] != "consistency"
+    ]
+
+    by_id: dict[str, dict[str, Any]] = {}
+
+    for report in reports:
+        for product in report.get("products") or []:
+            pid = product.get("product_id")
+            if pid:
+                by_id[str(pid)] = product
+
+    # Merge consistency observations from every product batch.
+    merged_consistency = {
+        "fields_observed": {},
+        "option_names": [],
+        "product_types": [],
+        "format_variations": [],
+        "issues": [],
+    }
+
+    for report in reports:
+        observations = report.get("consistency_observations") or {}
+
+        # Merge observed field values.
+        fields_observed = observations.get("fields_observed") or {}
+        for field, values in fields_observed.items():
+            if field not in merged_consistency["fields_observed"]:
+                merged_consistency["fields_observed"][field] = []
+
+            for value in values or []:
+                if value not in merged_consistency["fields_observed"][field]:
+                    merged_consistency["fields_observed"][field].append(value)
+
+        # Merge option names.
+        for value in observations.get("option_names") or []:
+            if value not in merged_consistency["option_names"]:
+                merged_consistency["option_names"].append(value)
+
+        # Merge product types.
+        for value in observations.get("product_types") or []:
+            if value not in merged_consistency["product_types"]:
+                merged_consistency["product_types"].append(value)
+
+        # Merge format variations.
+        for variation in observations.get("format_variations") or []:
+            if variation not in merged_consistency["format_variations"]:
+                merged_consistency["format_variations"].append(variation)
+
+        # Merge consistency issues.
+        for issue in observations.get("issues") or []:
+            if issue not in merged_consistency["issues"]:
+                merged_consistency["issues"].append(issue)
+
+    return {
+        "store_verdicts": _merge_store_verdicts(reports, store_check_ids),
+        "products": list(by_id.values()),
+        "consistency_observations": merged_consistency,
+    }
+
+def evaluate_consistency_observations(
+    observations: dict[str, Any],
+    total_product_count: int,
+) -> dict[str, Any]:
+    """
+    Evaluate the final store-wide consistency check from merged batch observations.
+
+    This check is deterministic: the AI supplies observations, while Python
+    decides the final verdict.
+    """
+    issues = observations.get("issues") or []
+
+    if not issues:
+        return {
+            "verdict": "pass",
+            "evidence": "No catalog consistency issues were observed across the analyzed batches.",
+            "enrichment": "",
+            "why_it_matters_for_agents": "",
+            "example": "",
+        }
+
+    # Count distinct products affected across all consistency issues.
+    # A product affected by multiple issues is counted only once.
+    affected_product_ids = set()
+
+    for issue in issues:
+        for product_id in issue.get("affected_product_ids", []) or []:
+            if product_id:
+                affected_product_ids.add(str(product_id))
+
+    affected_product_count = len(affected_product_ids)
+
+    if affected_product_count == 0:
+        verdict = "pass"
+    elif affected_product_count < total_product_count:
+        verdict = "partial"
+    else:
+        verdict = "fail"
+
+    descriptions = [
+        issue.get("description", "")
+        for issue in issues
+        if issue.get("description")
+    ]
+    affected_fields = []
+    for issue in issues:
+        field = issue.get("field")
+        if field and field not in affected_fields:
+            affected_fields.append(field)
+
+    field_text = ", ".join(affected_fields) if affected_fields else "the affected catalog fields"
+
+    evidence = "Catalog consistency observations: " + "; ".join(descriptions)
+
+    return {
+        "verdict": verdict,
+        "evidence": evidence,
+        "enrichment": "Catalog consistency",
+        "why_it_matters_for_agents": (
+            "Consistent fields and value formats make it easier for agents "
+            "to compare, filter, and reason across products."
+        ),
+        "example": (
+            f"Standardize {field_text} so similar products use consistent "
+            "field names, value formats, and representations."
+        ),
+    }
+
+def run_store_analysis(
+    store_url: str,
+    language: str = "English",
+    store_context: dict[str, Any] = None,
+) -> dict[str, Any]:
     settings = get_app_settings()
     max_products = settings["max_products"]
     raw_products = fetch_products_public(store_url, max_products)
@@ -1973,44 +2194,65 @@ def run_store_analysis(store_url: str, language: str = "English") -> dict[str, A
 
     provider = settings["provider"]
     model = settings["model"]
+    batch_size = max(1, int(os.getenv("MAX_PRODUCTS_PER_BATCH", "5")))
+    # Before: batches = chunked(products, batch_size)
+    # Sort to prevent API response order variations between requests
+    products.sort(key=lambda p: str(p.get("product_id") or p.get("id") or p.get("title", "")))
+    batches = chunked(products, batch_size)
+    batch_reports: list[dict[str, Any]] = []
 
-    if provider != "gemini":
-        report = analyze_products(products, store_url, provider, model, language)
-    else:
-        batch_size = int(os.getenv("MAX_PRODUCTS_PER_BATCH", "5"))
-        batches = chunked(products, batch_size)
+    for idx, batch in enumerate(batches, start=1):
+        print("=" * 80)
+        print(f"[{provider}] Batch {idx}/{len(batches)}")
+        print(f"[{provider}] Products in batch: {len(batch)}")
+        start = time.time()
 
-        batch_reports = []
+        # Every provider receives the SAME store context + current product batch.
+        result = analyze_products(
+            batch,
+            store_context or {},
+            store_url,
+            provider,
+            model,
+            language,
+        )
+        batch_reports.append(result)
 
-        for idx, batch in enumerate(batches, start=1):
-            print("=" * 80)
-            print(f"[Gemini] Batch {idx}/{len(batches)}")
-            print(f"[Gemini] Products in batch: {len(batch)}")
+        print(
+            f"[{provider}] Batch {idx} completed in "
+            f"{time.time() - start:.2f}s"
+        )
 
-            for product in batch:
-                print(
-                    f"  - {product.get('title')} "
-                    f"(ID: {product.get('id')})"
-                )
+   # Merge raw verdicts across all batches first, then calculate scores/recommendations once.
+    raw_report = merge_reports(batch_reports)
 
-            start = time.time()
+    # Store-context-dependent checks cannot be evaluated when store_context
+    # was not available. Mark them NA so they do not deduct from the score.
+    if not store_context:
+        unavailable_store_checks = {
+            "fulfillment_context",
+            "policy_coverage",
+            "faq_or_guidance",
+            "store_guardrails",
+            "legal_pages",
+            "contact_brand",
+        }
 
-            result = analyze_products(
-                batch,
-                store_url,
-                provider,
-                model,
-                language,
-            )
+        for check_id in unavailable_store_checks:
+            if check_id in raw_report.get("store_verdicts", {}):
+                raw_report["store_verdicts"][check_id]["verdict"] = "na"
 
-            print(
-                f"[Gemini] Batch {idx} completed in "
-                f"{time.time() - start:.2f}s"
-            )
-
-            batch_reports.append(result)
-
-        report = merge_reports(batch_reports)
+    product_check_ids = [
+        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "product"
+    ]
+    store_check_ids = [
+        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "store"
+    ]
+    report = assemble_report_from_verdicts(
+        raw_report,
+        store_check_ids,
+        product_check_ids,
+    )
 
     report.setdefault("provider", provider)
     report.setdefault("model", model)
@@ -2023,6 +2265,7 @@ def run_store_analysis(store_url: str, language: str = "English") -> dict[str, A
         "products": products,
         "report": report,
     }
+
 
 def build_pdf_attachment(
     report: dict[str, Any],

@@ -293,17 +293,6 @@ export default function ProductDetails() {
                 </div>
               </div>
             </div>
-
-            {product.agent_summary && (
-              <div className="rounded-2xl border border-[var(--app-border)] bg-white p-5">
-                <h3 className="mb-3 border-b border-[var(--app-border)] pb-2 text-xs font-bold uppercase tracking-wider text-[var(--app-text)]">
-                  Agent Parsing Context
-                </h3>
-                <p className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-xs leading-relaxed text-[var(--app-text)]">
-                  {product.agent_summary}
-                </p>
-              </div>
-            )}
           </div>
 
           {/* Right column — issues list */}

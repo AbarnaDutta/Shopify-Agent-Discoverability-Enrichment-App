@@ -1,4 +1,4 @@
-#app/services/shopify_admin_fetcher.py
+# app/services/shopify_admin_fetcher.py
 from __future__ import annotations
 
 import json
@@ -76,6 +76,8 @@ def _graphql_request(
     return result
 
 
+# ── PRODUCTS FOR AUDIT ────────────────────────────────────────────────
+
 _PRODUCTS_QUERY = """
 query ProductsForAudit($cursor: String, $first: Int!) {
   products(first: $first, after: $cursor) {
@@ -132,86 +134,15 @@ query ProductsForAudit($cursor: String, $first: Int!) {
           }
         }
 
-        gtin: metafield(namespace: "app", key: "gtin") {
-          value
-          type
-        }
-
-        mpn: metafield(namespace: "app", key: "mpn") {
-          value
-          type
-        }
-
-        isDigitalService: metafield(
-          namespace: "app",
-          key: "is_digital_service"
-        ) {
-          value
-          type
-        }
-
-        requiresCustomerInput: metafield(
-          namespace: "app",
-          key: "requires_customer_input"
-        ) {
-          value
-          type
-        }
-
-        deliveryMethod: metafield(
-          namespace: "app",
-          key: "delivery_method"
-        ) {
-          value
-          type
-        }
-
-        dimensions: metafield(
-          namespace: "app",
-          key: "dimensions"
-        ) {
-          value
-          type
-        }
-
-        material: metafield(
-          namespace: "app",
-          key: "material"
-        ) {
-          value
-          type
-        }
-
-        occasion: metafield(
-          namespace: "app",
-          key: "occasion"
-        ) {
-          value
-          type
-        }
-
-        targetRecipient: metafield(
-          namespace: "app",
-          key: "target_recipient"
-        ) {
-          value
-          type
-        }
-
-        contents: metafield(
-          namespace: "app",
-          key: "contents"
-        ) {
-          value
-          type
-        }
-
-        agentGuardrails: metafield(
-          namespace: "app",
-          key: "agent_guardrails"
-        ) {
-          value
-          type
+        metafields(first: 50) {
+          edges {
+            node {
+              namespace
+              key
+              type
+              value
+            }
+          }
         }
       }
     }
@@ -228,25 +159,22 @@ query ProductsForAudit($cursor: String, $first: Int!) {
 def _compact_admin_product(
     product: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Convert Shopify Admin GraphQL product data into the same
-    normalized structure consumed by the existing audit engine.
-    """
-
     variants = product.get("variants", {}).get("edges", [])
     media = product.get("media", {}).get("edges", [])
-
+    product_status = product.get("status")
     compact_variants = []
-
     for edge in variants[:20]:
         variant = edge.get("node", {})
-
         selected_options = variant.get("selectedOptions") or []
-
         option_values = [
             option.get("value")
             for option in selected_options
         ]
+        inventory_quantity = variant.get("inventoryQuantity")
+        available = (
+            product_status == "ACTIVE"
+            and (inventory_quantity or 0) > 0
+        )
 
         compact_variants.append(
             {
@@ -255,34 +183,18 @@ def _compact_admin_product(
                 "sku": variant.get("sku"),
                 "price": variant.get("price"),
                 "barcode": variant.get("barcode"),
-                "available": None,
-                "inventory_quantity": variant.get(
-                    "inventoryQuantity"
-                ),
-                "option1": (
-                    option_values[0]
-                    if len(option_values) > 0
-                    else None
-                ),
-                "option2": (
-                    option_values[1]
-                    if len(option_values) > 1
-                    else None
-                ),
-                "option3": (
-                    option_values[2]
-                    if len(option_values) > 2
-                    else None
-                ),
+                "available": available,
+                "inventory_quantity": variant.get("inventoryQuantity"),
+                "option1": option_values[0] if len(option_values) > 0 else None,
+                "option2": option_values[1] if len(option_values) > 1 else None,
+                "option3": option_values[2] if len(option_values) > 2 else None,
             }
         )
 
     compact_images = []
-
     for edge in media[:10]:
         node = edge.get("node", {})
         image = node.get("image")
-
         if not image:
             continue
 
@@ -294,29 +206,21 @@ def _compact_admin_product(
             }
         )
 
-    metafields = {
-        "gtin": product.get("gtin"),
-        "mpn": product.get("mpn"),
-        "is_digital_service": product.get(
-            "isDigitalService"
-        ),
-        "requires_customer_input": product.get(
-            "requiresCustomerInput"
-        ),
-        "delivery_method": product.get(
-            "deliveryMethod"
-        ),
-        "dimensions": product.get("dimensions"),
-        "material": product.get("material"),
-        "occasion": product.get("occasion"),
-        "target_recipient": product.get(
-            "targetRecipient"
-        ),
-        "contents": product.get("contents"),
-        "agent_guardrails": product.get(
-            "agentGuardrails"
-        ),
-    }
+    raw_metafields = product.get("metafields", {}).get("edges") or []
+    metafields: dict[str, Any] = {}
+    for edge in raw_metafields:
+        node = edge.get("node") or {}
+        ns = node.get("namespace")
+        key = node.get("key")
+        if not ns or not key:
+            continue
+        full_key = f"{ns}.{key}"
+        metafields[full_key] = {
+            "namespace": ns,
+            "key": key,
+            "type": node.get("type"),
+            "value": node.get("value"),
+        }
 
     return {
         "id": product.get("id"),
@@ -417,3 +321,92 @@ def fetch_products_admin(
             break
 
     return products
+
+
+# ── STORE CONTEXT FOR AUDIT ───────────────────────────────────────────
+
+_STORE_CONTEXT_QUERY = """
+query StoreContextForAudit {
+  shop {
+    id
+    name
+    primaryDomain {
+      url
+    }
+
+    privacyPolicy {
+      body
+    }
+    refundPolicy {
+      body
+    }
+    shippingPolicy {
+      body
+    }
+    termsOfService {
+      body
+    }
+
+    metafields(first: 20) {
+      edges {
+        node {
+          namespace
+          key
+          type
+          value
+        }
+      }
+    }
+  }
+
+  metafieldDefinitions(ownerType: PRODUCT, first: 50) {
+    edges {
+      node {
+        id
+        namespace
+        key
+        name
+        type {
+          name
+        }
+      }
+    }
+  }
+
+  metaobjects(first: 50) {
+    edges {
+      node {
+        id
+        type
+        handle
+        fields {
+          key
+          value
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def fetch_store_context_admin(
+    shop_domain: str,
+    access_token: str,
+    api_version: str,
+) -> dict[str, Any]:
+    """
+    Fetch store-level context for readiness scoring:
+    - Policies
+    - Shop metafields
+    - Product metafield definitions
+    - Metaobjects (e.g., FAQs, size charts)
+    """
+    result = _graphql_request(
+        shop_domain=shop_domain,
+        access_token=access_token,
+        api_version=api_version,
+        query=_STORE_CONTEXT_QUERY,
+    )
+    data = result.get("data") or {}
+    return data

@@ -42,6 +42,7 @@ const LABELS = {
   scoreMcp: "MCP Knowledge",
   scoreCatalog: "Catalog Enrichment",
   scoreSafety: "Safety & Policies",
+  scoreTrust: "Trust Signals",
   ctaHeading: "Want us to make your store agentic-commerce ready?",
   ctaBody:
     "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
@@ -335,6 +336,7 @@ function ReadinessScores({ report }) {
     [LABELS.scoreMcp, s.mcp_knowledge],
     [LABELS.scoreCatalog, s.catalog_enrichment],
     [LABELS.scoreSafety, s.safety_policies],
+    [LABELS.scoreTrust, s.trust_signals],
   ];
 
   return (
@@ -752,17 +754,6 @@ function ProductAccordion({ products }) {
 
               {isOpen && (
                 <div className="border-t border-[#f0ece3] bg-[#fdfcfa] px-[18px] pb-5 pt-1">
-                  {p.agent_summary && (
-                    <div className="my-3.5 rounded-lg border border-[var(--acr-border)] bg-[#f3f1ec] px-4 py-3.5 text-[13px] leading-relaxed text-gray-800">
-                      <strong>
-                        {LABELS.agentSummaryLabel}
-                      </strong>
-
-                      <br />
-
-                      {p.agent_summary}
-                    </div>
-                  )}
 
                   <RecommendationList recs={recs} />
                 </div>

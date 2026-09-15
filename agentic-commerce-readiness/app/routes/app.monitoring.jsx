@@ -115,19 +115,31 @@ export default function Monitoring() {
     }
   };
 
+  // history[0] is now the newest audit in the currently-loaded page.
   const currentScore = useMemo(() => {
     if (!history.length) return null;
-    const latest = Number(history[history.length - 1]?.score);
+    const latest = Number(history[0]?.score);
     return Number.isFinite(latest) ? latest : null;
   }, [history]);
 
+  const previousScore = useMemo(() => {
+    if (history.length < 2) return null;
+    const previous = Number(history[1]?.score);
+    return Number.isFinite(previous) ? previous : null;
+  }, [history]);
+
+  const scoreChange =
+    currentScore !== null && previousScore !== null ? currentScore - previousScore : null;
+
   const trajectory = useMemo(() => {
     if (history.length < 2) return null;
-    const first = Number(history[0]?.score);
-    const last = Number(history[history.length - 1]?.score);
-    if (!Number.isFinite(first) || !Number.isFinite(last)) return null;
-    return { delta: last - first, cycles: history.length - 1 };
+    const newest = Number(history[0]?.score);
+    const oldest = Number(history[history.length - 1]?.score);
+    if (!Number.isFinite(newest) || !Number.isFinite(oldest)) return null;
+    return { delta: newest - oldest, cycles: history.length - 1 };
   }, [history]);
+
+  const isViewingLatestPage = totalPages > 0 && page === totalPages;
 
   return (
     <main className="min-h-screen bg-[var(--app-bg)] px-6 py-8">
@@ -221,8 +233,12 @@ export default function Monitoring() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--app-border)] text-xs">
-                      {[...history].reverse().map((item, idx) => (
-                        <HistoryRow key={`${item.id || "audit"}-${idx}`} item={item} isFirst={idx === 0} />
+                      {history.map((item, idx) => (
+                        <HistoryRow
+                          key={`${item.id || "audit"}-${idx}`}
+                          item={item}
+                          isCurrent={isViewingLatestPage && idx === 0}
+                        />
                       ))}
                     </tbody>
                   </table>
@@ -271,13 +287,15 @@ function TrendChart({ history }) {
   const usableWidth = width - paddingX * 2;
   const usableHeight = height - paddingY * 2;
 
-  const points = history.map((item, index) => {
+  const chronological = [...history].reverse();
+
+  const points = chronological.map((item, index) => {
     const score = Math.max(0, Math.min(100, Number(item.score) || 0));
 
     const x =
-      history.length === 1
+      chronological.length === 1
         ? width / 2
-        : paddingX + (index / (history.length - 1)) * usableWidth;
+        : paddingX + (index / (chronological.length - 1)) * usableWidth;
 
     const y = paddingY + ((100 - score) / 100) * usableHeight;
 
@@ -355,7 +373,7 @@ function TrendChart({ history }) {
   );
 }
 
-function HistoryRow({ item, isFirst }) {
+function HistoryRow({ item, isCurrent }) {
   const date = item.date ? new Date(item.date) : null;
   const formattedDate =
     date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString() : "Unknown date";
@@ -367,7 +385,7 @@ function HistoryRow({ item, isFirst }) {
     <tr className="hover:bg-[var(--acr-cream)]">
       <td className="px-6 py-4 font-semibold text-[var(--app-text)]">
         {formattedDate}
-        {isFirst && (
+        {isCurrent && (
           <span className="ml-2 rounded border border-[var(--app-green)] bg-[var(--acr-cream)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--app-green)]">
             Current
           </span>
