@@ -945,7 +945,8 @@ export default function Index({ loaderData }) {
 
         setIsRunning(false);
 
-        // Save the latest report
+        // Save the latest report so it survives navigation and page refresh.
+        // A new completed audit overwrites the previous report.
         setReport(data.report);
 
         localStorage.setItem(
@@ -962,9 +963,7 @@ export default function Index({ loaderData }) {
           Number.isFinite(Number(newScore))
         ) {
           const existingHistory = JSON.parse(
-            localStorage.getItem(
-              "acr_audit_history"
-            ) || "[]"
+            localStorage.getItem("acr_audit_history") || "[]"
           );
 
           existingHistory.push({
@@ -976,9 +975,7 @@ export default function Index({ loaderData }) {
 
           localStorage.setItem(
             "acr_audit_history",
-            JSON.stringify(
-              existingHistory.slice(-20)
-            )
+            JSON.stringify(existingHistory.slice(-20))
           );
         }
 
@@ -1120,6 +1117,33 @@ export default function Index({ loaderData }) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      const savedReport = localStorage.getItem("acr_latest_report");
+
+      if (!savedReport) {
+        return;
+      }
+
+      const parsedReport = JSON.parse(savedReport);
+
+      if (parsedReport) {
+        setReport(parsedReport);
+
+        if (parsedReport.store_url) {
+          setStoreUrl(parsedReport.store_url);
+        } else {
+          setStoreUrl(`https://${shopDomain}`);
+        }
+      }
+    } catch (error) {
+      console.warn(
+        "Could not restore the previous audit report:",
+        error
+      );
+    }
+  }, [shopDomain]);
 
   const products = report?.products || [];
 

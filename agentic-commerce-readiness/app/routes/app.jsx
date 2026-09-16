@@ -24,7 +24,6 @@ export default function App() {
         <s-link href="/app/agent-tests">Agent Tests</s-link>
         <s-link href="/app/monitoring">Monitoring</s-link>
         <s-link href="/app/settings">Settings</s-link>
-        <s-link href="/app/additional">Audits</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>
