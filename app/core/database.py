@@ -97,6 +97,11 @@ class Audit(Base):
         uselist=False,  
         cascade="all, delete-orphan",
     )
+    issues = relationship(
+        "AuditIssue",
+        back_populates="audit",
+        cascade="all, delete-orphan",
+    )
 
 
 class AuditProduct(Base):
@@ -165,6 +170,38 @@ def get_engine():
                 return None
     return _engine
 
+class AuditIssue(Base):
+    __tablename__ = "audit_issues"
+
+    id = Column(String(36), primary_key=True)
+    audit_id = Column(
+        String(36),
+        ForeignKey("audits.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    store_id = Column(
+        String(36),
+        ForeignKey("stores.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    check_id = Column(String(128), nullable=False, index=True)
+    issue_type = Column(String(128), nullable=False, index=True)
+    status = Column(String(32), nullable=False)
+    description = Column(Text, nullable=False)
+
+    product_id = Column(String(255), nullable=True, index=True)
+    variant_id = Column(String(255), nullable=True)
+    field = Column(String(255), nullable=True)
+    affected_product_ids = Column(JSON, nullable=False, default=list)
+
+    scope = Column(String(32), nullable=True)
+    fix_mode = Column(String(32), nullable=False, default="unclassified")
+    fix_action = Column(String(128), nullable=True)
+
+    audit = relationship("Audit", back_populates="issues")
 
 def is_db_available() -> bool:
     return get_engine() is not None

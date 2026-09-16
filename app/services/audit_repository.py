@@ -14,6 +14,7 @@ from app.core.database import (
     AuditProduct,
     AuditStoreRecommendation,
     AuditAgentDiscovery,
+    AuditIssue,
 )
 
 
@@ -67,7 +68,11 @@ class AuditRepository:
             store_recs = report.get("store_level_recommendations") or []
             agent_discovery = report.get("agent_discovery")
 
-            issues_found = sum(len(p.get("missing_enrichments") or []) for p in products)
+            issues = report.get("issues") or {}
+            store_issues = issues.get("store") or []
+            product_issues = issues.get("products") or []
+
+            issues_found = len(store_issues) + len(product_issues)
 
             audit = Audit(
                 id=_new_id(),
@@ -80,6 +85,42 @@ class AuditRepository:
                 provider=report.get("provider", provider),
                 model=report.get("model", model),
             )
+            for issue in store_issues:
+                audit.issues.append(
+                    AuditIssue(
+                        id=_new_id(),
+                        audit_id=audit.id,
+                        store_id=store.id,
+                        check_id=issue["check_id"],
+                        issue_type=issue["issue_type"],
+                        status=issue["status"],
+                        description=issue["description"],
+                        product_id=issue.get("product_id"),
+                        variant_id=issue.get("variant_id"),
+                        field=issue.get("field"),
+                        affected_product_ids=issue.get("affected_product_ids") or [],
+                        scope=issue.get("scope"),
+                        fix_mode=issue.get("fix_mode", "unclassified"),
+                        fix_action=issue.get("fix_action"),
+                    )
+                )
+            for issue in product_issues:
+                audit.issues.append(
+                    AuditIssue(
+                        id=_new_id(),
+                        audit_id=audit.id,
+                        store_id=store.id,
+                        check_id=issue["check_id"],
+                        issue_type=issue["issue_type"],
+                        status=issue["status"],
+                        description=issue["description"],
+                        product_id=issue.get("product_id"),
+                        variant_id=issue.get("variant_id"),
+                        scope=issue.get("scope"),
+                        fix_mode=issue.get("fix_mode", "unclassified"),
+                        fix_action=issue.get("fix_action"),
+                    )
+                )
 
             for p in products:
                 enrichments = p.get("missing_enrichments") or []
@@ -134,6 +175,7 @@ class AuditRepository:
                     selectinload(Audit.products),
                     selectinload(Audit.store_recommendations),
                     selectinload(Audit.agent_discovery),
+                    selectinload(Audit.issues),
                 )
                 .filter(Audit.store_id == store.id)
                 .order_by(Audit.created_at.desc())
@@ -327,6 +369,39 @@ class AuditRepository:
 
             return self._serialize_product(row)
 
+    def get_audit_issues(self, audit_id: str) -> list[dict[str, Any]]:
+        with safe_db("get_audit_issues") as db:
+            if db is None:
+                return []
+
+            audit = (
+                db.query(Audit)
+                .options(selectinload(Audit.issues))
+                .filter(Audit.id == audit_id)
+                .one_or_none()
+            )
+
+            if audit is None:
+                return []
+
+            return [
+                {
+                    "id": issue.id,
+                    "check_id": issue.check_id,
+                    "issue_type": issue.issue_type,
+                    "status": issue.status,
+                    "description": issue.description,
+                    "product_id": issue.product_id,
+                    "variant_id": issue.variant_id,
+                    "field": issue.field,
+                    "affected_product_ids": issue.affected_product_ids or [],
+                    "scope": issue.scope,
+                    "fix_mode": issue.fix_mode,
+                    "fix_action": issue.fix_action,
+                }
+                for issue in audit.issues
+            ]
+
     def _serialize_audit(self, audit: Audit, include_children: bool = False) -> dict[str, Any]:
         data = {
             "id": audit.id,
@@ -340,6 +415,24 @@ class AuditRepository:
             "created_at": audit.created_at.isoformat(),
         }
         if include_children:
+            data["issues"] = [
+                {
+                    "id": issue.id,
+                    "check_id": issue.check_id,
+                    "issue_type": issue.issue_type,
+                    "status": issue.status,
+                    "description": issue.description,
+                    "product_id": issue.product_id,
+                    "variant_id": issue.variant_id,
+                    "field": issue.field,
+                    "affected_product_ids": issue.affected_product_ids or [],
+                    "scope": issue.scope,
+                    "fix_mode": issue.fix_mode,
+                    "fix_action": issue.fix_action,
+                }
+                for issue in audit.issues
+            ]
+
             data["products"] = [self._serialize_product(p) for p in audit.products]
             data["store_level_recommendations"] = [
                 {

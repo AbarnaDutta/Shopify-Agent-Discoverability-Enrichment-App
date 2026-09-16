@@ -24,10 +24,13 @@ from app.services.product_fetcher import (
     EmptyStoreError,
 )
 from app.services.scoring_rubric import (
-    CHECKS, ALL_CHECK_IDS, CHECK_BY_ID,
-    compute_scores, build_product_recommendations, build_store_recommendations,
+    CHECKS, compute_scores, build_product_recommendations, build_store_recommendations,
 )
-
+from app.services.issue_registry import (
+    ISSUE_TYPES,
+    is_valid_issue_type,
+)
+from app.services.issue_discovery import normalize_issue
 import tempfile
 
 from typing import Protocol
@@ -207,6 +210,11 @@ def _rubric_prompt_block() -> str:
 
 
 def build_prompt(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, language: str = "English") -> str:
+    issue_registry_block = "\n".join(
+        f"- [{check_id}] {issue_type}"
+        for check_id, issues in ISSUE_TYPES.items()
+        for issue_type in issues
+    )    
     return f"""
 You are an ecommerce data strategist helping a Shopify merchant prepare their store for AI commerce
 agents that use Shopify's Universal Commerce Protocol (UCP) and Storefront Model Context Protocol (MCP).
@@ -290,17 +298,65 @@ For `consistency_observations`:
 Fixed rubric checks:
 {_rubric_prompt_block()}
 
+ISSUE CLASSIFICATION:
+An issue_type marked 'existing' must be one of the canonical types listed specifically under that check_id in the registry above — not any canonical type from the full list.
+
+For every check marked "partial" or "fail", identify the exact issue or issues
+that caused the verdict.
+
+First compare the observed problem against the canonical issue types below.
+
+If the problem exactly matches an existing canonical issue type:
+- return status "existing"
+- use the exact canonical issue_type
+- do not rename it
+- do not invent a synonym
+
+If the observed problem is genuinely distinct from every canonical issue type:
+- return status "new"
+- create a concise, specific issue_type in snake_case
+- provide a factual description of the new issue
+- do not assign a fix_mode
+- do not assign a fix_action
+
+A check may contain multiple issues.
+
+Every issue object MUST include all three fields: "issue_type", "status", AND "description".
+Never omit "description" — it must always be a non-empty factual sentence explaining the
+specific problem observed, even for existing/canonical issue types.
+
+For "pass" and "na", return an empty issues array.
+
+Canonical issue types:
+{issue_registry_block}
+
 STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` RULES:
 - Only include product IDs in `affected_product_ids` when a PER-PRODUCT check_id you evaluated
   applies to specific identifiable products beyond a single product's own missing_enrichments.
-- Store-wide checks (fulfillment_context, policy_semantics, faq_or_guidance, consistency,
-  store_guardrails, legal_pages, contact_brand) always use an empty array — they are not
+  - For consistency observations, include the actual product IDs affected by the observed
+  inconsistency when those products are identifiable from the batch.
+- For other Store-wide checks (fulfillment_context, policy_semantics, faq_or_guidance, store_guardrails, legal_pages, contact_brand) always use an empty array — they are not
   product-specific by definition.
 - Never invent product IDs.
 
 CRITICAL CONSTRAINTS:
 - Write the entire response, including all values and examples, strictly in the requested language: {language}.
 - Do not mix languages.
+EXACT RESPONSE SHAPE:
+Every store check_id and every product check_id in the fixed rubric above MUST appear,
+following exactly the structure shown below. This example illustrates only 2 checks per
+section for brevity — every other check_id in the rubric must follow this identical shape:
+
+{_expected_response_shape_example()}
+
+Rules that apply to every check in the real response, not just the ones shown above:
+- Per-product check results MUST be nested under a "verdicts" object on each product entry —
+  never as sibling keys of "product_id"/"title".
+- "enrichment", "why_it_matters_for_agents", and "example" MUST be flat strings — never nested
+  objects with their own sub-fields.
+- Every issue object MUST include "issue_type", "status", AND "description" — never omit any of these.
+- Every store check_id and every product check_id must be present for every product — do not
+  omit any check.
 
 Store URL: {store_url}
 
@@ -372,21 +428,57 @@ def _check_verdict_schema() -> dict:
     return {
         "type": "OBJECT",
         "properties": {
-            "verdict": {"type": "STRING", "enum": ["pass", "partial", "fail", "na"]},
-            "evidence": {"type": "STRING"},
-            "enrichment": {"type": "STRING"},
-            "why_it_matters_for_agents": {"type": "STRING"},
-            "example": {"type": "STRING"},
+            "verdict": {
+                "type": "STRING",
+                "enum": ["pass", "partial", "fail", "na"],
+            },
+            "evidence": {
+                "type": "STRING",
+            },
+            "issues": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "issue_type": {
+                            "type": "STRING",
+                        },
+                        "status": {
+                            "type": "STRING",
+                            "enum": ["existing", "new"],
+                        },
+                        "description": {
+                            "type": "STRING",
+                        },
+                    },
+                    "required": [
+                        "issue_type",
+                        "status",
+                        "description",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "enrichment": {
+                "type": "STRING",
+            },
+            "why_it_matters_for_agents": {
+                "type": "STRING",
+            },
+            "example": {
+                "type": "STRING",
+            },
         },
         "required": [
             "verdict",
             "evidence",
+            "issues",
             "enrichment",
             "why_it_matters_for_agents",
             "example",
         ],
+        "additionalProperties": False,
     }
-
 
 def enrichment_report_schema() -> dict[str, Any]:
     product_check_ids = list(dict.fromkeys(
@@ -466,7 +558,11 @@ def enrichment_report_schema() -> dict[str, Any]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "issue_type": {"type": "string"},
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["existing", "new"],
+                                },
                                 "field": {"type": "string"},
                                 "description": {"type": "string"},
                                 "affected_product_ids": {
@@ -474,7 +570,13 @@ def enrichment_report_schema() -> dict[str, Any]:
                                     "items": {"type": "string"},
                                 },
                             },
-                            "required": ["type", "field", "description", "affected_product_ids"],
+                            "required": [
+                                "issue_type",
+                                "status",
+                                "field",
+                                "description",
+                                "affected_product_ids",
+                            ],
                             "additionalProperties": False,
                         },
                     },
@@ -496,56 +598,178 @@ def enrichment_report_schema() -> dict[str, Any]:
         ],
     }
 
-def _extract_verdicts_and_texts(product_entry: dict, check_ids: list[str]) -> tuple[dict, dict]:
-    verdicts, texts = {}, {}
-    raw = product_entry.get("verdicts", {})
+def _expected_response_shape_example() -> str:
+    """Literal JSON example of the exact response shape, generated from CHECKS
+    so it can't drift from the rubric. Built with json.dumps and inserted into
+    the prompt as a variable — never hand-typed literal braces in the f-string."""
+    product_check_ids = list(dict.fromkeys(
+        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "product"
+    ))
+    store_check_ids = list(dict.fromkeys(
+        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "store"
+    ))
+
+    def _example_check(cid: str) -> dict:
+        return {
+            "verdict": "partial",
+            "evidence": f"<exact field/value observed for {cid}>",
+            "issues": [
+                {
+                    "issue_type": "<canonical_or_new_issue_type>",
+                    "status": "existing",
+                    "description": "<factual description of the specific issue>",
+                }
+            ],
+            "enrichment": "<short fix name — flat string, not an object>",
+            "why_it_matters_for_agents": "<1-2 sentence explanation — flat string>",
+            "example": "<concrete fix using this product/store's actual data — flat string>",
+        }
+
+    example = {
+        "store_verdicts": {cid: _example_check(cid) for cid in store_check_ids[:2]},
+        "products": [
+            {
+                "product_id": "<product_id>",
+                "title": "<product title>",
+                "verdicts": {cid: _example_check(cid) for cid in product_check_ids[:2]},
+            }
+        ],
+        "consistency_observations": {
+            "fields_observed": {"<field_name>": ["<value1>", "<value2>"]},
+            "option_names": ["<option_name>"],
+            "product_types": ["<product_type>"],
+            "format_variations": [{"field": "<field>", "formats": ["<format1>", "<format2>"]}],
+            "issues": [
+                {
+                    "issue_type": "<canonical_or_new_issue_type>",
+                    "status": "existing",
+                    "field": "<field>",
+                    "description": "<factual description>",
+                    "affected_product_ids": ["<product_id>"],
+                }
+            ],
+        },
+    }
+    return json.dumps(example, indent=2, ensure_ascii=False)
+
+def _extract_verdicts_and_texts(
+    product_entry: dict,
+    check_ids: list[str],
+) -> tuple[dict, dict, dict]:
+
+    verdicts, texts, issues = {}, {}, {}
+
+    raw = product_entry.get("verdicts")
+    if not isinstance(raw, dict) or not raw:
+        fallback = {
+            k: v for k, v in product_entry.items()
+            if k not in ("product_id", "title", "verdicts")
+        }
+        if fallback:
+            print("[Warning] 'verdicts' missing/empty — recovered checks from flat sibling keys")
+        raw = fallback
+
     for cid in check_ids:
         entry = raw.get(cid)
 
-        if not entry:
-            raise LLMResponseError(
-                f"LLM response missing required check: {cid}"
-            )
+        if not isinstance(entry, dict) or not entry:
+            print(f"[Warning] LLM omitted check {cid!r} — defaulting to 'na'")
+            entry = {
+                "verdict": "na", "evidence": "not returned by model", "issues": [],
+                "enrichment": "", "why_it_matters_for_agents": "", "example": "",
+            }
+
+        enrichment_field = entry.get("enrichment")
+        if isinstance(enrichment_field, dict):
+            print(f"[Warning] {cid} returned nested enrichment object — flattening")
+            nested = enrichment_field
+            entry = {**entry}
+            entry["enrichment"] = nested.get("name") or nested.get("title") or ""
+            if not entry.get("why_it_matters_for_agents"):
+                entry["why_it_matters_for_agents"] = nested.get("why_it_matters_for_agents", "")
+            if not entry.get("example"):
+                entry["example"] = nested.get("example", "")
 
         verdict = entry.get("verdict")
 
         if verdict not in ("pass", "partial", "fail", "na"):
-            raise LLMResponseError(
-                f"Invalid verdict for {cid}: {verdict!r}"
-            )
+            print(f"[Warning] Invalid verdict {verdict!r} for {cid} — defaulting to 'na'")
+            verdict = "na"
+            entry = {**entry, "verdict": "na"}
 
         if verdict in ("partial", "fail"):
-            required = (
-                "enrichment",
-                "why_it_matters_for_agents",
-                "example",
-            )
-
+            required = ("enrichment", "why_it_matters_for_agents", "example")
             for field in required:
                 if not entry.get(field):
-                    raise LLMResponseError(
-                        f"LLM response missing required field "
-                        f"{field!r} for {cid} ({verdict})"
-                    )
+                    print(f"[Warning] {cid} ({verdict}) missing {field!r} — using placeholder")
+                    entry[field] = entry.get(field) or f"Not specified by model for {cid}."
+
+        raw_issues = entry.get("issues", [])
+        if not isinstance(raw_issues, list):
+            print(f"[Warning] Invalid issues for {cid}: expected a list — treating as empty")
+            raw_issues = []
+
+        normalized_issues = []
+        for issue in raw_issues:
+            if not isinstance(issue, dict):
+                print(f"[Warning] Invalid issue entry for {cid} — skipping")
+                continue
+
+            issue_type = issue.get("issue_type")
+            status = issue.get("status")
+            description = issue.get("description")
+
+            if not issue_type or not isinstance(issue_type, str):
+                print(f"[Warning] Issue for {cid} missing/invalid issue_type — skipping")
+                continue
+
+            if status not in ("existing", "new"):
+                print(f"[Warning] Invalid issue status {status!r} for {cid} — defaulting to 'new'")
+                status = "new"
+
+            if not description:
+                description = f"Observed issue: {issue_type.replace('_', ' ')}."
+
+            if status == "existing" and not is_valid_issue_type(cid, issue_type):
+                print(f"[Warning] Unknown existing issue_type {issue_type!r} for {cid} — treating as 'new'")
+                status = "new"
+
+            normalized_issues.append({
+                "issue_type": issue_type,
+                "status": status,
+                "description": description,
+            })
+
+        if verdict in ("pass", "na") and normalized_issues:
+            dropped = [i["issue_type"] for i in normalized_issues]
+            print(f"[Warning] {cid} has issues {dropped} but verdict is {verdict} — dropping issues, keeping verdict")
+            normalized_issues = []
 
         verdicts[cid] = verdict
+        texts[cid] = {k: entry.get(k, "") for k in ("enrichment", "why_it_matters_for_agents", "example")}
+        issues[cid] = normalized_issues
 
-        texts[cid] = {
-            k: entry.get(k, "")
-            for k in ("enrichment", "why_it_matters_for_agents", "example")
-        }
-    return verdicts, texts
-
+    return verdicts, texts, issues
 
 def assemble_report_from_verdicts(
     raw_response: dict[str, Any],
     store_check_ids: list[str],
     product_check_ids: list[str],
 ) -> dict[str, Any]:
-    store_verdicts, store_texts = _extract_verdicts_and_texts(
+    store_verdicts, store_texts, store_issues = _extract_verdicts_and_texts(
         {"verdicts": raw_response.get("store_verdicts", {})},
         store_check_ids,
     )
+    normalized_store_issues = []
+
+    for check_id, issue_list in store_issues.items():
+        for issue in issue_list:
+            normalized_store_issues.append(
+                normalize_issue(
+                    check_id=check_id,
+                    issue=issue,
+                )
+            )
 
     consistency_observations = raw_response.get("consistency_observations") or {
         "fields_observed": {},
@@ -554,6 +778,19 @@ def assemble_report_from_verdicts(
         "format_variations": [],
         "issues": [],
     }
+
+    valid_product_ids = {
+        str(p.get("product_id"))
+        for p in raw_response.get("products", [])
+        if p.get("product_id")
+    }
+
+    for issue in consistency_observations.get("issues", []):
+        issue["affected_product_ids"] = [
+            str(product_id)
+            for product_id in (issue.get("affected_product_ids") or [])
+            if str(product_id) in valid_product_ids
+        ]
 
     consistency_result = evaluate_consistency_observations(
         consistency_observations,
@@ -565,16 +802,50 @@ def assemble_report_from_verdicts(
         key: consistency_result.get(key, "")
         for key in ("enrichment", "why_it_matters_for_agents", "example")
     }
+    for issue in consistency_observations.get("issues", []):
+        issue_type = issue["issue_type"]
+        status = issue.get("status", "existing")
 
+        if status == "existing" and not is_valid_issue_type("consistency", issue_type):
+            print(
+                f"[Warning] Unknown existing issue_type {issue_type!r} for consistency "
+                f"(registered under a different check) — treating as 'new'"
+            )
+            status = "new"
+
+        normalized_store_issues.append(
+            normalize_issue(
+                check_id="consistency",
+                issue={
+                    "issue_type": issue_type,
+                    "status": status,
+                    "description": issue["description"],
+                },
+                field=issue.get("field"),
+                affected_product_ids=issue.get("affected_product_ids") or [],
+            )
+        )
     all_product_verdicts = {}
     all_product_texts: dict[str, dict] = {}
+    all_product_issues: dict[str, dict] = {}
+    normalized_product_issues = []
     products_out = []
 
     for p in raw_response.get("products", []):
         pid = p.get("product_id")
-        v, t = _extract_verdicts_and_texts(p, product_check_ids)
+        v, t, i = _extract_verdicts_and_texts(p, product_check_ids)
         all_product_verdicts[pid] = v
         all_product_texts[pid] = t
+        all_product_issues[pid] = i
+        for check_id, issue_list in i.items():
+            for issue in issue_list:
+                normalized_product_issues.append(
+                    normalize_issue(
+                        check_id=check_id,
+                        issue=issue,
+                        product_id=pid,
+                    )
+                )
         products_out.append({
             "product_id": pid,
             "title": p.get("title"),
@@ -589,6 +860,10 @@ def assemble_report_from_verdicts(
     "store_level_recommendations": store_recs,
     "products": products_out,
     "consistency_observations": consistency_observations,
+    "issues": {
+        "store": normalized_store_issues,
+        "products": normalized_product_issues,
+    },
 }
 
 def analyze_with_gemini(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, model: str, language="English") -> dict[str, Any]:
@@ -612,7 +887,6 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_context: dict[str,
         ],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "responseJsonSchema": enrichment_report_schema(),
             "temperature": 0.0,
             "topK": 1,
             "topP": 1.0,
@@ -1965,20 +2239,28 @@ def render_agent_discovery(agent_discovery: dict[str, Any] | None, labels: dict[
 
 
 
-def _merge_store_verdicts(reports: list[dict[str, Any]], store_check_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Merge repeated store-level evaluations by majority verdict, preserving one evidence payload."""
+def _merge_store_verdicts(
+    reports: list[dict[str, Any]],
+    store_check_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Merge repeated store-level evaluations by majority verdict,
+    while preserving all unique issues discovered across batches.
+    """
     order = {
-    "na": 0,
-    "pass": 1,
-    "partial": 2,
-    "fail": 3,
-}
+        "na": 0,
+        "pass": 1,
+        "partial": 2,
+        "fail": 3,
+    }
+
     merged: dict[str, dict[str, Any]] = {}
 
     for cid in store_check_ids:
         candidates = []
+
         for report in reports:
             entry = (report.get("store_verdicts") or {}).get(cid)
+
             if isinstance(entry, dict) and entry.get("verdict") in order:
                 candidates.append(entry)
 
@@ -1989,21 +2271,58 @@ def _merge_store_verdicts(reports: list[dict[str, Any]], store_check_ids: list[s
                 "enrichment": "",
                 "why_it_matters_for_agents": "",
                 "example": "",
+                "issues": [],
             }
             continue
 
+        # -----------------------------
+        # 1. Determine final verdict
+        # -----------------------------
         counts: dict[str, int] = {}
+
         for entry in candidates:
-            counts[entry["verdict"]] = counts.get(entry["verdict"], 0) + 1
-        # Majority wins; on an exact tie, choose the more conservative verdict.
-        winning_verdict = max(counts, key=lambda v: (counts[v], order[v]))
-        merged[cid] = next(
-            entry for entry in candidates if entry.get("verdict") == winning_verdict
+            verdict = entry["verdict"]
+            counts[verdict] = counts.get(verdict, 0) + 1
+
+        # Majority wins.
+        # Exact tie → more conservative verdict wins.
+        winning_verdict = max(
+            counts,
+            key=lambda v: (counts[v], order[v]),
         )
 
+        winning_entry = next(
+            entry
+            for entry in candidates
+            if entry.get("verdict") == winning_verdict
+        )
+
+        # -----------------------------
+        # 2. Collect ALL unique issues
+        # -----------------------------
+        merged_issues_by_type: dict[str, dict[str, Any]] = {}
+
+        for entry in candidates:
+            for issue in entry.get("issues") or []:
+                issue_type = issue.get("issue_type")
+
+                if not issue_type:
+                    continue
+
+                if issue_type not in merged_issues_by_type:
+                    merged_issues_by_type[issue_type] = issue
+
+        merged_issues = list(merged_issues_by_type.values())
+
+        # -----------------------------
+        # 3. Preserve winning evidence
+        # -----------------------------
+        merged[cid] = {
+            **winning_entry,
+            "issues": merged_issues,
+        }
+
     return merged
-
-
 def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     """Merge raw batch verdicts and consistency observations."""
     store_check_ids = [
@@ -2058,10 +2377,52 @@ def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
             if variation not in merged_consistency["format_variations"]:
                 merged_consistency["format_variations"].append(variation)
 
-        # Merge consistency issues.
-        for issue in observations.get("issues") or []:
-            if issue not in merged_consistency["issues"]:
-                merged_consistency["issues"].append(issue)
+                # Merge consistency issues across batches.
+                consistency_issue_map: dict[tuple[str, str], dict[str, Any]] = {}
+
+                for existing_issue in merged_consistency["issues"]:
+                    key = (
+                        str(existing_issue.get("issue_type", "")),
+                        str(existing_issue.get("field", "")),
+                    )
+                    consistency_issue_map[key] = existing_issue
+
+                for issue in observations.get("issues") or []:
+                    issue_type = str(issue.get("issue_type", "")).strip()
+                    field = str(issue.get("field", "")).strip()
+
+                    key = (issue_type, field)
+
+                    if key not in consistency_issue_map:
+                        consistency_issue_map[key] = {
+                            "issue_type": issue_type,
+                            "status": issue.get("status", "existing"),
+                            "field": field,
+                            "description": issue.get("description", ""),
+                            "affected_product_ids": [],
+                        }
+
+                    merged_issue = consistency_issue_map[key]
+
+                    if not merged_issue.get("description") and issue.get("description"):
+                        merged_issue["description"] = issue["description"]
+
+                    if merged_issue.get("status") != "existing" and issue.get("status") == "existing":
+                        merged_issue["status"] = "existing"
+
+                    existing_ids = set(
+                        str(pid)
+                        for pid in merged_issue.get("affected_product_ids", []) or []
+                        if pid
+                    )
+
+                    for pid in issue.get("affected_product_ids", []) or []:
+                        if pid:
+                            existing_ids.add(str(pid))
+
+                    merged_issue["affected_product_ids"] = sorted(existing_ids)
+
+                merged_consistency["issues"] = list(consistency_issue_map.values())
 
     return {
         "store_verdicts": _merge_store_verdicts(reports, store_check_ids),

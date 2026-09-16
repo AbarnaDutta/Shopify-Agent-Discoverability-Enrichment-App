@@ -152,12 +152,19 @@ def build_store_recommendations(
                 by_check[check_id].append(pid)
 
     for check_id, ids in by_check.items():
-        if len(ids) > 1:  
+        if len(ids) > 1:
+            sample_text = None
+            for pid in ids:
+                candidate = product_texts.get(pid, {}).get(check_id) or {}
+                if candidate.get("enrichment"):
+                    sample_text = candidate
+                    break
+
             recs.append({
                 "check_id": check_id,
                 "priority": priority_for(check_id, "fail"),
-                "enrichment": f"{CHECK_BY_ID[check_id]['desc']}",
-                "why_it_matters_for_agents": CHECK_BY_ID[check_id]["desc"],
+                "enrichment": (sample_text or {}).get("enrichment") or CHECK_BY_ID[check_id]["desc"],
+                "why_it_matters_for_agents": (sample_text or {}).get("why_it_matters_for_agents") or CHECK_BY_ID[check_id]["desc"],
                 "example": f"{len(ids)} products affected — see each product's own missing_enrichments for specifics.",
                 "affected_product_ids": ids,
             })

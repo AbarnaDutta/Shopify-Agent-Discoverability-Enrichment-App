@@ -28,23 +28,36 @@ conn.autocommit = True
 cur = conn.cursor()
 
 migrations = [
-    # language column — added when multilingual support was introduced
+    # language column
     """
     ALTER TABLE report_requests
     ADD COLUMN IF NOT EXISTS language VARCHAR(64) NOT NULL DEFAULT 'English';
     """,
-    # error_type column — added with error handling improvements
+
+    # error_type column
     """
     ALTER TABLE report_requests
     ADD COLUMN IF NOT EXISTS error_type VARCHAR(64);
     """,
-    # affected_product_ids column — added so store-level recommendations can
+
+    # store recommendation affected products
     """
     ALTER TABLE audit_store_recommendations
     ADD COLUMN IF NOT EXISTS affected_product_ids JSON NOT NULL DEFAULT '[]'::json;
     """,
-]
 
+    # audit issue field
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS field VARCHAR(255);
+    """,
+
+    # audit issue affected products
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS affected_product_ids JSON NOT NULL DEFAULT '[]'::json;
+    """,
+]
 for sql in migrations:
     try:
         cur.execute(sql)
