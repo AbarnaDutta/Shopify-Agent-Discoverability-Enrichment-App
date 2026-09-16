@@ -1119,31 +1119,61 @@ export default function Index({ loaderData }) {
   }, []);
 
   useEffect(() => {
-    try {
-      const savedReport = localStorage.getItem("acr_latest_report");
+  let cancelled = false;
+// loading the latest audit report from backend
 
-      if (!savedReport) {
+  async function loadLatestAudit() {
+    try {
+      const response = await fetch(
+        `${backendUrl}/audits/latest?shop_domain=${encodeURIComponent(
+          shopDomain
+        )}`
+      );
+
+      if (response.status === 404) {
+        if (!cancelled) {
+          setReport(null);
+        }
         return;
       }
 
-      const parsedReport = JSON.parse(savedReport);
+      if (!response.ok) {
+        throw new Error(
+          `Failed to load latest audit: ${response.status}`
+        );
+      }
 
-      if (parsedReport) {
-        setReport(parsedReport);
+      const data = await response.json();
 
-        if (parsedReport.store_url) {
-          setStoreUrl(parsedReport.store_url);
-        } else {
-          setStoreUrl(`https://${shopDomain}`);
-        }
+      if (cancelled) {
+        return;
+      }
+
+      setReport(data);
+
+      if (data.store_url) {
+        setStoreUrl(data.store_url);
+      } else {
+        setStoreUrl(`https://${shopDomain}`);
       }
     } catch (error) {
-      console.warn(
-        "Could not restore the previous audit report:",
-        error
-      );
+      if (!cancelled) {
+        console.warn(
+          "Could not load the latest audit from database:",
+          error
+        );
+      }
     }
-  }, [shopDomain]);
+  }
+
+  loadLatestAudit();
+
+  return () => {
+    cancelled = true;
+  };
+}, [backendUrl, shopDomain]);
+
+// ----------------------------------
 
   const products = report?.products || [];
 
