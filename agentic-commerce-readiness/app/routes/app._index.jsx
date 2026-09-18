@@ -1,104 +1,27 @@
 // app/routes/app._index.jsx
-import { useEffect, useRef, useState } from "react";
-import { useFetcher } from "react-router";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { useFetcher, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 
 const BACKEND_URL = "https://geo.properoapps.in/api";
 
 const LABELS = {
-  execEyebrow: "Executive Summary",
-  obsHigh: (n) =>
-    `There are ${n} high-priority gaps across the catalog, concentrated in the kinds of fields agents need to recommend products confidently.`,
-  obsDefault:
-    "This report summarizes the current catalog readiness and the most useful fixes to make products easier for AI agents to discover and recommend.",
-  cardCatalog: "Catalog size",
-  cardCatalogDesc: "Number of products analyzed.",
-  cardGaps: "High-priority gaps",
-  cardGapsDesc:
-    "Issues most likely to block accurate agent recommendations.",
-  cardActions: "Store actions",
-  cardActionsDesc:
-    "Catalog-wide improvements that benefit every product.",
-  topStore: "Top store-level actions",
-  topProducts: "Products needing the most attention",
-  noStoreRecs: "No store-level recommendations returned.",
-  noProducts: "No products returned.",
-  gapsLabel: (n) => `${n} high-priority gaps`,
-  sectionStore: "Priority Fixes",
-  sectionProducts: "Detailed Product Level Exceptions",
-  noRecs: "No structural adjustments needed.",
-  noProductRecs: "No item level errors flagged.",
-  productId: "ID:",
-  exampleLabel: "Example:",
-  agentSummaryLabel: "Agent Parsing Context Summary:",
-  schemaUpdates: "recommendations",
-  poweredBy: "Powered by Propero",
-  verified:
-    "Verified schema data parameters matching standard parser rules.",
-  errorTitle: "We couldn't generate your report",
   scoreOverall: "Overall Readiness",
   scoreUcp: "UCP Commerce Flows",
   scoreMcp: "MCP Knowledge",
   scoreCatalog: "Catalog Enrichment",
   scoreSafety: "Safety & Policies",
-  ctaHeading: "Want us to make your store agentic-commerce ready?",
-  ctaBody:
-    "Our team can implement these fixes for you — from schema and variant cleanup to UCP/MCP-ready storefront data.",
-  ctaButton: "Book a Free Consultation",
-  agentDiscoveryHeading: "Agent Discovery Files",
+
   bandReady: "Agent Ready",
   bandNeedsWork: "Needs Work",
   bandNotReady: "Not Ready",
+
   pillHigh: "High Priority",
-  pillMedium: "Medium Priority",
-  pillLow: "Low Priority",
-};
+  pillMedium: "Medium",
+  pillLow: "Low",
 
-const AGENT_DISCOVERY_LABELS = {
-  agents_md: "agents.md (canonical agent guide)",
-  llms_txt: "llms.txt",
-  llms_full_txt: "llms-full.txt",
-  ucp_manifest: "/.well-known/ucp (UCP manifest)",
-};
-
-const AGENT_DISCOVERY_STATUS = {
-  served_custom: {
-    icon: "✓",
-    cls: "text-[#16a34a]",
-    text: "Served and customized",
-  },
-  served_default: {
-    icon: "⚠",
-    cls: "text-[#d97706]",
-    text: "Served — still Shopify's default template",
-  },
-  redirects: {
-    icon: "→",
-    cls: "text-[#d97706]",
-    text: "Redirects to agents.md (expected)",
-  },
-  missing: {
-    icon: "✕",
-    cls: "text-[#dc2626]",
-    text: "Not reachable",
-  },
-  unreachable: {
-    icon: "✕",
-    cls: "text-[#dc2626]",
-    text: "Could not connect",
-  },
-};
-
-const AGENT_DISCOVERY_CUSTOMIZATION = {
-  default_skeleton:
-    "Shopify default skeleton — mostly boilerplate",
-  lightly_customized:
-    "Lightly customized — boilerplate plus some custom content",
-  heavily_customized:
-    "Heavily customized — brand/product-specific content",
-  empty: "Empty or too thin to classify",
-  unknown: "",
+  errorTitle: "We couldn't generate your report",
 };
 
 const ERROR_HINTS = {
@@ -177,19 +100,19 @@ export const action = async ({ request }) => {
     };
   }
 
-  const text = await response.text();
+  const responseText = await response.text();
 
   if (!response.ok) {
     return {
       ok: false,
-      error: `Backend error ${response.status}: ${text}`,
+      error: `Backend error ${response.status}: ${responseText}`,
     };
   }
 
   try {
     return {
       ok: true,
-      job: JSON.parse(text),
+      job: JSON.parse(responseText),
     };
   } catch {
     return {
@@ -202,573 +125,213 @@ export const action = async ({ request }) => {
 export const headers = (headersArgs) =>
   boundary.headers(headersArgs);
 
-function capitalize(str) {
-  if (!str) return "";
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function normalizeAuditReport(data) {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  const raw =
+    data.readiness_scores ||
+    data.dimension_scores ||
+    data.audit?.readiness_scores ||
+    data.audit?.dimension_scores ||
+    {};
+
+  const toScore = (value) => {
+    const number = Number(value);
+
+    return Number.isFinite(number)
+      ? Math.max(0, Math.min(100, Math.round(number)))
+      : null;
+  };
+
+  const ucp = toScore(raw.ucp_commerce_flows);
+  const mcp = toScore(raw.mcp_knowledge);
+  const catalog = toScore(raw.catalog_enrichment);
+  const safety = toScore(raw.safety_policies);
+
+  const storedOverall = toScore(
+    data.overall_score ??
+      data.audit?.overall_score ??
+      raw.overall
+  );
+
+  const dimensionValues = [
+    ucp,
+    mcp,
+    catalog,
+    safety,
+  ].filter((value) => value !== null);
+
+  const calculatedOverall = dimensionValues.length
+    ? Math.round(
+        dimensionValues.reduce(
+          (sum, value) => sum + value,
+          0
+        ) / dimensionValues.length
+      )
+    : 0;
+
+  return {
+    ...data,
+    readiness_scores: {
+      overall:
+        storedOverall !== null
+          ? storedOverall
+          : calculatedOverall,
+      ucp_commerce_flows: ucp ?? 0,
+      mcp_knowledge: mcp ?? 0,
+      catalog_enrichment: catalog ?? 0,
+      safety_policies: safety ?? 0,
+    },
+  };
+}
+
+function capitalize(value) {
+  if (!value) return "";
 
   return (
-    String(str).charAt(0).toUpperCase() +
-    String(str).slice(1)
+    String(value).charAt(0).toUpperCase() +
+    String(value).slice(1)
   );
 }
 
 function scoreBand(value) {
   if (value >= 70) return "strong";
   if (value >= 40) return "fair";
-
   return "weak";
 }
 
 function bandLabel(value) {
   if (value >= 70) return LABELS.bandReady;
   if (value >= 40) return LABELS.bandNeedsWork;
-
   return LABELS.bandNotReady;
 }
 
 function bandTextClass(band) {
   if (band === "strong") return "text-[#16a34a]";
   if (band === "fair") return "text-[#d97706]";
-
   return "text-[#dc2626]";
 }
 
 function bandBarClass(band) {
   if (band === "strong") return "bg-[#16a34a]";
   if (band === "fair") return "bg-[#d97706]";
-
   return "bg-[#dc2626]";
 }
 
-function priorityDotClass(priority) {
-  if (priority === "high") return "bg-[#dc2626]";
-  if (priority === "low") return "bg-[#16a34a]";
-
-  return "bg-[#d97706]";
+function getScoreStatus(value) {
+  if (value >= 70) return "READY";
+  if (value >= 40) return "NEEDS IMPROVEMENT";
+  if (value >= 30) return "NEEDS ATTENTION";
+  return "CRITICAL";
 }
 
-function priorityPillClass(priority) {
-  if (priority === "high") {
-    return "bg-[#fee2e2] text-[#991b1b]";
+function getScoreTone(value) {
+  if (value >= 70) {
+    return {
+      text: "text-[#008060]",
+      border: "border-[#008060]",
+      bar: "bg-[#008060]",
+      badge: "bg-[#E3F1ED] text-[#008060]",
+    };
   }
 
-  if (priority === "low") {
-    return "bg-[#d1fae5] text-[#065f46]";
+  if (value >= 40) {
+    return {
+      text: "text-[#9A6700]",
+      border: "border-[#FFB100]",
+      bar: "bg-[#FFB100]",
+      badge: "bg-[#FFF4D6] text-[#9A6700]",
+    };
   }
 
-  return "bg-[#fef3c7] text-[#92400e]";
-}
-
-function SectionHeader({ children }) {
-  return (
-    <div className="mb-3.5 flex items-baseline gap-2.5 pl-0.5 text-xs font-extrabold uppercase tracking-[0.08em] text-[var(--acr-black)]">
-      <span className="inline-block h-[15px] w-[3px] shrink-0 rounded-sm bg-[var(--acr-amber)]" />
-      {children}
-    </div>
-  );
-}
-
-function RecommendationList({ recs }) {
-  if (!recs || !recs.length) {
-    return (
-      <p className="text-[13px] italic text-gray-400">
-        {LABELS.noRecs}
-      </p>
-    );
-  }
-
-  return recs.map((r, i) => (
-    <div
-      key={i}
-      className="mb-2.5 rounded-xl border border-[var(--acr-border)] bg-white px-[18px] py-4 shadow-[0_10px_24px_rgba(0,0,0,0.03)] last:mb-0"
-    >
-      <div className="mb-1.5 flex items-start justify-between gap-2.5">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <span
-            className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${priorityDotClass(
-              r.priority
-            )}`}
-          />
-
-          <span className="text-sm font-bold text-[var(--acr-black)]">
-            {r.enrichment}
-          </span>
-        </div>
-
-        <span
-          className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[10.5px] font-bold ${priorityPillClass(
-            r.priority
-          )}`}
-        >
-          {capitalize(r.priority)}
-        </span>
-      </div>
-
-      <div className="mb-2.5 ml-[17px] text-[13px] leading-relaxed text-gray-600">
-        {r.why_it_matters_for_agents}
-      </div>
-
-      <div className="ml-[17px] rounded-r-md border-l-[3px] border-[#cbd5e1] bg-[var(--acr-panel)] px-3.5 py-2 font-mono text-xs text-gray-600">
-        <strong>{LABELS.exampleLabel}</strong> {r.example}
-      </div>
-    </div>
-  ));
-}
-
-function ReadinessScores({ report }) {
-  const s = report.readiness_scores || {};
-
-  const overall = Number.isFinite(s.overall)
-    ? Math.max(0, Math.min(100, Math.round(s.overall)))
-    : 0;
-
-  const band = scoreBand(overall);
-
-  const donutColor =
-    band === "strong"
-      ? "#16a34a"
-      : band === "fair"
-        ? "#d97706"
-        : "#dc2626";
-
-  const barItems = [
-    [LABELS.scoreUcp, s.ucp_commerce_flows],
-    [LABELS.scoreMcp, s.mcp_knowledge],
-    [LABELS.scoreCatalog, s.catalog_enrichment],
-    [LABELS.scoreSafety, s.safety_policies],
-  ];
-
-  return (
-    <div className="grid grid-cols-1 items-center justify-items-center gap-7 border-b border-[#f0ece3] px-6 py-7 md:grid-cols-[150px_1fr] md:justify-items-stretch md:px-10">
-      <div className="flex flex-col items-center gap-2">
-        <div
-          className="relative flex h-[130px] w-[130px] items-center justify-center rounded-full"
-          style={{
-            background: `conic-gradient(${donutColor} ${
-              overall * 3.6
-            }deg, #eee9e0 0deg)`,
-          }}
-        >
-          <div className="absolute inset-3.5 rounded-full bg-white" />
-
-          <div className="relative z-10 text-center">
-            <div
-              className={`text-2xl font-extrabold leading-none ${bandTextClass(
-                band
-              )}`}
-            >
-              {overall}%
-            </div>
-
-            <div className="mt-1 text-[11px] font-bold text-gray-400">
-              {bandLabel(overall)}
-            </div>
-          </div>
-        </div>
-
-        <div className="text-[12.5px] font-semibold text-gray-600">
-          {LABELS.scoreOverall}
-        </div>
-      </div>
-
-      <div className="flex w-full flex-col gap-3.5">
-        {barItems.map(([label, raw]) => {
-          const value = Number.isFinite(raw)
-            ? Math.max(0, Math.min(100, Math.round(raw)))
-            : 0;
-
-          const b = scoreBand(value);
-
-          return (
-            <div key={label}>
-              <div className="mb-1.5 flex items-baseline justify-between">
-                <span className="text-[12.5px] font-bold text-[var(--acr-black)]">
-                  {label}
-                </span>
-
-                <span className="text-xs font-bold text-gray-500">
-                  {value}/100
-                </span>
-              </div>
-
-              <div className="h-[7px] overflow-hidden rounded-full bg-[#eee9e0]">
-                <div
-                  className={`h-full rounded-full ${bandBarClass(b)}`}
-                  style={{ width: `${value}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function PriorityPills({ report, products }) {
-  const storeRecs =
-    report.store_level_recommendations || [];
-
-  let high = 0;
-  let medium = 0;
-  let low = 0;
-
-  const tally = (r) => {
-    if (r.priority === "high") high++;
-    else if (r.priority === "low") low++;
-    else medium++;
+  return {
+    text: "text-[#D72C0D]",
+    border: "border-[#D72C0D]",
+    bar: "bg-[#D72C0D]",
+    badge: "bg-[#FFF0EF] text-[#D72C0D]",
   };
+}
 
-  storeRecs.forEach(tally);
+/*
+ * IMPORTANT:
+ * Issue counts and Priority Issues use the same product-level
+ * missing_enrichments data used by the Issues page.
+ */
+function getIssueRows(report, products) {
+  const issueRows = [];
 
-  products.forEach((p) =>
-    (p.missing_enrichments || []).forEach(tally)
+  (products || []).forEach((product) => {
+    (product.missing_enrichments || []).forEach(
+      (rec, index) => {
+        issueRows.push({
+          key: `product-${
+            product.product_id || "unknown"
+          }-${index}`,
+
+          priority: String(
+            rec.priority || "medium"
+          ).toLowerCase(),
+
+          enrichment:
+            rec.enrichment ||
+            "Missing enrichment",
+
+          why_it_matters_for_agents:
+            rec.why_it_matters_for_agents || "",
+
+          example: rec.example || "",
+
+          affectedProducts: [product],
+
+          affectedLabel:
+            product.title ||
+            product.product_id ||
+            "Product",
+        });
+      }
+    );
+  });
+
+  return issueRows;
+}
+
+function getIssueCounts(report, products) {
+  const issueRows = getIssueRows(
+    report,
+    products
   );
 
-  return (
-    <div className="flex flex-wrap gap-2.5 px-6 pb-6 pt-4.5 md:px-10">
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-[#fee2e2] px-3.5 py-1.5 text-xs font-bold text-[#991b1b]">
-        <span className="h-[7px] w-[7px] rounded-full bg-current" />
-        {high} {LABELS.pillHigh}
-      </span>
+  return issueRows.reduce(
+    (counts, issue) => {
+      if (issue.priority === "high") {
+        counts.high += 1;
+      } else if (issue.priority === "low") {
+        counts.low += 1;
+      } else {
+        counts.medium += 1;
+      }
 
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-[#fef3c7] px-3.5 py-1.5 text-xs font-bold text-[#92400e]">
-        <span className="h-[7px] w-[7px] rounded-full bg-current" />
-        {medium} {LABELS.pillMedium}
-      </span>
-
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-[#d1fae5] px-3.5 py-1.5 text-xs font-bold text-[#065f46]">
-        <span className="h-[7px] w-[7px] rounded-full bg-current" />
-        {low} {LABELS.pillLow}
-      </span>
-    </div>
+      return counts;
+    },
+    {
+      high: 0,
+      medium: 0,
+      low: 0,
+    }
   );
 }
 
-function AgentDiscovery({ report }) {
-  const ad = report.agent_discovery;
+// ── Error ─────────────────────────────────────────────────────────────
 
-  if (!ad) return null;
-
-  const files = ad.files || {};
-  const templatesCustomized =
-    ad.templates_customized ?? 0;
-  const templatesTotal = ad.templates_total ?? 3;
-  const recs = ad.recommendations || [];
-
-  return (
-    <div>
-      <SectionHeader>
-        {LABELS.agentDiscoveryHeading}
-      </SectionHeader>
-
-      <div className="rounded-2xl border border-[var(--acr-border)] bg-white p-6 shadow-[0_20px_40px_rgba(0,0,0,0.04)] md:p-7">
-        <p className="mb-2.5 text-xs text-gray-500">
-          {ad.summary || ""}
-        </p>
-
-        <p className="mb-2.5 text-xs text-gray-500">
-          Template readiness: {templatesCustomized}/
-          {templatesTotal} customized beyond Shopify's default.
-        </p>
-
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-          {Object.entries(AGENT_DISCOVERY_LABELS).map(
-            ([key, label]) => {
-              const info = files[key] || {};
-
-              const s =
-                AGENT_DISCOVERY_STATUS[info.status] || {
-                  icon: "○",
-                  cls: "text-gray-400",
-                  text: "Unknown",
-                };
-
-              let extra = "";
-
-              if (
-                info.status !== "missing" &&
-                info.status !== "unreachable"
-              ) {
-                const custText =
-                  AGENT_DISCOVERY_CUSTOMIZATION[
-                    info.customization
-                  ] || "";
-
-                if (custText) {
-                  extra += ` · ${custText}`;
-                }
-
-                if (info.mirrors_agents_md) {
-                  extra +=
-                    " · mirrors agents.md (no dedicated template)";
-                }
-              }
-
-              return (
-                <div
-                  key={key}
-                  className="flex items-start gap-2.5 rounded-[10px] border border-[#f0ece3] bg-[var(--acr-panel)] p-3"
-                >
-                  <span
-                    className={`w-[18px] shrink-0 text-center text-[13px] font-extrabold ${s.cls}`}
-                  >
-                    {s.icon}
-                  </span>
-
-                  <div>
-                    <div className="text-xs font-bold text-[var(--acr-black)]">
-                      {label}
-                    </div>
-
-                    <div className="mt-0.5 text-[11px] text-gray-500">
-                      {s.text}
-                      {extra}
-                    </div>
-                  </div>
-                </div>
-              );
-            }
-          )}
-        </div>
-
-        {recs.length > 0 && (
-          <>
-            <h3 className="mb-2.5 mt-5 text-[13px] font-bold text-[var(--acr-black)]">
-              Shopify-Aligned Recommendations
-            </h3>
-
-            <RecommendationList recs={recs} />
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ExecutiveSummary({ report, products }) {
-  const storeRecs =
-    report.store_level_recommendations || [];
-
-  const highCount = products.reduce(
-    (n, p) =>
-      n +
-      (p.missing_enrichments || []).filter(
-        (r) => r.priority === "high"
-      ).length,
-    0
-  );
-
-  const observation = highCount
-    ? LABELS.obsHigh(highCount)
-    : LABELS.obsDefault;
-
-  const cards = [
-    [
-      LABELS.cardCatalog,
-      String(products.length),
-      LABELS.cardCatalogDesc,
-    ],
-    [
-      LABELS.cardGaps,
-      String(highCount),
-      LABELS.cardGapsDesc,
-    ],
-    [
-      LABELS.cardActions,
-      String(storeRecs.length),
-      LABELS.cardActionsDesc,
-    ],
-  ];
-
-  const attentionProducts = [...products]
-    .sort(
-      (a, b) =>
-        (b.missing_enrichments || []).filter(
-          (r) => r.priority === "high"
-        ).length -
-        (a.missing_enrichments || []).filter(
-          (r) => r.priority === "high"
-        ).length
-    )
-    .slice(0, 3);
-
-  return (
-    <div>
-      <SectionHeader>
-        {LABELS.execEyebrow}
-      </SectionHeader>
-
-      <div className="rounded-2xl border border-[var(--acr-border)] bg-white p-6 shadow-[0_20px_40px_rgba(0,0,0,0.04)] md:p-7">
-        <div className="mb-5 rounded-[10px] border border-[#f0ece3] bg-[var(--acr-panel)] px-4 py-3.5 text-[13px] leading-relaxed text-gray-600">
-          {observation}
-        </div>
-
-        <div className="mb-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-          {cards.map(([label, value, desc]) => (
-            <div
-              key={label}
-              className="rounded-[10px] border border-[#f0ece3] bg-[var(--acr-panel)] p-3.5"
-            >
-              <div className="mb-1.5 text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">
-                {label}
-              </div>
-
-              <strong className="mb-1 block text-2xl font-extrabold text-[var(--acr-black)]">
-                {value}
-              </strong>
-
-              <p className="text-xs leading-snug text-gray-500">
-                {desc}
-              </p>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div className="rounded-[10px] border border-[#f0ece3] bg-[var(--acr-panel)] p-3.5 md:p-4">
-            <h3 className="mb-2.5 text-[13px] font-bold text-[var(--acr-black)]">
-              {LABELS.topStore}
-            </h3>
-
-            <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
-              {storeRecs.length ? (
-                storeRecs.slice(0, 3).map((r, i) => (
-                  <li key={i}>
-                    <strong className="mb-0.5 block text-[13px] text-[var(--acr-black)]">
-                      {r.enrichment}
-                    </strong>
-
-                    <span className="block text-xs leading-snug text-gray-500">
-                      {r.why_it_matters_for_agents}
-                    </span>
-                  </li>
-                ))
-              ) : (
-                <li>
-                  <span className="block text-xs leading-snug text-gray-500">
-                    {LABELS.noStoreRecs}
-                  </span>
-                </li>
-              )}
-            </ul>
-          </div>
-
-          <div className="rounded-[10px] border border-[#f0ece3] bg-[var(--acr-panel)] p-3.5 md:p-4">
-            <h3 className="mb-2.5 text-[13px] font-bold text-[var(--acr-black)]">
-              {LABELS.topProducts}
-            </h3>
-
-            <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
-              {attentionProducts.length ? (
-                attentionProducts.map((p, i) => {
-                  const h = (
-                    p.missing_enrichments || []
-                  ).filter(
-                    (r) => r.priority === "high"
-                  ).length;
-
-                  return (
-                    <li key={i}>
-                      <strong className="mb-0.5 block text-[13px] text-[var(--acr-black)]">
-                        {p.title || "Untitled product"}
-                      </strong>
-
-                      <span className="block text-xs leading-snug text-gray-500">
-                        {LABELS.gapsLabel(h)}
-                      </span>
-                    </li>
-                  );
-                })
-              ) : (
-                <li>
-                  <span className="block text-xs leading-snug text-gray-500">
-                    {LABELS.noProducts}
-                  </span>
-                </li>
-              )}
-            </ul>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ProductAccordion({ products }) {
-  const [openIndex, setOpenIndex] = useState(null);
-
-  const totalRecs = products.reduce(
-    (n, p) =>
-      n + (p.missing_enrichments || []).length,
-    0
-  );
-
-  return (
-    <div>
-      <SectionHeader>
-        {LABELS.sectionProducts}{" "}
-        <span className="font-semibold normal-case tracking-normal text-gray-400">
-          · {totalRecs} {LABELS.schemaUpdates}
-        </span>
-      </SectionHeader>
-
-      {products.length ? (
-        products.map((p, i) => {
-          const recs = p.missing_enrichments || [];
-          const isOpen = openIndex === i;
-
-          return (
-            <div
-              key={i}
-              className="mb-3 overflow-hidden rounded-xl border border-[var(--acr-border)] bg-white shadow-[0_10px_24px_rgba(0,0,0,0.03)] last:mb-0"
-            >
-              <div
-                className="flex cursor-pointer items-center justify-between gap-3 px-[18px] py-4"
-                onClick={() =>
-                  setOpenIndex(isOpen ? null : i)
-                }
-              >
-                <div className="flex min-w-0 items-start gap-2.5">
-                  <div>
-                    <span className="text-sm font-bold text-[var(--acr-black)]">
-                      {p.title || "Untitled product"}
-                    </span>
-
-                    <div className="mt-0.5 text-xs text-gray-400">
-                      {LABELS.productId} {p.product_id} ·{" "}
-                      {recs.length} {LABELS.schemaUpdates}
-                    </div>
-                  </div>
-                </div>
-
-                <span
-                  className={`shrink-0 text-xs text-gray-400 transition-transform duration-200 ${
-                    isOpen ? "rotate-180" : ""
-                  }`}
-                >
-                  ▼
-                </span>
-              </div>
-
-              {isOpen && (
-                <div className="border-t border-[#f0ece3] bg-[#fdfcfa] px-[18px] pb-5 pt-1">
-
-                  <RecommendationList recs={recs} />
-                </div>
-              )}
-            </div>
-          );
-        })
-      ) : (
-        <p className="text-[13px] italic text-gray-400">
-          {LABELS.noProductRecs}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function ErrorCard({ message, errorType, onRetry }) {
+function ErrorCard({
+  message,
+  errorType,
+  onRetry,
+}) {
   const hint =
     ERROR_HINTS[errorType] ||
     ERROR_HINTS.internal_error;
@@ -790,6 +353,7 @@ function ErrorCard({ message, errorType, onRetry }) {
       </div>
 
       <button
+        type="button"
         className="cursor-pointer rounded-full border-none bg-[var(--acr-black)] px-6 py-3 text-sm font-bold text-white hover:bg-[#222222]"
         onClick={onRetry}
       >
@@ -798,6 +362,8 @@ function ErrorCard({ message, errorType, onRetry }) {
     </div>
   );
 }
+
+// ── Audit progress ────────────────────────────────────────────────────
 
 function StepRow({
   num,
@@ -842,10 +408,10 @@ function StepRow({
 
       <div className="pt-1">
         <div
-          className={`text-sm font-bold leading-snug ${
+          className={`text-sm leading-snug ${
             state === "pending"
               ? "font-medium text-gray-400"
-              : "text-[var(--acr-black)]"
+              : "font-bold text-[var(--acr-black)]"
           }`}
         >
           {label}
@@ -859,7 +425,498 @@ function StepRow({
   );
 }
 
-// ── Page ─────────────────────────────────────────────────────────────
+// ── Score cards ───────────────────────────────────────────────────────
+
+function OverviewScoreCard({
+  label,
+  value,
+  description,
+}) {
+  const score = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(Number(value) || 0)
+    )
+  );
+
+  const tone = getScoreTone(score);
+
+  return (
+    <div
+      className={`min-h-[235px] rounded-2xl border border-[#E1E3E5] border-l-4 bg-white p-5 shadow-[0_2px_8px_rgba(0,0,0,0.04)] ${tone.border}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-bold text-[#6D7175]">
+          {label}
+        </div>
+
+        <span
+          className={`rounded-md px-2.5 py-1 text-xs font-bold ${tone.badge}`}
+        >
+          {score} / 100
+        </span>
+      </div>
+
+      <div
+        className={`mt-4 text-sm font-extrabold ${tone.text}`}
+      >
+        {getScoreStatus(score)}
+      </div>
+
+      <p className="mt-2 min-h-[48px] text-sm leading-relaxed text-[#6D7175]">
+        {description}
+      </p>
+
+      <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-[#EEF0F1]">
+        <div
+          className={`h-full rounded-full ${tone.bar}`}
+          style={{
+            width: `${score}%`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Overall readiness ─────────────────────────────────────────────────
+
+function OverallReadiness({
+  report,
+  issueCounts,
+  onViewIssues,
+}) {
+  const scores =
+    report?.readiness_scores || {};
+
+  const overall = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(Number(scores.overall) || 0)
+    )
+  );
+
+  const circumference =
+    2 * Math.PI * 66;
+
+  const dashOffset =
+    circumference -
+    (overall / 100) * circumference;
+
+  const summary =
+    overall >= 70
+      ? "Your store has a strong foundation for AI-powered shopping agents and commerce flows."
+      : overall >= 40
+        ? "Your store has a solid starting point, with several opportunities to improve product discoverability and agent readiness."
+        : "Your store has several opportunities to improve product discoverability, structured catalog information, agent instructions, and commerce flows.";
+
+  return (
+    <section className="rounded-2xl border border-[#E1E3E5] bg-white px-8 py-8 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+      <div className="grid grid-cols-1 items-center gap-8 md:grid-cols-[180px_1fr]">
+        <div className="flex justify-center">
+          <div className="relative h-[155px] w-[155px]">
+            <svg
+              className="h-full w-full -rotate-90"
+              viewBox="0 0 160 160"
+              aria-hidden="true"
+            >
+              <circle
+                cx="80"
+                cy="80"
+                r="66"
+                fill="none"
+                stroke="#EEF0F1"
+                strokeWidth="12"
+              />
+
+              <circle
+                cx="80"
+                cy="80"
+                r="66"
+                fill="none"
+                stroke="#FFB100"
+                strokeWidth="12"
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={dashOffset}
+              />
+            </svg>
+
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-4xl font-extrabold leading-none text-[#202223]">
+                {overall}
+              </span>
+
+              <span className="mt-1 text-sm font-semibold text-[#6D7175]">
+                / 100
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <span className="inline-flex items-center gap-2 rounded-full border border-[#FFD38A] bg-[#FFF7E8] px-3.5 py-1.5 text-sm font-semibold text-[#9A6700]">
+            <span>
+              {overall < 70 ? "⚠" : "✓"}
+            </span>
+
+            {overall < 70
+              ? "Catalog & Discovery Gaps Detected"
+              : "Agentic Commerce Ready"}
+          </span>
+
+          <h2 className="mt-5 text-[26px] font-extrabold leading-tight tracking-tight text-[#202223]">
+            Your store is {overall}% ready for agentic commerce
+          </h2>
+
+          <p className="mt-4 max-w-[760px] text-base leading-relaxed text-[#6D7175]">
+            {summary}
+          </p>
+
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-6 text-sm font-semibold">
+              <span className="inline-flex items-center gap-2 text-[#202223]">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#D72C0D]" />
+                {issueCounts.high} High Priority
+              </span>
+
+              <span className="inline-flex items-center gap-2 text-[#202223]">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#FFB100]" />
+                {issueCounts.medium} Medium
+              </span>
+
+              <span className="inline-flex items-center gap-2 text-[#202223]">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#6D7175]" />
+                {issueCounts.low} Low
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={onViewIssues}
+              className="cursor-pointer border-0 bg-transparent text-sm font-bold text-[#008060] hover:underline"
+            >
+              View Priority Issues →
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── Priority Issues ────────────────────────────────────────────────────
+
+function SeverityBadge({ priority }) {
+  const styles =
+    priority === "high"
+      ? "border-[#FFC9C5] bg-[#FFF0EF] text-[#D72C0D]"
+      : priority === "low"
+        ? "border-[#E1E3E5] bg-[#F1F2F3] text-[#6D7175]"
+        : "border-[#FFE0A3] bg-[#FFF5E5] text-[#8A6116]";
+
+  const dot =
+    priority === "high"
+      ? "bg-[#D72C0D]"
+      : priority === "low"
+        ? "bg-[#6D7175]"
+        : "bg-[#FFB100]";
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${styles}`}
+    >
+      <span
+        className={`h-2 w-2 rounded-full ${dot}`}
+      />
+
+      {capitalize(priority)}
+    </span>
+  );
+}
+
+function PriorityIssues({
+  report,
+  products,
+  onViewAll,
+}) {
+  const issueRows = getIssueRows(
+    report,
+    products
+  );
+
+  const highPriorityIssues =
+    issueRows.filter(
+      (issue) => issue.priority === "high"
+    );
+
+  const [expandedKey, setExpandedKey] =
+    useState(null);
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[#E1E3E5] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+      <div className="flex items-center justify-between gap-4 border-b border-[#E1E3E5] px-6 py-5">
+        <div>
+          <h2 className="text-base font-bold tracking-tight text-[#202223]">
+            Priority Issues
+          </h2>
+
+          <p className="mt-1 text-sm text-[#6D7175]">
+            High-priority issues from the latest audit.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onViewAll}
+          className="shrink-0 cursor-pointer border-0 bg-transparent text-sm font-semibold text-[#008060] hover:underline"
+        >
+          View all issues →
+        </button>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] border-collapse text-left">
+          <thead className="bg-[#F8F9FA]">
+            <tr className="border-b border-[#E1E3E5] text-[11px] font-bold uppercase tracking-wide text-[#6D7175]">
+              <th className="px-7 py-4">
+                Severity
+              </th>
+
+              <th className="px-7 py-4">
+                Issue
+              </th>
+
+              <th className="px-7 py-4">
+                Affected
+              </th>
+
+              <th className="px-7 py-4 text-right">
+                Action
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {highPriorityIssues.length > 0 ? (
+              highPriorityIssues.map((issue) => {
+                const isExpanded =
+                  expandedKey === issue.key;
+
+                return (
+                  <Fragment key={issue.key}>
+                    <tr className="border-b border-[#E1E3E5] last:border-b-0">
+                      <td className="px-7 py-5 align-top">
+                        <SeverityBadge
+                          priority={issue.priority}
+                        />
+                      </td>
+
+                      <td className="px-7 py-5 align-top">
+                        <div className="text-sm font-semibold text-[#202223]">
+                          {issue.enrichment}
+                        </div>
+                      </td>
+
+                      <td className="px-7 py-5 align-top text-sm font-semibold text-[#202223]">
+                        {issue.affectedLabel}
+                      </td>
+
+                      <td className="px-7 py-5 text-right align-top">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedKey(
+                              isExpanded
+                                ? null
+                                : issue.key
+                            )
+                          }
+                          className="cursor-pointer border-0 bg-transparent px-0 text-sm font-semibold text-[#008060] hover:underline"
+                        >
+                          View Issue{" "}
+                          {isExpanded
+                            ? "⌃"
+                            : "⌄"}
+                        </button>
+                      </td>
+                    </tr>
+
+                    {isExpanded && (
+                      <tr>
+                        <td
+                          colSpan={4}
+                          className="border-t border-[#F1F2F3] bg-[#FAFAFA] px-7 py-5"
+                        >
+                          {issue.why_it_matters_for_agents && (
+                            <div>
+                              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#6D7175]">
+                                Summary
+                              </div>
+
+                              <p className="text-sm leading-relaxed text-[#4a5568]">
+                                {
+                                  issue.why_it_matters_for_agents
+                                }
+                              </p>
+                            </div>
+                          )}
+
+                          {issue.example && (
+                            <div className="mt-4">
+                              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#6D7175]">
+                                Example
+                              </div>
+
+                              <div className="rounded-lg border-l-2 border-[#c47d52] bg-white px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-line text-[#6D7175]">
+                                {issue.example}
+                              </div>
+                            </div>
+                          )}
+
+                          {issue.affectedProducts.length >
+                            0 && (
+                            <div className="mt-4">
+                              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#6D7175]">
+                                Affected products
+                              </div>
+
+                              <div className="flex flex-wrap gap-2">
+                                {issue.affectedProducts.map(
+                                  (product) => (
+                                    <span
+                                      key={
+                                        product.product_id
+                                      }
+                                      className="rounded-full border border-[#E1E3E5] bg-white px-3 py-1.5 text-xs font-semibold text-[#202223]"
+                                    >
+                                      {product.title ||
+                                        product.product_id}
+                                    </span>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {issue.affectedProducts.length ===
+                            0 && (
+                            <div className="mt-4 text-xs font-medium text-[#6D7175]">
+                              This is a store-wide issue.
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })
+            ) : (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="px-6 py-12 text-center text-sm text-[#6D7175]"
+                >
+                  No high-priority issues found in the latest audit.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+// ── Store Health Summary ───────────────────────────────────────────────
+
+function StoreHealthSummary({
+  report,
+  products,
+}) {
+  const affectedProducts =
+    products.filter(
+      (product) =>
+        (product.missing_enrichments || [])
+          .length > 0
+    ).length;
+
+  const resolved = Number(
+    report?.issues_resolved ??
+      report?.resolved_issues ??
+      report?.health_summary?.issues_resolved ??
+      0
+  );
+
+  const cards = [
+    {
+      label: "PRODUCTS ANALYZED",
+      value:
+        products.length.toLocaleString(),
+      description:
+        "Complete catalog scanned via Shopify Admin API",
+      valueClass: "text-[#202223]",
+    },
+    {
+      label: "PRODUCTS AFFECTED",
+      value:
+        affectedProducts.toLocaleString(),
+      description:
+        "Requires catalog enrichment or schema fixes",
+      valueClass: "text-[#D72C0D]",
+    },
+    {
+      label: "ISSUES RESOLVED",
+      value: resolved.toLocaleString(),
+      description:
+        resolved > 0
+          ? `${resolved} issues resolved since your previous audit.`
+          : "No issues resolved since your previous audit.",
+      valueClass: "text-[#008060]",
+    },
+  ];
+
+  return (
+    <section>
+      <div className="mb-4 flex items-center justify-between px-0.5">
+        <h2 className="text-base font-bold text-[#202223]">
+          Store Health Summary
+        </h2>
+
+        <span className="text-sm text-[#6D7175]">
+          Canonical Audit Baseline
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+        {cards.map((card) => (
+          <div
+            key={card.label}
+            className="rounded-2xl border border-[#E1E3E5] bg-white px-6 py-7 shadow-[0_2px_8px_rgba(0,0,0,0.04)]"
+          >
+            <div className="text-sm font-bold text-[#6D7175]">
+              {card.label}
+            </div>
+
+            <div
+              className={`mt-2 text-3xl font-extrabold tracking-tight ${card.valueClass}`}
+            >
+              {card.value}
+            </div>
+
+            <p className="mt-2 text-xs leading-relaxed text-[#6D7175]">
+              {card.description}
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────
 
 const INITIAL_STEPS = {
   submit: "pending",
@@ -868,27 +925,50 @@ const INITIAL_STEPS = {
   report: "pending",
 };
 
-export default function Index({ loaderData }) {
-  const { shopDomain, backendUrl } = loaderData;
+export default function Index({
+  loaderData,
+}) {
+  const {
+    shopDomain,
+    backendUrl,
+  } = loaderData;
 
+  const navigate = useNavigate();
   const fetcher = useFetcher();
 
-  const [isRunning, setIsRunning] = useState(false);
-  const [showSteps, setShowSteps] = useState(false);
-  const [steps, setSteps] = useState(INITIAL_STEPS);
+  const [isRunning, setIsRunning] =
+    useState(false);
+
+  const [showSteps, setShowSteps] =
+    useState(false);
+
+  const [steps, setSteps] =
+    useState(INITIAL_STEPS);
 
   const [aiSub, setAiSub] = useState(
     "This takes 30–120 seconds depending on catalog size — please don't close this tab"
   );
 
-  const [status, setStatus] = useState(null);
-  const [report, setReport] = useState(null);
-  const [storeUrl, setStoreUrl] = useState("");
-  const [errorInfo, setErrorInfo] = useState(null);
+  const [status, setStatus] =
+    useState(null);
 
-  const pollTimerRef = useRef(null);
-  const elapsedTimerRef = useRef(null);
-  const pollCountRef = useRef(0);
+  const [report, setReport] =
+    useState(null);
+
+  const [storeUrl, setStoreUrl] =
+    useState("");
+
+  const [errorInfo, setErrorInfo] =
+    useState(null);
+
+  const pollTimerRef =
+    useRef(null);
+
+  const elapsedTimerRef =
+    useRef(null);
+
+  const pollCountRef =
+    useRef(0);
 
   function resetSteps() {
     setSteps(INITIAL_STEPS);
@@ -900,7 +980,10 @@ export default function Index({ loaderData }) {
     pollCountRef.current = 0;
 
     if (elapsedTimerRef.current) {
-      clearInterval(elapsedTimerRef.current);
+      clearInterval(
+        elapsedTimerRef.current
+      );
+
       elapsedTimerRef.current = null;
     }
   }
@@ -908,26 +991,37 @@ export default function Index({ loaderData }) {
   async function pollJob(jobId) {
     pollCountRef.current += 1;
 
-    const count = pollCountRef.current;
+    const count =
+      pollCountRef.current;
 
     try {
-      const res = await fetch(
+      const response = await fetch(
         `${backendUrl}/report-requests/${jobId}`
       );
 
-      if (!res.ok) {
+      if (!response.ok) {
         throw new Error(
           "Could not fetch job status."
         );
       }
 
-      const data = await res.json();
+      const data =
+        await response.json();
 
       if (data.status === "completed") {
-        clearInterval(pollTimerRef.current);
+        if (pollTimerRef.current) {
+          clearInterval(
+            pollTimerRef.current
+          );
+
+          pollTimerRef.current = null;
+        }
 
         if (elapsedTimerRef.current) {
-          clearInterval(elapsedTimerRef.current);
+          clearInterval(
+            elapsedTimerRef.current
+          );
+
           elapsedTimerRef.current = null;
         }
 
@@ -945,46 +1039,71 @@ export default function Index({ loaderData }) {
 
         setIsRunning(false);
 
-        // Save the latest report so it survives navigation and page refresh.
-        // A new completed audit overwrites the previous report.
-        setReport(data.report);
+        try {
+          const latestResponse =
+            await fetch(
+              `${backendUrl}/audits/latest?shop_domain=${encodeURIComponent(
+                shopDomain
+              )}`
+            );
 
-        localStorage.setItem(
-          "acr_latest_report",
-          JSON.stringify(data.report)
-        );
+          if (!latestResponse.ok) {
+            throw new Error(
+              "Could not load the completed audit from database."
+            );
+          }
 
-        // Save the actual readiness score used by Dashboard
-        const newScore = data.report?.readiness_scores?.overall;
+          const latestData =
+            await latestResponse.json();
 
-        if (
-          newScore !== undefined &&
-          newScore !== null &&
-          Number.isFinite(Number(newScore))
-        ) {
-          const existingHistory = JSON.parse(
-            localStorage.getItem("acr_audit_history") || "[]"
+          const latestReport =
+            normalizeAuditReport(
+              latestData
+            );
+
+          setReport(latestReport);
+
+          setStoreUrl(
+            latestData.store_url ||
+              latestData.audit?.store_url ||
+              `https://${shopDomain}`
+          );
+        } catch (error) {
+          console.warn(
+            "Could not load completed audit from database:",
+            error
           );
 
-          existingHistory.push({
-            id: jobId,
-            score: Number(newScore),
-            date: new Date().toISOString(),
-            status: "Completed",
-          });
+          const fallbackReport =
+            normalizeAuditReport(
+              data.report
+            );
 
-          localStorage.setItem(
-            "acr_audit_history",
-            JSON.stringify(existingHistory.slice(-20))
+          setReport(fallbackReport);
+
+          setStoreUrl(
+            data.store_url ||
+              `https://${shopDomain}`
           );
         }
 
-        setStoreUrl(data.store_url || "");
-      } else if (data.status === "failed") {
-        clearInterval(pollTimerRef.current);
+        return;
+      }
+
+      if (data.status === "failed") {
+        if (pollTimerRef.current) {
+          clearInterval(
+            pollTimerRef.current
+          );
+
+          pollTimerRef.current = null;
+        }
 
         if (elapsedTimerRef.current) {
-          clearInterval(elapsedTimerRef.current);
+          clearInterval(
+            elapsedTimerRef.current
+          );
+
           elapsedTimerRef.current = null;
         }
 
@@ -998,17 +1117,22 @@ export default function Index({ loaderData }) {
             data.error ||
             "Something went wrong. Please try again.",
           errorType:
-            data.error_type || "internal_error",
+            data.error_type ||
+            "internal_error",
         });
-      } else if (count <= 2) {
-        setSteps((s) => ({
-          ...s,
+
+        return;
+      }
+
+      if (count <= 2) {
+        setSteps((current) => ({
+          ...current,
           submit: "done",
           fetch: "active",
         }));
       } else if (count <= 4) {
-        setSteps((s) => ({
-          ...s,
+        setSteps((current) => ({
+          ...current,
           submit: "done",
           fetch: "done",
           ai: "active",
@@ -1017,8 +1141,8 @@ export default function Index({ loaderData }) {
         if (!elapsedTimerRef.current) {
           let elapsed = 0;
 
-          elapsedTimerRef.current = setInterval(
-            () => {
+          elapsedTimerRef.current =
+            setInterval(() => {
               elapsed += 5;
 
               setAiSub(
@@ -1028,40 +1152,43 @@ export default function Index({ loaderData }) {
                     ? `Still working… ${elapsed}s elapsed — larger catalogs take up to 2 minutes`
                     : `Almost there… ${elapsed}s elapsed — nearly done, hang tight!`
               );
-            },
-            5000
-          );
+            }, 5000);
         }
       } else {
-        setSteps((s) => ({
-          ...s,
+        setSteps((current) => ({
+          ...current,
           submit: "done",
           fetch: "done",
           ai: "active",
           report: "pending",
         }));
       }
-    } catch (err) {
-      console.warn(err);
+    } catch (error) {
+      console.warn(
+        "Audit polling error:",
+        error
+      );
     }
   }
 
   function handleRunAudit() {
     if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
+      clearInterval(
+        pollTimerRef.current
+      );
+
+      pollTimerRef.current = null;
     }
 
-    setReport(null);
     setErrorInfo(null);
     setStatus(null);
     setIsRunning(true);
 
     resetSteps();
-
     setShowSteps(true);
 
-    setSteps((s) => ({
-      ...s,
+    setSteps((current) => ({
+      ...current,
       submit: "active",
     }));
 
@@ -1075,9 +1202,7 @@ export default function Index({ loaderData }) {
 
     if (!fetcher.data.ok) {
       setIsRunning(false);
-
       resetSteps();
-
       setShowSteps(false);
 
       setErrorInfo({
@@ -1090,18 +1215,39 @@ export default function Index({ loaderData }) {
       return;
     }
 
-    const jobId = fetcher.data.job.job_id;
+    const jobId =
+      fetcher.data?.job?.job_id;
 
-    setSteps((s) => ({
-      ...s,
+    if (!jobId) {
+      setIsRunning(false);
+      setShowSteps(false);
+
+      setErrorInfo({
+        message:
+          "Backend did not return a valid audit job.",
+        errorType: "internal_error",
+      });
+
+      return;
+    }
+
+    setSteps((current) => ({
+      ...current,
       submit: "done",
       fetch: "active",
     }));
 
-    pollTimerRef.current = setInterval(
-      () => pollJob(jobId),
-      5500
-    );
+    if (pollTimerRef.current) {
+      clearInterval(
+        pollTimerRef.current
+      );
+    }
+
+    pollTimerRef.current =
+      setInterval(
+        () => pollJob(jobId),
+        5500
+      );
 
     pollJob(jobId);
   }, [fetcher.data]);
@@ -1109,146 +1255,150 @@ export default function Index({ loaderData }) {
   useEffect(() => {
     return () => {
       if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
+        clearInterval(
+          pollTimerRef.current
+        );
       }
 
       if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current);
+        clearInterval(
+          elapsedTimerRef.current
+        );
       }
     };
   }, []);
 
   useEffect(() => {
-  let cancelled = false;
-// loading the latest audit report from backend
+    if (!shopDomain) return;
 
-  async function loadLatestAudit() {
-    try {
-      const response = await fetch(
-        `${backendUrl}/audits/latest?shop_domain=${encodeURIComponent(
-          shopDomain
-        )}`
-      );
+    let cancelled = false;
 
-      if (response.status === 404) {
-        if (!cancelled) {
-          setReport(null);
+    async function loadLatestAudit() {
+      try {
+        const response = await fetch(
+          `${backendUrl}/audits/latest?shop_domain=${encodeURIComponent(
+            shopDomain
+          )}`
+        );
+
+        if (response.status === 404) {
+          if (!cancelled) {
+            setReport(null);
+          }
+
+          return;
         }
-        return;
-      }
 
-      if (!response.ok) {
-        throw new Error(
-          `Failed to load latest audit: ${response.status}`
+        if (!response.ok) {
+          throw new Error(
+            `Failed to load latest audit: ${response.status}`
+          );
+        }
+
+        const data =
+          await response.json();
+
+        if (cancelled) return;
+
+        const latestReport =
+          normalizeAuditReport(data);
+
+        setReport(latestReport);
+
+        setStoreUrl(
+          data.store_url ||
+            data.audit?.store_url ||
+            `https://${shopDomain}`
         );
-      }
-
-      const data = await response.json();
-
-      if (cancelled) {
-        return;
-      }
-
-      setReport(data);
-
-      if (data.store_url) {
-        setStoreUrl(data.store_url);
-      } else {
-        setStoreUrl(`https://${shopDomain}`);
-      }
-    } catch (error) {
-      if (!cancelled) {
-        console.warn(
-          "Could not load the latest audit from database:",
-          error
-        );
+      } catch (error) {
+        if (!cancelled) {
+          console.warn(
+            "Could not load the latest audit from database:",
+            error
+          );
+        }
       }
     }
-  }
 
-  loadLatestAudit();
+    loadLatestAudit();
 
-  return () => {
-    cancelled = true;
-  };
-}, [backendUrl, shopDomain]);
+    return () => {
+      cancelled = true;
+    };
+  }, [backendUrl, shopDomain]);
 
-// ----------------------------------
+  const products =
+    report?.products || [];
 
-  const products = report?.products || [];
+  const scores =
+    report?.readiness_scores || {};
 
-  const storeRecs =
-    report?.store_level_recommendations || [];
+  const issueCounts =
+    getIssueCounts(
+      report,
+      products
+    );
 
-  const cleanDomain = storeUrl
-    .replace(/https?:\/\/(www\.)?/, "")
+  const cleanDomain = (
+    storeUrl || `https://${shopDomain}`
+  )
+    .replace(
+      /https?:\/\/(www\.)?/,
+      ""
+    )
     .split("/")[0];
 
-  const now = new Date().toLocaleDateString(
-    undefined,
-    {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }
-  );
+  const now =
+    new Date().toLocaleDateString(
+      undefined,
+      {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }
+    );
 
   return (
-    <div className="rounded-xl bg-[var(--acr-cream)] pb-24 pt-6 text-[var(--acr-black)]">
-      <div className="mx-auto max-w-[720px] px-6 pb-5 pt-10 text-center">
-        <h1 className="mb-4 text-[clamp(1.8rem,4vw,2.6rem)] font-extrabold leading-[1.15] tracking-[-0.02em] text-[var(--acr-black)]">
-          Is your store ready for
-          <br />
-          <span className="text-[var(--acr-amber)]">
-            Agentic Commerce?
-          </span>
-        </h1>
+    <div className="min-h-screen rounded-xl bg-[var(--acr-cream)] pb-24 pt-6 text-[var(--acr-black)]">
 
-        <p className="mx-auto mb-7 max-w-[560px] text-sm leading-relaxed text-gray-500">
-          Instantly scan your Shopify store against
-          the core criteria used by AI shopping engines
-          like ChatGPT, Google, and Copilot. Discover
-          what's blocking AI discovery and optimize
-          your catalog for the next generation of
-          commerce.
-        </p>
+      {/* ── Audit launcher ─────────────────────────────────────── */}
 
-        <div className="mx-auto max-w-[560px] rounded-3xl border border-[var(--acr-border)] bg-white p-5 shadow-[0_25px_50px_rgba(0,0,0,0.05),0_2px_10px_rgba(0,0,0,0.03)] md:p-6">
-          <div className="flex flex-col items-stretch gap-3.5 md:flex-row md:items-center md:justify-between">
-            <div className="text-left">
-              <div className="text-[9px] font-bold uppercase tracking-[0.05em] text-gray-400">
-                Shopify Store
+      <div className="mx-auto px-0 pb-4 pt-0">
+        <div className="rounded-2xl border border-[#E1E3E5] bg-white px-8 py-7 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+
+            <div>
+              <div className="mb-2 text-[13px] font-extrabold uppercase tracking-[0.14em] text-[#E87500]">
+                AGENTIC COMMERCE READINESS
               </div>
 
-              <div className="mt-0.5 text-[15px] font-bold text-[var(--acr-black)]">
-                {shopDomain}
+              <h1 className="text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-[#111111]">
+                Shopify Store Audit
+              </h1>
+
+              <div className="mt-2 text-[17px] text-[#5F6F85]">
+                https://{shopDomain}
               </div>
             </div>
 
             <button
-              className="w-full cursor-pointer whitespace-nowrap rounded-full border-none bg-[var(--acr-black)] px-6 py-3.5 text-sm font-bold text-[var(--acr-amber-light)] transition-colors hover:bg-[#222222] disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
+              type="button"
+              className="w-full shrink-0 cursor-pointer rounded-full border-none bg-[#111111] px-8 py-4 text-base font-bold text-white transition-colors hover:bg-[#222222] disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
               onClick={handleRunAudit}
               disabled={isRunning}
             >
               {isRunning
                 ? "Running…"
-                : "Run Audit →"}
+                : "Run Audit"}
             </button>
           </div>
         </div>
+      </div>
 
-        <div className="mt-4 flex justify-center gap-5 text-xs text-gray-400">
-          <div className="flex items-center gap-1">
-            <span>⚡</span> ~1–3 minutes
-          </div>
+      {showSteps && (
+        <div className="mx-auto max-w-[900px] px-6 pb-2">
+          <div className="flex flex-col text-left">
 
-          <div className="flex items-center gap-1">
-            <span>📄</span> PDF sent to your email
-          </div>
-        </div>
-
-        {showSteps && (
-          <div className="mx-auto mt-6 flex max-w-[560px] flex-col">
             <StepRow
               num="1"
               state={steps.submit}
@@ -1277,109 +1427,141 @@ export default function Index({ loaderData }) {
               sub="Building recommendations and sending your PDF"
               isLast
             />
-          </div>
-        )}
 
-        {status && (
-          <div
-            className={`mx-auto mt-4 flex max-w-[560px] items-center justify-center gap-2.5 rounded-full px-4.5 py-2.5 text-[13px] font-semibold ${
-              status.type === "success"
-                ? "bg-[#d1fae5] text-[#065f46]"
-                : "bg-[#fee2e2] text-[#991b1b]"
-            }`}
-          >
-            <span>
-              {status.type === "success"
-                ? "✅"
-                : "❌"}
-            </span>
-
-            <span>{status.text}</span>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {status && (
+        <div
+          className={`mx-auto mt-3 flex max-w-[900px] items-center justify-center gap-2.5 rounded-full px-4.5 py-2.5 text-[13px] font-semibold ${
+            status.type === "success"
+              ? "bg-[#d1fae5] text-[#065f46]"
+              : "bg-[#fee2e2] text-[#991b1b]"
+          }`}
+        >
+          <span>
+            {status.type === "success"
+              ? "✅"
+              : "❌"}
+          </span>
+
+          <span>
+            {status.text}
+          </span>
+        </div>
+      )}
+
+      {/* ── Error ───────────────────────────────────────────────── */}
 
       {errorInfo && (
-        <div className="mx-auto mt-10 max-w-[780px] px-4">
+        <div className="mx-auto mt-6 max-w-[1100px] px-6">
           <ErrorCard
             message={errorInfo.message}
             errorType={errorInfo.errorType}
-            onRetry={() => setErrorInfo(null)}
+            onRetry={() =>
+              setErrorInfo(null)
+            }
           />
         </div>
       )}
 
+      {/* ── Actual audit dashboard ─────────────────────────────── */}
+
       {report && (
-        <div className="mx-auto mt-10 max-w-[780px] px-4">
-          <div className="flex flex-col gap-6">
-            <div className="overflow-hidden rounded-[18px] border border-[var(--acr-border)] bg-white shadow-[0_30px_60px_rgba(0,0,0,0.05)]">
-              <div className="flex items-start justify-between gap-2.5 bg-[var(--acr-black)] px-8 py-[22px] text-white">
-                <div>
-                  <div className="text-[19px] font-extrabold tracking-[-0.01em]">
-                    {cleanDomain}
-                  </div>
+        <div className="mx-auto mt-8 max-w-[1400px] px-4 md:px-6">
+          <div className="space-y-8">
 
-                  <div className="mt-1 text-xs text-[#f2b657]">
-                    {storeUrl}
-                  </div>
-                </div>
+            <OverallReadiness
+              report={report}
+              issueCounts={issueCounts}
+              onViewIssues={() =>
+                navigate("/app/issues")
+              }
+            />
 
-                <div className="whitespace-nowrap text-xs text-gray-400">
-                  {now}
-                </div>
-              </div>
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
 
-              <ReadinessScores report={report} />
-
-              <PriorityPills
-                report={report}
-                products={products}
+              <OverviewScoreCard
+                label="UCP COMMERCE FLOWS"
+                value={
+                  scores.ucp_commerce_flows
+                }
+                description="Improve agent access to commerce and checkout flows."
               />
+
+              <OverviewScoreCard
+                label="MCP KNOWLEDGE"
+                value={
+                  scores.mcp_knowledge
+                }
+                description="Make store and product knowledge easier for AI agents to understand."
+              />
+
+              <OverviewScoreCard
+                label="CATALOG ENRICHMENT"
+                value={
+                  scores.catalog_enrichment
+                }
+                description="Add structured product information such as identifiers, specifications and product types."
+              />
+
+              <OverviewScoreCard
+                label="SAFETY & POLICIES"
+                value={
+                  scores.safety_policies
+                }
+                description="Improve policy, delivery and agent-facing safety information."
+              />
+
             </div>
 
-            <AgentDiscovery report={report} />
+            <PriorityIssues
+              report={report}
+              products={products}
+              onViewAll={() =>
+                navigate("/app/issues")
+              }
+            />
 
-            <ExecutiveSummary
+            <StoreHealthSummary
               report={report}
               products={products}
             />
 
-            <div>
-              <SectionHeader>
-                {LABELS.sectionStore}{" "}
-                <span className="font-semibold normal-case tracking-normal text-gray-400">
-                  · {storeRecs.length}
-                </span>
-              </SectionHeader>
-
-              <RecommendationList recs={storeRecs} />
-            </div>
-
-            <ProductAccordion products={products} />
-
-            <div className="px-1 pt-5.5 text-center text-xs text-gray-400">
-              <div className="mb-2">
-                {LABELS.verified}
-              </div>
-
+            <div className="px-1 pt-2 text-center text-xs text-gray-400">
               <div>
-                <span className="font-bold text-[#22594f]">
-                  {LABELS.poweredBy}
-                </span>{" "}
-                ·{" "}
-                <a
-                  className="font-semibold text-[#17695b] no-underline"
-                  href="https://www.propero.in"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  propero.in
-                </a>
+                {cleanDomain} · {now}
               </div>
             </div>
+
           </div>
         </div>
       )}
+
+      {/* ── Empty state ─────────────────────────────────────────── */}
+
+      {!report &&
+        !isRunning &&
+        !errorInfo && (
+          <div className="mx-auto mt-8 max-w-[900px] px-6">
+            <div className="rounded-2xl border border-[#E1E3E5] bg-white px-8 py-16 text-center shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+
+              <h2 className="text-xl font-bold text-[#202223]">
+                Run your first audit
+              </h2>
+
+              <p className="mx-auto mt-2 max-w-[520px] text-sm leading-relaxed text-[#6D7175]">
+                Scan your Shopify catalog to see
+                your agentic commerce readiness,
+                priority issues, and store health
+                summary.
+              </p>
+
+            </div>
+          </div>
+        )}
+
     </div>
   );
 }
