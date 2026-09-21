@@ -6,28 +6,40 @@ import { useNavigate, useRouteLoaderData } from "react-router";
 function getProductStatus(product) {
   const issues = product.missing_enrichments || [];
 
-  const hasHigh = issues.some((item) => item.priority === "high");
+  const totalIssues = issues.length;
+  const highIssues = issues.filter(
+    (item) => item.priority === "high"
+  ).length;
+
   const hasOtherIssues = issues.some(
-    (item) => item.priority === "medium" || item.priority === "low"
+    (item) =>
+      item.priority === "medium" ||
+      item.priority === "low"
   );
 
-  if (hasHigh) {
+  if (
+    totalIssues > 0 &&
+    highIssues > totalIssues / 2
+  ) {
     return {
       label: "Critical",
-      className: "bg-[#FFF0EF] text-[#D72C0D] border border-[#FFC9C5]",
+      className:
+        "bg-[#FFF0EF] text-[#D72C0D] border border-[#FFC9C5]",
     };
   }
 
-  if (hasOtherIssues) {
+  if (hasOtherIssues || highIssues > 0) {
     return {
       label: "Needs attention",
-      className: "bg-[#FFF5E5] text-[#8A6116] border border-[#FFE0A3]",
+      className:
+        "bg-[#FFF5E5] text-[#8A6116] border border-[#FFE0A3]",
     };
   }
 
   return {
     label: "Ready",
-    className: "bg-[#E6F4EA] text-[#008060] border border-[#B4E3C8]",
+    className:
+      "bg-[#E6F4EA] text-[#008060] border border-[#B4E3C8]",
   };
 }
 

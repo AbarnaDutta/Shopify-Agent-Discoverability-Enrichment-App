@@ -300,29 +300,35 @@ function getIssueRows(report, products) {
 }
 
 function getIssueCounts(report, products) {
-  const issueRows = getIssueRows(
-    report,
-    products
-  );
+  const counts = {
+    high: 0,
+    medium: 0,
+    low: 0,
+  };
 
-  return issueRows.reduce(
-    (counts, issue) => {
-      if (issue.priority === "high") {
-        counts.high += 1;
-      } else if (issue.priority === "low") {
-        counts.low += 1;
-      } else {
-        counts.medium += 1;
-      }
+  const tally = (recommendation) => {
+    const priority = String(
+      recommendation?.priority || "medium"
+    ).toLowerCase();
 
-      return counts;
-    },
-    {
-      high: 0,
-      medium: 0,
-      low: 0,
+    if (priority === "high") {
+      counts.high += 1;
+    } else if (priority === "low") {
+      counts.low += 1;
+    } else {
+      counts.medium += 1;
     }
-  );
+  };
+
+  // Store-level enrichments
+  (report?.store_level_recommendations || []).forEach(tally);
+
+  // Product-level enrichments
+  (products || []).forEach((product) => {
+    (product.missing_enrichments || []).forEach(tally);
+  });
+
+  return counts;
 }
 
 // ── Error ─────────────────────────────────────────────────────────────

@@ -566,7 +566,6 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
       </div>
 
       <div className="space-y-2">
-        {/* Top row */}
         <div className="flex items-center justify-between gap-3">
           {!disabled && (
             <button
@@ -591,8 +590,6 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
                 : "Apply Fix"}
           </button>
         </div>
-
-        {/* Second row — left aligned */}
         <div>
           <button
             type="button"
