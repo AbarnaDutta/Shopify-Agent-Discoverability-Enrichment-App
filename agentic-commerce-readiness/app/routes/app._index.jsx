@@ -300,35 +300,29 @@ function getIssueRows(report, products) {
 }
 
 function getIssueCounts(report, products) {
-  const counts = {
-    high: 0,
-    medium: 0,
-    low: 0,
-  };
+  const issueRows = getIssueRows(
+    report,
+    products
+  );
 
-  const tally = (recommendation) => {
-    const priority = String(
-      recommendation?.priority || "medium"
-    ).toLowerCase();
+  return issueRows.reduce(
+    (counts, issue) => {
+      if (issue.priority === "high") {
+        counts.high += 1;
+      } else if (issue.priority === "low") {
+        counts.low += 1;
+      } else {
+        counts.medium += 1;
+      }
 
-    if (priority === "high") {
-      counts.high += 1;
-    } else if (priority === "low") {
-      counts.low += 1;
-    } else {
-      counts.medium += 1;
+      return counts;
+    },
+    {
+      high: 0,
+      medium: 0,
+      low: 0,
     }
-  };
-
-  // Store-level enrichments
-  (report?.store_level_recommendations || []).forEach(tally);
-
-  // Product-level enrichments
-  (products || []).forEach((product) => {
-    (product.missing_enrichments || []).forEach(tally);
-  });
-
-  return counts;
+  );
 }
 
 // ── Error ─────────────────────────────────────────────────────────────
@@ -491,7 +485,6 @@ function OverviewScoreCard({
 function OverallReadiness({
   report,
   issueCounts,
-  onViewIssues,
 }) {
   const scores =
     report?.readiness_scores || {};
@@ -519,7 +512,7 @@ function OverallReadiness({
         : "Your store has several opportunities to improve product discoverability, structured catalog information, agent instructions, and commerce flows.";
 
   return (
-    <section className="rounded-2xl border border-[#E1E3E5] bg-white px-8 py-8 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+    <section className="px-8 py-8">
       <div className="grid grid-cols-1 items-center gap-8 md:grid-cols-[180px_1fr]">
         <div className="flex justify-center">
           <div className="relative h-[155px] w-[155px]">
@@ -581,31 +574,21 @@ function OverallReadiness({
             {summary}
           </p>
 
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-6 text-sm font-semibold">
-              <span className="inline-flex items-center gap-2 text-[#202223]">
-                <span className="h-2.5 w-2.5 rounded-full bg-[#D72C0D]" />
-                {issueCounts.high} High Priority
-              </span>
+          <div className="mt-6 flex flex-wrap items-center gap-6 text-sm font-semibold">
+            <span className="inline-flex items-center gap-2 text-[#202223]">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#D72C0D]" />
+              {issueCounts.high} High Priority
+            </span>
 
-              <span className="inline-flex items-center gap-2 text-[#202223]">
-                <span className="h-2.5 w-2.5 rounded-full bg-[#FFB100]" />
-                {issueCounts.medium} Medium
-              </span>
+            <span className="inline-flex items-center gap-2 text-[#202223]">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#FFB100]" />
+              {issueCounts.medium} Medium
+            </span>
 
-              <span className="inline-flex items-center gap-2 text-[#202223]">
-                <span className="h-2.5 w-2.5 rounded-full bg-[#6D7175]" />
-                {issueCounts.low} Low
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={onViewIssues}
-              className="cursor-pointer border-0 bg-transparent text-sm font-bold text-[#008060] hover:underline"
-            >
-              View Priority Issues →
-            </button>
+            <span className="inline-flex items-center gap-2 text-[#202223]">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#6D7175]" />
+              {issueCounts.low} Low
+            </span>
           </div>
         </div>
       </div>
@@ -645,21 +628,20 @@ function SeverityBadge({ priority }) {
 
 function PriorityIssues({
   report,
-  products,
   onViewAll,
 }) {
-  const issueRows = getIssueRows(
-    report,
-    products
-  );
+  const storeRecommendations =
+    Array.isArray(report?.store_level_recommendations)
+      ? report.store_level_recommendations
+      : [];
 
   const highPriorityIssues =
-    issueRows.filter(
-      (issue) => issue.priority === "high"
+    storeRecommendations.filter(
+      (issue) =>
+        String(issue?.priority || "medium").toLowerCase() === "high"
     );
 
-  const [expandedKey, setExpandedKey] =
-    useState(null);
+  const [expandedKey, setExpandedKey] = useState(null);
 
   return (
     <section className="overflow-hidden rounded-2xl border border-[#E1E3E5] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
@@ -670,7 +652,7 @@ function PriorityIssues({
           </h2>
 
           <p className="mt-1 text-sm text-[#6D7175]">
-            High-priority issues from the latest audit.
+            High-priority store-wide tasks from the latest audit.
           </p>
         </div>
 
@@ -687,65 +669,68 @@ function PriorityIssues({
         <table className="w-full min-w-[760px] border-collapse text-left">
           <thead className="bg-[#F8F9FA]">
             <tr className="border-b border-[#E1E3E5] text-[11px] font-bold uppercase tracking-wide text-[#6D7175]">
-              <th className="px-7 py-4">
-                Severity
-              </th>
-
-              <th className="px-7 py-4">
-                Issue
-              </th>
-
-              <th className="px-7 py-4">
-                Affected
-              </th>
-
-              <th className="px-7 py-4 text-right">
-                Action
-              </th>
+              <th className="px-7 py-4">Severity</th>
+              <th className="px-7 py-4">Issue</th>
+              <th className="px-7 py-4">Affected</th>
+              <th className="px-7 py-4 text-right">Action</th>
             </tr>
           </thead>
 
           <tbody>
             {highPriorityIssues.length > 0 ? (
-              highPriorityIssues.map((issue) => {
-                const isExpanded =
-                  expandedKey === issue.key;
+              highPriorityIssues.map((issue, index) => {
+                const key =
+                  issue.id ||
+                  issue.key ||
+                  `store-wide-${index}`;
+
+                const isExpanded = expandedKey === key;
+
+                const title =
+                  issue.title ||
+                  issue.enrichment ||
+                  issue.name ||
+                  issue.recommendation ||
+                  "Store-wide improvement";
+
+                const summary =
+                  issue.why_it_matters_for_agents ||
+                  issue.description ||
+                  issue.reason ||
+                  "";
+
+                const example =
+                  issue.example ||
+                  issue.recommended_action ||
+                  issue.action ||
+                  "";
 
                 return (
-                  <Fragment key={issue.key}>
+                  <Fragment key={key}>
                     <tr className="border-b border-[#E1E3E5] last:border-b-0">
                       <td className="px-7 py-5 align-top">
-                        <SeverityBadge
-                          priority={issue.priority}
-                        />
+                        <SeverityBadge priority="high" />
                       </td>
 
                       <td className="px-7 py-5 align-top">
                         <div className="text-sm font-semibold text-[#202223]">
-                          {issue.enrichment}
+                          {title}
                         </div>
                       </td>
 
                       <td className="px-7 py-5 align-top text-sm font-semibold text-[#202223]">
-                        {issue.affectedLabel}
+                        Store-wide
                       </td>
 
                       <td className="px-7 py-5 text-right align-top">
                         <button
                           type="button"
                           onClick={() =>
-                            setExpandedKey(
-                              isExpanded
-                                ? null
-                                : issue.key
-                            )
+                            setExpandedKey(isExpanded ? null : key)
                           }
                           className="cursor-pointer border-0 bg-transparent px-0 text-sm font-semibold text-[#008060] hover:underline"
                         >
-                          View Issue{" "}
-                          {isExpanded
-                            ? "⌃"
-                            : "⌄"}
+                          View Issue {isExpanded ? "⌃" : "⌄"}
                         </button>
                       </td>
                     </tr>
@@ -756,61 +741,33 @@ function PriorityIssues({
                           colSpan={4}
                           className="border-t border-[#F1F2F3] bg-[#FAFAFA] px-7 py-5"
                         >
-                          {issue.why_it_matters_for_agents && (
+                          {summary && (
                             <div>
                               <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#6D7175]">
                                 Summary
                               </div>
 
                               <p className="text-sm leading-relaxed text-[#4a5568]">
-                                {
-                                  issue.why_it_matters_for_agents
-                                }
+                                {summary}
                               </p>
                             </div>
                           )}
 
-                          {issue.example && (
+                          {example && (
                             <div className="mt-4">
                               <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#6D7175]">
                                 Example
                               </div>
 
                               <div className="rounded-lg border-l-2 border-[#c47d52] bg-white px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-line text-[#6D7175]">
-                                {issue.example}
+                                {example}
                               </div>
                             </div>
                           )}
 
-                          {issue.affectedProducts.length >
-                            0 && (
-                            <div className="mt-4">
-                              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#6D7175]">
-                                Affected products
-                              </div>
-
-                              <div className="flex flex-wrap gap-2">
-                                {issue.affectedProducts.map(
-                                  (product) => (
-                                    <span
-                                      key={
-                                        product.product_id
-                                      }
-                                      className="rounded-full border border-[#E1E3E5] bg-white px-3 py-1.5 text-xs font-semibold text-[#202223]"
-                                    >
-                                      {product.title ||
-                                        product.product_id}
-                                    </span>
-                                  )
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {issue.affectedProducts.length ===
-                            0 && (
-                            <div className="mt-4 text-xs font-medium text-[#6D7175]">
-                              This is a store-wide issue.
+                          {!summary && !example && (
+                            <div className="text-sm text-[#6D7175]">
+                              This is a store-wide high-priority task from the latest audit.
                             </div>
                           )}
                         </td>
@@ -825,7 +782,7 @@ function PriorityIssues({
                   colSpan={4}
                   className="px-6 py-12 text-center text-sm text-[#6D7175]"
                 >
-                  No high-priority issues found in the latest audit.
+                  No high-priority store-wide tasks found in the latest audit.
                 </td>
               </tr>
             )}
@@ -1367,38 +1324,47 @@ export default function Index({
   return (
     <div className="min-h-screen rounded-xl bg-[var(--acr-cream)] pb-24 pt-6 text-[var(--acr-black)]">
 
-      {/* ── Audit launcher ─────────────────────────────────────── */}
+      {/* ── Audit launcher + readiness ─────────────────────────── */}
 
-      <div className="mx-auto px-0 pb-4 pt-0">
-        <div className="rounded-2xl border border-[#E1E3E5] bg-white px-8 py-7 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+      <div className="mx-auto max-w-[1400px] px-4 md:px-6">
+        <section className="overflow-hidden rounded-2xl border border-[#E1E3E5] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+          <div className="px-8 py-7">
+            <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
 
-            <div>
-              <div className="mb-2 text-[13px] font-extrabold uppercase tracking-[0.14em] text-[#E87500]">
-                AGENTIC COMMERCE READINESS
+              <div>
+                <div className="mb-2 text-[13px] font-extrabold uppercase tracking-[0.14em] text-[#E87500]">
+                  AGENTIC COMMERCE READINESS
+                </div>
+
+                <h1 className="text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-[#111111]">
+                  Shopify Store Audit
+                </h1>
+
+                <div className="mt-2 text-[17px] text-[#5F6F85]">
+                  https://{shopDomain}
+                </div>
               </div>
 
-              <h1 className="text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-[#111111]">
-                Shopify Store Audit
-              </h1>
-
-              <div className="mt-2 text-[17px] text-[#5F6F85]">
-                https://{shopDomain}
-              </div>
+              <button
+                type="button"
+                className="w-full shrink-0 cursor-pointer rounded-full border-none bg-[#111111] px-8 py-4 text-base font-bold text-white transition-colors hover:bg-[#222222] disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
+                onClick={handleRunAudit}
+                disabled={isRunning}
+              >
+                {isRunning ? "Running…" : "Run Audit"}
+              </button>
             </div>
-
-            <button
-              type="button"
-              className="w-full shrink-0 cursor-pointer rounded-full border-none bg-[#111111] px-8 py-4 text-base font-bold text-white transition-colors hover:bg-[#222222] disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
-              onClick={handleRunAudit}
-              disabled={isRunning}
-            >
-              {isRunning
-                ? "Running…"
-                : "Run Audit"}
-            </button>
           </div>
-        </div>
+
+          {report && (
+            <div className="border-t border-[#E1E3E5]">
+              <OverallReadiness
+                report={report}
+                issueCounts={issueCounts}
+              />
+            </div>
+          )}
+        </section>
       </div>
 
       {showSteps && (
@@ -1478,14 +1444,6 @@ export default function Index({
         <div className="mx-auto mt-8 max-w-[1400px] px-4 md:px-6">
           <div className="space-y-8">
 
-            <OverallReadiness
-              report={report}
-              issueCounts={issueCounts}
-              onViewIssues={() =>
-                navigate("/app/issues")
-              }
-            />
-
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
 
               <OverviewScoreCard
@@ -1524,7 +1482,6 @@ export default function Index({
 
             <PriorityIssues
               report={report}
-              products={products}
               onViewAll={() =>
                 navigate("/app/issues")
               }
