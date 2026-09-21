@@ -57,6 +57,16 @@ migrations = [
     ALTER TABLE audit_issues
     ADD COLUMN IF NOT EXISTS affected_product_ids JSON NOT NULL DEFAULT '[]'::json;
     """,
+    
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS fix_status VARCHAR(32) NOT NULL DEFAULT 'not_fixed';
+    """,
+    
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS fixed_at TIMESTAMPTZ;
+    """,
 ]
 for sql in migrations:
     try:

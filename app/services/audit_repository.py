@@ -16,7 +16,7 @@ from app.core.database import (
     AuditAgentDiscovery,
     AuditIssue,
 )
-
+from app.services.fix_engine import FixEngine
 
 def _new_id() -> str:
     return str(uuid.uuid4())
@@ -72,7 +72,10 @@ class AuditRepository:
             store_issues = issues.get("store") or []
             product_issues = issues.get("products") or []
 
-            issues_found = len(store_issues) + len(product_issues)
+            issues_found = (
+                sum(len(p.get("missing_enrichments") or []) for p in products)
+                + len(store_recs)
+            )
 
             audit = Audit(
                 id=_new_id(),
@@ -351,7 +354,6 @@ class AuditRepository:
 
             if store is None:
                 return None
-
             row = (
                 db.query(AuditProduct)
                 .join(Audit, AuditProduct.audit_id == Audit.id)
@@ -363,11 +365,53 @@ class AuditRepository:
                 .order_by(Audit.created_at.desc())
                 .first()
             )
-
             if row is None:
                 return None
 
-            return self._serialize_product(row)
+            issues = (
+                db.query(AuditIssue)
+                .filter(
+                    AuditIssue.audit_id == row.audit_id,
+                    AuditIssue.product_id == str(product_id),
+                )
+                .all()
+            )
+
+            product = self._serialize_product(row)
+
+            fix_engine = FixEngine()
+
+            product["issues"] = []
+
+            for issue in issues:
+                issue_data = {
+                    "id": issue.id,
+                    "check_id": issue.check_id,
+                    "issue_type": issue.issue_type,
+                    "status": issue.status,
+                    "description": issue.description,
+                    "product_id": issue.product_id,
+                    "variant_id": issue.variant_id,
+                    "field": issue.field,
+                    "affected_product_ids": issue.affected_product_ids or [],
+                    "scope": issue.scope,
+                    "fix_mode": issue.fix_mode,
+                    "fix_action": issue.fix_action,
+                }
+
+                if (
+                    issue.issue_type == "missing_product_url"
+                    and issue.fix_action == "update_product_handle"
+                ):
+                    suggestion = fix_engine.suggest_product_handle(
+                        product_title=row.title or "",
+                    )
+
+                    issue_data["suggested_handle"] = suggestion["suggested_handle"]
+
+                product["issues"].append(issue_data)
+
+            return product
 
     def get_audit_issues(self, audit_id: str) -> list[dict[str, Any]]:
         with safe_db("get_audit_issues") as db:

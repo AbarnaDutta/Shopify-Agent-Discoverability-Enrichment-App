@@ -7,6 +7,9 @@ from app.services.jobs import job_queue
 from app.services.product_fetcher import InvalidStoreURLError, normalize_store_url
 from pydantic import BaseModel
 from app.services.audit_repository import audit_repo
+from app.services.fix_engine import FixEngine
+from app.core.database import AuditIssue, safe_db
+import datetime as dt
 
 router = APIRouter()
 
@@ -197,3 +200,52 @@ def get_product(
         "shop_domain": shop_domain.strip(),
         "product": product,
     }
+
+class FixIssueRequest(BaseModel):
+    shop_domain: str
+    product_id: str
+    issue_id: str
+    check_id: str
+    issue_type: str
+    handle: str | None = None
+    attributes: list[dict[str, str]] | None = None
+    access_token: str
+
+
+@router.post("/products/fix")
+def fix_product_issue(payload: FixIssueRequest) -> dict:
+
+    if not payload.shop_domain.strip() or not payload.product_id.strip():
+        raise HTTPException(status_code=422, detail="shop_domain and product_id are required.")
+
+    fix_engine = FixEngine()
+    try:
+        result = fix_engine.execute(
+            check_id=payload.check_id,
+            issue_type=payload.issue_type,
+            product_id=payload.product_id,
+            handle=payload.handle,
+            attributes=payload.attributes,
+            shop_domain=payload.shop_domain.strip(),
+            access_token=payload.access_token,
+        )
+        with safe_db("record_fix") as db:
+            if db is not None:
+                issue = (
+                    db.query(AuditIssue)
+                    .filter(
+                        AuditIssue.id == payload.issue_id,
+                        AuditIssue.product_id == payload.product_id,
+                    )
+                    .one_or_none()
+                )
+
+                if issue is not None:
+                    issue.fix_status = "applied"
+                    issue.fixed_at = dt.datetime.now(dt.timezone.utc)
+                    db.commit()
+
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    return result

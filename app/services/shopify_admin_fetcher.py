@@ -158,6 +158,7 @@ query ProductsForAudit($cursor: String, $first: Int!) {
 
 def _compact_admin_product(
     product: dict[str, Any],
+    shop_domain: str,
 ) -> dict[str, Any]:
     variants = product.get("variants", {}).get("edges", [])
     media = product.get("media", {}).get("edges", [])
@@ -206,37 +207,49 @@ def _compact_admin_product(
             }
         )
 
-    raw_metafields = product.get("metafields", {}).get("edges") or []
-    metafields: dict[str, Any] = {}
-    for edge in raw_metafields:
-        node = edge.get("node") or {}
-        ns = node.get("namespace")
-        key = node.get("key")
-        if not ns or not key:
-            continue
-        full_key = f"{ns}.{key}"
-        metafields[full_key] = {
-            "namespace": ns,
-            "key": key,
-            "type": node.get("type"),
-            "value": node.get("value"),
-        }
+        raw_metafields = product.get("metafields", {}).get("edges") or []
+        metafields: dict[str, Any] = {}
 
-    return {
-        "id": product.get("id"),
-        "title": product.get("title"),
-        "handle": product.get("handle"),
-        "url": product.get("onlineStoreUrl"),
-        "vendor": product.get("vendor"),
-        "product_type": product.get("productType"),
-        "status": product.get("status"),
-        "tags": product.get("tags") or [],
-        "description": product.get("descriptionHtml") or "",
-        "options": product.get("options") or [],
-        "variants": compact_variants,
-        "images": compact_images,
-        "metafields": metafields,
-    }
+        for edge in raw_metafields:
+            node = edge.get("node") or {}
+            ns = node.get("namespace")
+            key = node.get("key")
+
+            if not ns or not key:
+                continue
+
+            full_key = f"{ns}.{key}"
+
+            metafields[full_key] = {
+                "namespace": ns,
+                "key": key,
+                "type": node.get("type"),
+                "value": node.get("value"),
+            }
+
+        handle = product.get("handle")
+        online_url = product.get("onlineStoreUrl")
+
+        url = online_url
+
+        if not url and shop_domain and handle:
+            url = f"{shop_domain.rstrip('/')}/products/{handle}"
+
+        return {
+            "id": product.get("id"),
+            "title": product.get("title"),
+            "handle": handle,
+            "url": url,
+            "vendor": product.get("vendor"),
+            "product_type": product.get("productType"),
+            "status": product.get("status"),
+            "tags": product.get("tags") or [],
+            "description": product.get("descriptionHtml") or "",
+            "options": product.get("options") or [],
+            "variants": compact_variants,
+            "images": compact_images,
+            "metafields": metafields,
+        }
 
 
 def fetch_products_admin(
@@ -293,7 +306,10 @@ def fetch_products_admin(
             product = edge.get("node") or {}
 
             products.append(
-                _compact_admin_product(product)
+                _compact_admin_product(
+                    product,
+                    shop_domain,
+                )
             )
 
             if (

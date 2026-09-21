@@ -200,6 +200,8 @@ class AuditIssue(Base):
     scope = Column(String(32), nullable=True)
     fix_mode = Column(String(32), nullable=False, default="unclassified")
     fix_action = Column(String(128), nullable=True)
+    fix_status = Column(String(32), nullable=False, default="not_fixed")
+    fixed_at = Column(DateTime(timezone=True), nullable=True)
 
     audit = relationship("Audit", back_populates="issues")
 
