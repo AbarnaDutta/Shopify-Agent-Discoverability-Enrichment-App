@@ -1,0 +1,8 @@
+.venv/
+venv
+__pycache__/
+*.pyc
+.github/
+.gitignore
+.ebignore
+.elasticbeanstalk

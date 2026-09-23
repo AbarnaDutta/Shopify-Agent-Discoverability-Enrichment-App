@@ -2431,7 +2431,10 @@ def check_agent_discovery_readiness(store_url: str) -> dict[str, Any]:
     for key, path in _AGENT_DISCOVERY_PATHS.items():
         results[key] = _fetch_agent_discovery_url(base + path)
 
-    bodies = {key: results[key].pop("_body", "") for key in results}
+    bodies = {
+    key: results[key].get("_body", "")
+    for key in results
+    }
 
     for key in ("agents_md", "llms_txt", "llms_full_txt"):
         info = results[key]
@@ -2486,7 +2489,11 @@ _AGENT_DISCOVERY_LABELS = {
     "llms_full_txt": "llms-full.txt",
     "ucp_manifest":  "/.well-known/ucp (UCP manifest)",
 }
-
+_AGENT_DISCOVERY_TEMPLATE_KEYS = (
+    "agents_md",
+    "llms_txt",
+    "llms_full_txt",
+)
 _AGENT_DISCOVERY_STATUS = {
     "served_custom":  ("✓", "Served and customized"),
     "served_default": ("⚠", "Served — still Shopify's default template"),

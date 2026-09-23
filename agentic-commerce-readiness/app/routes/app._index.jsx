@@ -1000,6 +1000,7 @@ export default function Index({
           text: "Report ready! A PDF copy has also been sent to your email.",
         });
 
+        setShowSteps(false);
         setIsRunning(false);
 
         try {
@@ -1145,6 +1146,7 @@ export default function Index({
 
     setErrorInfo(null);
     setStatus(null);
+    setReport(null);
     setIsRunning(true);
 
     resetSteps();
@@ -1324,13 +1326,12 @@ export default function Index({
   return (
     <div className="min-h-screen rounded-xl bg-[var(--acr-cream)] pb-24 pt-6 text-[var(--acr-black)]">
 
-      {/* ── Audit launcher + readiness ─────────────────────────── */}
+      {/* ── Audit launcher + progress + readiness ───────────────── */}
 
       <div className="mx-auto max-w-[1400px] px-4 md:px-6">
         <section className="overflow-hidden rounded-2xl border border-[#E1E3E5] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
           <div className="px-8 py-7">
             <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-
               <div>
                 <div className="mb-2 text-[13px] font-extrabold uppercase tracking-[0.14em] text-[#E87500]">
                   AGENTIC COMMERCE READINESS
@@ -1356,7 +1357,44 @@ export default function Index({
             </div>
           </div>
 
-          {report && (
+          {showSteps && (
+            <div className="border-t border-[#E1E3E5] px-8 py-7">
+              <div className="mx-auto max-w-[900px]">
+                <div className="flex flex-col text-left">
+                  <StepRow
+                    num="1"
+                    state={steps.submit}
+                    label="Submitting your store"
+                    sub="Validating URL and queuing your request"
+                  />
+
+                  <StepRow
+                    num="2"
+                    state={steps.fetch}
+                    label="Fetching product catalog"
+                    sub="Reading your Shopify store's public product data"
+                  />
+
+                  <StepRow
+                    num="3"
+                    state={steps.ai}
+                    label="Running AI analysis"
+                    sub={aiSub}
+                  />
+
+                  <StepRow
+                    num="4"
+                    state={steps.report}
+                    label="Generating your report"
+                    sub="Building recommendations and sending your PDF"
+                    isLast
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {report && !isRunning && (
             <div className="border-t border-[#E1E3E5]">
               <OverallReadiness
                 report={report}
@@ -1366,63 +1404,6 @@ export default function Index({
           )}
         </section>
       </div>
-
-      {showSteps && (
-        <div className="mx-auto max-w-[900px] px-6 pb-2">
-          <div className="flex flex-col text-left">
-
-            <StepRow
-              num="1"
-              state={steps.submit}
-              label="Submitting your store"
-              sub="Validating URL and queuing your request"
-            />
-
-            <StepRow
-              num="2"
-              state={steps.fetch}
-              label="Fetching product catalog"
-              sub="Reading your Shopify store's public product data"
-            />
-
-            <StepRow
-              num="3"
-              state={steps.ai}
-              label="Running AI analysis"
-              sub={aiSub}
-            />
-
-            <StepRow
-              num="4"
-              state={steps.report}
-              label="Generating your report"
-              sub="Building recommendations and sending your PDF"
-              isLast
-            />
-
-          </div>
-        </div>
-      )}
-
-      {status && (
-        <div
-          className={`mx-auto mt-3 flex max-w-[900px] items-center justify-center gap-2.5 rounded-full px-4.5 py-2.5 text-[13px] font-semibold ${
-            status.type === "success"
-              ? "bg-[#d1fae5] text-[#065f46]"
-              : "bg-[#fee2e2] text-[#991b1b]"
-          }`}
-        >
-          <span>
-            {status.type === "success"
-              ? "✅"
-              : "❌"}
-          </span>
-
-          <span>
-            {status.text}
-          </span>
-        </div>
-      )}
 
       {/* ── Error ───────────────────────────────────────────────── */}
 
@@ -1440,7 +1421,7 @@ export default function Index({
 
       {/* ── Actual audit dashboard ─────────────────────────────── */}
 
-      {report && (
+      {report && !isRunning && (
         <div className="mx-auto mt-8 max-w-[1400px] px-4 md:px-6">
           <div className="space-y-8">
 
