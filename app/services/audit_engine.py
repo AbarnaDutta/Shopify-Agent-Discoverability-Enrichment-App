@@ -79,15 +79,61 @@ def audit_products(
         batch_started = time.time()
 
         try:
+            print(f"[DEBUG] Sending batch {index} to Gemini")
+            print(f"[DEBUG] Batch product count: {len(batch)}")
+            print(f"[DEBUG] Product IDs: {[p.get('id') for p in batch]}")
+
             result = analyzer.analyze(
                 batch,
                 store_context or {},
                 store_url,
                 language,
             )
-        except Exception:
+
+            print(f"[DEBUG] Gemini returned successfully for batch {index}")
+            import json
+
+            print(f"[DEBUG] Batch {index} product count: {len(batch)}")
+
+            for p in batch:
+                print(
+                    f"[DEBUG] Product: {p.get('id')} | "
+                    f"title={p.get('title', '')[:80]} | "
+                    f"json_size={len(json.dumps(p, ensure_ascii=False))} chars"
+                )
+
+            print(
+                f"[DEBUG] Batch {index} total product JSON size: "
+                f"{len(json.dumps(batch, ensure_ascii=False))} chars"
+            )
+
+            print(
+                f"[DEBUG] Store context JSON size: "
+                f"{len(json.dumps(store_context or {}, ensure_ascii=False))} chars"
+            )
+
+        except Exception as e:
+            import traceback
+
+            print(f"[DEBUG] Gemini exception type: {type(e).__name__}")
+            print(f"[DEBUG] Gemini exception: {e}")
+            traceback.print_exc()
+
             if not fallback_to_bedrock or used_provider == "bedrock":
                 raise
+
+            print("[Audit] Primary provider failed; falling back to Bedrock for this batch.")
+
+            analyzer = get_bedrock_adapter()
+            used_provider = "bedrock"
+            used_model = getattr(analyzer, "model", "unknown")
+
+            result = analyzer.analyze(
+                batch,
+                store_context or {},
+                store_url,
+                language,
+            )
 
             print("[Audit] Primary provider failed; falling back to Bedrock for this batch.")
             analyzer = get_bedrock_adapter()
@@ -105,23 +151,10 @@ def audit_products(
 
     raw_report = merge_reports(reports)
 
-    product_check_ids = [
-        check["id"]
-        for checks in CHECKS.values()
-        for check in checks
-        if check["level"] == "product"
-    ]
-    store_check_ids = [
-        check["id"]
-        for category in CHECKS.values()
-        for check in category
-        if check["level"] == "store" and check["id"] != "consistency"
-    ]
-
     report = assemble_report_from_verdicts(
         raw_report,
-        store_check_ids,
-        product_check_ids,
+        products=products,         
+        store_context=store_context, 
     )
 
     report["provider"] = used_provider

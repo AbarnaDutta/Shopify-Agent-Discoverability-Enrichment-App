@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.issue_registry import get_issue_definition
+from app.services.issue_registry import (
+    get_issue_definition,
+    find_issue_definition,
+)
 
 
 def normalize_issue(
@@ -36,10 +39,14 @@ def normalize_issue(
         definition = get_issue_definition(check_id, issue_type)
 
         if definition is None:
-            raise ValueError(
-                f"Cannot normalize unknown existing issue "
-                f"{issue_type!r} for check {check_id!r}"
-            )
+            found = find_issue_definition(issue_type)
+
+            if found is None:
+                record["status"] = "new"
+                return record
+
+            canonical_check_id, definition = found
+            record["check_id"] = canonical_check_id
 
         fix_mode = definition.get("fix_mode")
         fix_action = definition.get("fix_action")

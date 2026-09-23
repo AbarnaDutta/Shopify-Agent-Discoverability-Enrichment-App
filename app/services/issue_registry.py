@@ -281,20 +281,13 @@ ISSUE_TYPES = {
     },
 
     "consistency": {
-        "inconsistent_metafield_keys": {
-            "scope": "store",
-            "fix_mode": "approval",
-            "fix_action": "normalize_metafield_structure",
-        },
+        "inconsistent_option_structure": {"scope": "store", "fix_mode": "approval", "fix_action": "normalize_option_structure"},
+        "inconsistent_metafield_structure": {"scope": "store", "fix_mode": "approval", "fix_action": "normalize_metafield_structure"},
+        "inconsistent_attribute_format": {"scope": "store", "fix_mode": "user_input", "fix_action": "normalize_attribute_formats"},
         "inconsistent_attribute_units": {
             "scope": "store",
             "fix_mode": "user_input",
             "fix_action": "normalize_attribute_units",
-        },
-        "inconsistent_attribute_formats": {
-            "scope": "store",
-            "fix_mode": "approval",
-            "fix_action": "normalize_attribute_formats",
         },
     },
 
@@ -400,6 +393,11 @@ ISSUE_TYPES = {
 def get_issue_definition(check_id: str, issue_type: str) -> dict | None:
     return ISSUE_TYPES.get(check_id, {}).get(issue_type)
 
+def find_issue_definition(issue_type: str) -> tuple[str, dict] | None:
+    for check_id, issues in ISSUE_TYPES.items():
+        if issue_type in issues:
+            return check_id, issues[issue_type]
+    return None
 
 def is_valid_issue_type(check_id: str, issue_type: str) -> bool:
     return issue_type in ISSUE_TYPES.get(check_id, {})

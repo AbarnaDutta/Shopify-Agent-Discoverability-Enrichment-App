@@ -1007,45 +1007,80 @@
     // Overall score → donut (band label lives inside the ring), remaining 4 scores → bars
     function renderReadinessScores(report, labels) {
       const s = report.readiness_scores || {};
-      const overall = Number.isFinite(s.overall) ? Math.max(0, Math.min(100, Math.round(s.overall))) : 0;
-      const band = scoreBand(overall);
-      const donutColor = band === 'strong' ? '#16a34a' : band === 'fair' ? '#d97706' : '#dc2626';
+
+      const overall =
+        Number.isFinite(s.overall)
+          ? Math.max(0, Math.min(100, Math.round(s.overall)))
+          : null;
 
       const barItems = [
-        [labels.scoreUcp, s.ucp_commerce_flows],
-        [labels.scoreMcp, s.mcp_knowledge],
-        [labels.scoreCatalog, s.catalog_enrichment],
-        [labels.scoreSafety, s.safety_policies],
+        ["ucp_commerce_flows", labels.scoreUcp],
+        ["mcp_knowledge", labels.scoreMcp],
+        ["catalog_enrichment", labels.scoreCatalog],
+        ["safety_policies", labels.scoreSafety],
       ];
 
-      const bars = barItems.map(([label, raw]) => {
-        const value = Number.isFinite(raw) ? Math.max(0, Math.min(100, Math.round(raw))) : 0;
-        const b = scoreBand(value);
-        return `
-          <div class="score-bar-row">
-            <div class="score-bar-top">
-              <span class="score-bar-label">${esc(label)}</span>
-              <span class="score-bar-value">${value}/100</span>
-            </div>
-            <div class="score-bar-track"><div class="score-bar-fill ${b}" style="width:${value}%"></div></div>
-          </div>`;
-      }).join('');
+      const bars = barItems
+        .filter(([key]) => Number.isFinite(s[key]))
+        .map(([key, label]) => {
+          const value = Math.max(
+            0,
+            Math.min(100, Math.round(s[key]))
+          );
+
+          const b = scoreBand(value);
+
+          return `
+            <div class="score-bar-row">
+              <div class="score-bar-top">
+                <span class="score-bar-label">${esc(label)}</span>
+                <span class="score-bar-value">${value}/100</span>
+              </div>
+              <div class="score-bar-track">
+                <div
+                  class="score-bar-fill ${b}"
+                  style="width:${value}%"
+                ></div>
+              </div>
+            </div>`;
+        })
+        .join('');
+
+      if (overall === null) {
+        return '';
+      }
+
+      const band = scoreBand(overall);
+      const donutColor =
+        band === 'strong'
+          ? '#16a34a'
+          : band === 'fair'
+            ? '#d97706'
+            : '#dc2626';
 
       return `
         <div class="score-overview">
           <div class="score-donut-wrap">
-            <div class="score-donut ${band}" style="background: conic-gradient(${donutColor} ${overall * 3.6}deg, #eee9e0 0deg);">
+            <div
+              class="score-donut ${band}"
+              style="background: conic-gradient(${donutColor} ${overall * 3.6}deg, #eee9e0 0deg);"
+            >
               <div class="donut-inner">
                 <div class="donut-pct">${overall}%</div>
-                <div class="donut-status">${esc(bandLabel(overall, labels))}</div>
+                <div class="donut-status">
+                  ${esc(bandLabel(overall, labels))}
+                </div>
               </div>
             </div>
-            <div class="donut-caption">${esc(labels.scoreOverall)}</div>
+
+            <div class="donut-caption">
+              ${esc(labels.scoreOverall)}
+            </div>
           </div>
+
           <div class="score-bars">${bars}</div>
         </div>`;
     }
-
     // Priority pill row — counts of high/medium/low across store + product recommendations
     function renderPriorityPills(report, products, labels) {
       const storeRecs = report.store_level_recommendations || [];

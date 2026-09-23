@@ -17,11 +17,7 @@ import time
 from app.core.config import get_app_settings
 import random
 from app.services.product_fetcher import (
-    ShopifyConfig,
-    compact_product,
-    fetch_products_public,
     normalize_store_url,
-    EmptyStoreError,
 )
 from app.services.scoring_rubric import (
     CHECKS, compute_scores, build_product_recommendations, build_store_recommendations,
@@ -29,11 +25,24 @@ from app.services.scoring_rubric import (
 from app.services.issue_registry import (
     ISSUE_TYPES,
     is_valid_issue_type,
+    find_issue_definition,
 )
 from app.services.issue_discovery import normalize_issue
 import tempfile
 
 from typing import Protocol
+from app.services.deterministic_checks import (
+    run_product_deterministic_checks,
+    run_store_deterministic_checks,
+    check_catalog_consistency,
+    check_description_presence,      
+    check_product_type_presence,     
+)
+
+from app.services.scoring_rubric import (
+    llm_product_check_ids,
+    llm_store_check_ids,
+)
 
 class LLMAdapter(Protocol):
     """Common interface all LLM adapters must satisfy."""
@@ -201,13 +210,15 @@ def _classify_llm_error(message: str, status_code: int | None = None) -> None:
         )
 
 def _rubric_prompt_block() -> str:
+    llm_ids = set(llm_product_check_ids()) | set(llm_store_check_ids())
     lines = []
-    for category, checks in CHECKS.items():
+    for category, checks in CHECKS.items():   
         for c in checks:
+            if c["id"] not in llm_ids:
+                continue
             scope = "STORE-WIDE (evaluate once for the whole store)" if c["level"] == "store" else "PER-PRODUCT (evaluate for each product)"
             lines.append(f"- [{c['id']}] ({scope}) {c['desc']}")
     return "\n".join(lines)
-
 
 def build_prompt(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, language: str = "English") -> str:
     issue_registry_block = "\n".join(
@@ -265,11 +276,37 @@ where applicable:
 - naming conventions
 - missing fields among otherwise similar products
 - different representations of the same kind of information
+For any actual measurement values found in the supplied product data, also populate
+`measurement_observations`.
+
+Each measurement observation MUST contain:
+- `product_id`: the exact product ID where the measurement was observed.
+- `field`: the actual attribute/field the measurement belongs to, such as volume, weight, size, dimensions, capacity, or another field discovered from the data.
+- `raw_value`: the exact measurement value as represented in the supplied data.
+- `unit`: the unit actually used in the raw value.
+- `dimension`: the physical measurement dimension represented by that unit/value, discovered from the data.
+
+Examples:
+- "1 L" → unit "L", dimension "volume"
+- "500 ml" → unit "ml", dimension "volume"
+- "1 kg" → unit "kg", dimension "mass"
+- "500 g" → unit "g", dimension "mass"
+
+Important:
+- Do not invent measurements that are not present in the product payload.
+- Do not convert values.
+- Do not decide whether two measurements are consistent or inconsistent.
+- Do not treat different unit strings as automatically inconsistent.
+- Units representing the same physical dimension should have the same dimension value.
+- Different physical dimensions must have different dimension values.
+- Only extract a measurement observation when an actual measurement and unit are present in the supplied data.
+- Preserve the exact raw representation from the product data.
 
 Do not assume predefined fields, units, product categories, or formats.
 Discover them from the supplied product data.
 
-Return these observations in the `consistency_observations` field.
+Return these observations in the `consistency_observations` field, including
+`measurement_observations` whenever actual measurements are present.
 Do not make a final pass/partial/fail decision for consistency in this batch.
 Do not invent values or observations that are not present in the supplied payload.
 The response must be valid JSON matching the provided response schema.
@@ -326,6 +363,25 @@ Never omit "description" — it must always be a non-empty factual sentence expl
 specific problem observed, even for existing/canonical issue types.
 
 For "pass" and "na", return an empty issues array.
+STRICT ISSUE REQUIREMENT:
+
+For every check with verdict "partial" or "fail":
+
+- issues MUST contain at least one issue.
+- Do NOT return an empty issues array.
+- Every issue MUST describe a concrete problem actually observed
+  in the supplied store/product data.
+- The issue MUST NOT simply repeat the rubric/check description.
+- "enrichment" MUST describe the discovered issue, not what the
+  check is intended to evaluate.
+- "why_it_matters_for_agents" MUST explain the agent impact of
+  the discovered issue.
+- "example" MUST give a concrete example from the observed data
+  whenever possible.
+- These three fields MUST NOT be empty.
+
+For a "pass" or "na" verdict:
+- issues MUST be [].
 
 Canonical issue types:
 {issue_registry_block}
@@ -335,6 +391,15 @@ STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` RULES:
   applies to specific identifiable products beyond a single product's own missing_enrichments.
   - For consistency observations, include the actual product IDs affected by the observed
   inconsistency when those products are identifiable from the batch.
+  For `measurement_observations`:
+- Return one observation for each actual measurement that can be identified.
+- Use the exact product_id from the supplied payload.
+- Use the actual field/attribute containing the measurement.
+- Preserve the exact raw_value.
+- Extract the unit from the actual value.
+- Infer the physical dimension from the observed measurement semantics.
+- Do not generate a consistency verdict.
+- Do not generate `inconsistent_attribute_units` yourself.
 - For other Store-wide checks (fulfillment_context, policy_semantics, faq_or_guidance, store_guardrails, legal_pages, contact_brand) always use an empty array — they are not
   product-specific by definition.
 - Never invent product IDs.
@@ -442,6 +507,7 @@ def _check_verdict_schema() -> dict:
                     "properties": {
                         "issue_type": {
                             "type": "STRING",
+                            "minLength": 1,
                         },
                         "status": {
                             "type": "STRING",
@@ -449,6 +515,7 @@ def _check_verdict_schema() -> dict:
                         },
                         "description": {
                             "type": "STRING",
+                            "minLength": 1,
                         },
                     },
                     "required": [
@@ -461,12 +528,15 @@ def _check_verdict_schema() -> dict:
             },
             "enrichment": {
                 "type": "STRING",
+                "minLength": 1,
             },
             "why_it_matters_for_agents": {
                 "type": "STRING",
+                "minLength": 1,
             },
             "example": {
                 "type": "STRING",
+                "minLength": 1,
             },
         },
         "required": [
@@ -481,19 +551,9 @@ def _check_verdict_schema() -> dict:
     }
 
 def enrichment_report_schema() -> dict[str, Any]:
-    product_check_ids = list(dict.fromkeys(
-        c["id"]
-        for checks in CHECKS.values()
-        for c in checks
-        if c["level"] == "product"
-    ))
+    product_check_ids = llm_product_check_ids()
 
-    store_check_ids = list(dict.fromkeys(
-        c["id"]
-        for checks in CHECKS.values()
-        for c in checks
-        if c["level"] == "store"
-    ))
+    store_check_ids = llm_store_check_ids()
 
     return {
         "type": "OBJECT",
@@ -598,16 +658,125 @@ def enrichment_report_schema() -> dict[str, Any]:
         ],
     }
 
+def _gemini_consistency_observations_schema() -> dict:
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "fields_observed": {
+                "type": "OBJECT",
+                "properties": {},
+                "additionalProperties": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
+            "option_names": {"type": "ARRAY", "items": {"type": "STRING"}},
+            "product_types": {"type": "ARRAY", "items": {"type": "STRING"}},
+            "format_variations": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "field": {"type": "STRING"},
+                        "formats": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    },
+                    "required": ["field", "formats"],
+                },
+            },
+            "measurement_observations": {
+                "type": "array",
+                "description": "Structured observations of actual measurements found in the product batch. These are factual extractions only; they are not consistency verdicts.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "product_id": {
+                            "type": "string",
+                        },
+                        "field": {
+                            "type": "string",
+                        },
+                        "raw_value": {
+                            "type": "string",
+                        },
+                        "unit": {
+                            "type": "string",
+                        },
+                        "dimension": {
+                            "type": "string",
+                        },
+                    },
+                    "required": [
+                        "product_id",
+                        "field",
+                        "raw_value",
+                        "unit",
+                        "dimension",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "issues": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "issue_type": {"type": "STRING"},
+                        "status": {"type": "STRING", "enum": ["existing", "new"]},
+                        "field": {"type": "STRING"},
+                        "description": {"type": "STRING"},
+                        "affected_product_ids": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    },
+                    "required": ["issue_type", "status", "field", "description", "affected_product_ids"],
+                },
+            },
+        },
+        "required": [
+            "fields_observed",
+            "option_names",
+            "product_types",
+            "format_variations",
+            "measurement_observations",
+            "issues",
+        ],
+    }
+
+def _gemini_verdict_schema() -> dict[str, Any]:
+    product_ids = llm_product_check_ids()
+    store_ids = llm_store_check_ids()
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "store_verdicts": {
+                "type": "OBJECT",
+                "properties": {cid: _check_verdict_schema() for cid in store_ids},
+                "required": store_ids,
+            },
+            "products": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "product_id": {"type": "STRING"},
+                        "title": {"type": "STRING"},
+                        "verdicts": {
+                            "type": "OBJECT",
+                            "properties": {cid: _check_verdict_schema() for cid in product_ids},
+                            "required": product_ids,
+                        },
+                    },
+                    "required": ["product_id", "title", "verdicts"],
+                },
+            },
+            "consistency_observations": _gemini_consistency_observations_schema(),  
+        },
+        "required": ["store_verdicts", "products", "consistency_observations"],
+    }
+
 def _expected_response_shape_example() -> str:
     """Literal JSON example of the exact response shape, generated from CHECKS
     so it can't drift from the rubric. Built with json.dumps and inserted into
     the prompt as a variable — never hand-typed literal braces in the f-string."""
-    product_check_ids = list(dict.fromkeys(
-        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "product"
-    ))
-    store_check_ids = list(dict.fromkeys(
-        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "store"
-    ))
+    
+    product_check_ids = llm_product_check_ids()
+
+    store_check_ids = llm_store_check_ids()
 
     def _example_check(cid: str) -> dict:
         return {
@@ -716,23 +885,38 @@ def _extract_verdicts_and_texts(
                 continue
 
             issue_type = issue.get("issue_type")
-            status = issue.get("status")
             description = issue.get("description")
 
             if not issue_type or not isinstance(issue_type, str):
                 print(f"[Warning] Issue for {cid} missing/invalid issue_type — skipping")
                 continue
 
-            if status not in ("existing", "new"):
-                print(f"[Warning] Invalid issue status {status!r} for {cid} — defaulting to 'new'")
-                status = "new"
+            status = "existing" if is_valid_issue_type(cid, issue_type) else "new"
 
             if not description:
                 description = f"Observed issue: {issue_type.replace('_', ' ')}."
 
-            if status == "existing" and not is_valid_issue_type(cid, issue_type):
-                print(f"[Warning] Unknown existing issue_type {issue_type!r} for {cid} — treating as 'new'")
-                status = "new"
+            if is_valid_issue_type(cid, issue_type):
+                status = "existing"
+
+            else:
+                found = find_issue_definition(issue_type)
+
+                if found is not None:
+                    canonical_check_id, _ = found
+                    status = "existing"
+
+                    print(
+                        f"[Issue Mapping] {issue_type!r} "
+                        f"from check {cid!r} → canonical check {canonical_check_id!r}"
+                    )
+                else:
+                    status = "new"
+
+                    print(
+                        f"[Issue Discovery] New unregistered issue "
+                        f"{issue_type!r} under check {cid!r}"
+                    )
 
             normalized_issues.append({
                 "issue_type": issue_type,
@@ -744,6 +928,18 @@ def _extract_verdicts_and_texts(
             dropped = [i["issue_type"] for i in normalized_issues]
             print(f"[Warning] {cid} has issues {dropped} but verdict is {verdict} — dropping issues, keeping verdict")
             normalized_issues = []
+        if verdict in ("partial", "fail") and normalized_issues:
+            has_existing_issue = any(
+                issue["status"] == "existing"
+                for issue in normalized_issues
+            )
+
+            if not has_existing_issue:
+                print(
+                    f"[Issue Discovery] {cid} has only new/unregistered issues "
+                    f"— excluding them from scoring."
+                )
+                verdict = "na"
 
         verdicts[cid] = verdict
         texts[cid] = {k: entry.get(k, "") for k in ("enrichment", "why_it_matters_for_agents", "example")}
@@ -753,13 +949,30 @@ def _extract_verdicts_and_texts(
 
 def assemble_report_from_verdicts(
     raw_response: dict[str, Any],
-    store_check_ids: list[str],
-    product_check_ids: list[str],
+    products: list[dict[str, Any]],
+    store_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    
+    _product_lookup = {str(p.get("id") or p.get("product_id")): p for p in products}
+    consistency_observations = raw_response.get(
+        "consistency_observations",
+        {}
+    )
+    # LLM-only verdicts (existing extraction, but only for llm_store_check_ids())
     store_verdicts, store_texts, store_issues = _extract_verdicts_and_texts(
         {"verdicts": raw_response.get("store_verdicts", {})},
-        store_check_ids,
+        llm_store_check_ids(), 
     )
+
+    
+    deterministic_store = run_store_deterministic_checks(store_context)
+    for cid, result in deterministic_store.items():
+        store_verdicts[cid] = result["verdict"]
+        store_texts[cid] = {
+            "enrichment": "", "why_it_matters_for_agents": "", "example": "",
+        }
+        
+
     normalized_store_issues = []
 
     for check_id, issue_list in store_issues.items():
@@ -771,47 +984,68 @@ def assemble_report_from_verdicts(
                 )
             )
 
-    consistency_observations = raw_response.get("consistency_observations") or {
-        "fields_observed": {},
-        "option_names": [],
-        "product_types": [],
-        "format_variations": [],
-        "issues": [],
-    }
+    for cid, result in deterministic_store.items():
+        for issue in result.get("issues", []):
+            normalized_store_issues.append(
+                normalize_issue(
+                    check_id=cid,
+                    issue=issue,
+                )
+            )
 
-    valid_product_ids = {
-        str(p.get("product_id"))
-        for p in raw_response.get("products", [])
-        if p.get("product_id")
-    }
 
-    for issue in consistency_observations.get("issues", []):
-        issue["affected_product_ids"] = [
-            str(product_id)
-            for product_id in (issue.get("affected_product_ids") or [])
-            if str(product_id) in valid_product_ids
-        ]
+    # ---------------------------------------------------------
+    # DETERMINISTIC CATALOG CONSISTENCY
+    # ---------------------------------------------------------
 
-    consistency_result = evaluate_consistency_observations(
-        consistency_observations,
-        total_product_count=len(raw_response.get("products", [])),
+    deterministic_consistency = check_catalog_consistency(
+        products,
+        consistency_observations.get("measurement_observations"),
     )
 
-    store_verdicts["consistency"] = consistency_result["verdict"]
-    store_texts["consistency"] = {
-        key: consistency_result.get(key, "")
-        for key in ("enrichment", "why_it_matters_for_agents", "example")
-    }
-    for issue in consistency_observations.get("issues", []):
-        issue_type = issue["issue_type"]
-        status = issue.get("status", "existing")
+    print("\n" + "=" * 80)
+    print("[AUDIT DEBUG] DETERMINISTIC CONSISTENCY")
+    print("=" * 80)
+    print(f"Products supplied: {len(products)}")
+    print(f"Verdict: {deterministic_consistency.get('verdict')}")
+    print(f"Evidence: {deterministic_consistency.get('evidence')}")
+    print(
+        f"Affected product IDs: "
+        f"{deterministic_consistency.get('affected_product_ids', [])}"
+    )
+    print(
+        f"Issue count: "
+        f"{len(deterministic_consistency.get('issues', []))}"
+    )
+    print(
+        json.dumps(
+            deterministic_consistency.get("issues", []),
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+    print("=" * 80)
 
-        if status == "existing" and not is_valid_issue_type("consistency", issue_type):
-            print(
-                f"[Warning] Unknown existing issue_type {issue_type!r} for consistency "
-                f"(registered under a different check) — treating as 'new'"
-            )
-            status = "new"
+    store_verdicts["consistency"] = deterministic_consistency["verdict"]
+
+    store_texts["consistency"] = {
+        "enrichment": "",
+        "why_it_matters_for_agents": "",
+        "example": "",
+    }
+
+    for issue in deterministic_consistency.get("issues", []):
+        issue_type = issue.get("issue_type")
+        description = issue.get("description")
+
+        if not issue_type or not description:
+            continue
+
+        status = (
+            "existing"
+            if is_valid_issue_type("consistency", issue_type)
+            else "new"
+        )
 
         normalized_store_issues.append(
             normalize_issue(
@@ -819,52 +1053,124 @@ def assemble_report_from_verdicts(
                 issue={
                     "issue_type": issue_type,
                     "status": status,
-                    "description": issue["description"],
+                    "description": description,
                 },
                 field=issue.get("field"),
-                affected_product_ids=issue.get("affected_product_ids") or [],
+                affected_product_ids=(
+                    issue.get("affected_product_ids") or []
+                ),
             )
         )
+
     all_product_verdicts = {}
     all_product_texts: dict[str, dict] = {}
-    all_product_issues: dict[str, dict] = {}
     normalized_product_issues = []
     products_out = []
 
     for p in raw_response.get("products", []):
         pid = p.get("product_id")
-        v, t, i = _extract_verdicts_and_texts(p, product_check_ids)
+
+        v, t, i = _extract_verdicts_and_texts(p, llm_product_check_ids())  
+
+        raw_product = _product_lookup.get(str(pid))
+        deterministic = run_product_deterministic_checks(raw_product) if raw_product else {}
+        for cid, result in deterministic.items():
+            v[cid] = result["verdict"]
+            t[cid] = {"enrichment": "", "why_it_matters_for_agents": "", "example": ""}
+            i[cid] = result.get("issues", [])
+
+        if raw_product:
+            empty_desc = check_description_presence(raw_product)
+            if empty_desc is not None:
+                check_id = "product_understanding"
+
+                v[check_id] = empty_desc["verdict"]
+                t[check_id] = {
+                    "enrichment": "Add Product Description",
+                    "why_it_matters_for_agents": "An empty description gives agents nothing to work with when answering customer questions.",
+                    "example": f"Add a description for '{raw_product.get('title')}' explaining what it is and intended use.",
+                }
+                i[check_id] = empty_desc.get("issues", [])
+
+            empty_type = check_product_type_presence(raw_product)
+            if empty_type is not None and v.get("comparable_attributes") == "pass":
+                v["comparable_attributes"] = "partial"
+                i["comparable_attributes"] = i.get("comparable_attributes", []) + empty_type.get("issues", [])
+
         all_product_verdicts[pid] = v
         all_product_texts[pid] = t
-        all_product_issues[pid] = i
         for check_id, issue_list in i.items():
             for issue in issue_list:
-                normalized_product_issues.append(
-                    normalize_issue(
-                        check_id=check_id,
-                        issue=issue,
-                        product_id=pid,
-                    )
-                )
+                normalized_product_issues.append(normalize_issue(check_id=check_id, issue=issue, product_id=pid))
+
         products_out.append({
             "product_id": pid,
             "title": p.get("title"),
-            "missing_enrichments": build_product_recommendations(v, t),
+            "missing_enrichments": build_product_recommendations(
+                                        v,
+                                        t,
+                                        [
+                                            {
+                                                **issue,
+                                                "check_id": check_id,
+                                            }
+                                            for check_id, issue_list in i.items()
+                                            for issue in issue_list
+                                        ],
+                                    ),
         })
 
     scores = compute_scores(all_product_verdicts, store_verdicts)
-    store_recs = build_store_recommendations(store_verdicts, store_texts, all_product_verdicts, all_product_texts)
+    store_recs = build_store_recommendations(store_verdicts, store_texts, all_product_verdicts, all_product_texts, normalized_store_issues,)
+    print("\n" + "=" * 80)
+    print("[AUDIT DEBUG] FINAL ASSEMBLED REPORT")
+    print("=" * 80)
 
+    print("[Scores]")
+    print(json.dumps(scores, indent=2, ensure_ascii=False))
+
+    print("\n[Store Verdicts]")
+    print(json.dumps(store_verdicts, indent=2, ensure_ascii=False))
+
+    print("\n[Store Issues]")
+    print(
+        f"Count: {len(normalized_store_issues)}"
+    )
+    print(
+        json.dumps(
+            normalized_store_issues,
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
+    print("\n[Product Issues]")
+    print(
+        f"Count: {len(normalized_product_issues)}"
+    )
+
+    print("\n[Store Recommendations]")
+    print(
+        f"Count: {len(store_recs)}"
+    )
+
+    print("\n[Consistency Observations — diagnostic only]")
+    print(
+        json.dumps(
+            consistency_observations,
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
+    print("=" * 80 + "\n")
     return {
-    "readiness_scores": scores,
-    "store_level_recommendations": store_recs,
-    "products": products_out,
-    "consistency_observations": consistency_observations,
-    "issues": {
-        "store": normalized_store_issues,
-        "products": normalized_product_issues,
-    },
-}
+        "readiness_scores": scores,
+        "store_level_recommendations": store_recs,
+        "products": products_out,
+        "consistency_observations": consistency_observations,
+        "issues": {"store": normalized_store_issues, "products": normalized_product_issues},
+    }
 
 def analyze_with_gemini(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, model: str, language="English") -> dict[str, Any]:
     _gemini_rate_limit()
@@ -887,6 +1193,7 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_context: dict[str,
         ],
         "generationConfig": {
             "responseMimeType": "application/json",
+            "responseJsonSchema": _gemini_verdict_schema(),
             "temperature": 0.0,
             "topK": 1,
             "topP": 1.0,
@@ -1007,7 +1314,7 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_context: dict[str,
         text = candidate["content"]["parts"][0]["text"]
 
         print("RAW RESPONSE:")
-        print(text[:3000])
+        print(text)
 
         try:
             report = json.loads(text)
@@ -1024,6 +1331,8 @@ def analyze_with_gemini(products: list[dict[str, Any]], store_context: dict[str,
     report.setdefault("provider", "gemini")
     report.setdefault("store_url", store_url)
     return report
+
+
 
 def analyze_with_bedrock_claude(
     products: list[dict[str, Any]],
@@ -1260,26 +1569,7 @@ def escape_html(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
-_READINESS_KEYS = [
-    "ucp_commerce_flows",
-    "mcp_knowledge",
-    "catalog_enrichment",
-    "safety_policies",
-]
 
-
-def normalize_readiness_scores(raw: Any) -> dict[str, int]:
-    """Clamp/validate readiness scores from an LLM response; fills gaps with 0."""
-    raw = raw if isinstance(raw, dict) else {}
-    scores: dict[str, int] = {}
-    for key in _READINESS_KEYS:
-        try:
-            value = int(round(float(raw.get(key, 0))))
-        except (TypeError, ValueError):
-            value = 0
-        scores[key] = max(0, min(100, value))
-    scores["overall"] = round(sum(scores[key] for key in _READINESS_KEYS) / len(_READINESS_KEYS))
-    return scores
 
 
 def priority_class(priority: str | None) -> str:
@@ -1625,18 +1915,43 @@ def render_executive_summary(
 
 
 
-def render_readiness_scores(scores: dict[str, int], labels: dict[str, str]) -> str:
-    items = [
-        (labels["score_overall"], scores.get("overall", 0)),
-        (labels["score_ucp"], scores.get("ucp_commerce_flows", 0)),
-        (labels["score_mcp"], scores.get("mcp_knowledge", 0)),
-        (labels["score_catalog"], scores.get("catalog_enrichment", 0)),
-        (labels["score_safety"], scores.get("safety_policies", 0)),
-        
-    ]
+def render_readiness_scores(
+    scores: dict[str, int],
+    labels: dict[str, str],
+) -> str:
+
+    items = []
+
+    if "overall" in scores:
+        items.append(
+            (labels["score_overall"], scores["overall"])
+        )
+
+    if "ucp_commerce_flows" in scores:
+        items.append(
+            (labels["score_ucp"], scores["ucp_commerce_flows"])
+        )
+
+    if "mcp_knowledge" in scores:
+        items.append(
+            (labels["score_mcp"], scores["mcp_knowledge"])
+        )
+
+    if "catalog_enrichment" in scores:
+        items.append(
+            (labels["score_catalog"], scores["catalog_enrichment"])
+        )
+
+    if "safety_policies" in scores:
+        items.append(
+            (labels["score_safety"], scores["safety_policies"])
+        )
+
+    if not items:
+        return ""
 
     def band(value: int) -> str:
-        if value >= 70:
+        if value >= 60:
             return "strong"
         if value >= 40:
             return "fair"
@@ -1645,14 +1960,16 @@ def render_readiness_scores(scores: dict[str, int], labels: dict[str, str]) -> s
     cards = "".join(
         f"""
         <div class="score-card">
-          <div class="score-circle score-circle--{band(value)}"><span>{value}</span></div>
+          <div class="score-circle score-circle--{band(value)}">
+            <span>{value}</span>
+          </div>
           <p class="score-card__label">{escape_html(label)}</p>
         </div>
         """
         for label, value in items
     )
-    return f'<section class="section readiness-scores">{cards}</section>'
 
+    return f'<section class="section readiness-scores">{cards}</section>'
 
 def render_pdf_html(
     report: dict[str, Any],
@@ -2284,8 +2601,6 @@ def _merge_store_verdicts(
             verdict = entry["verdict"]
             counts[verdict] = counts.get(verdict, 0) + 1
 
-        # Majority wins.
-        # Exact tie → more conservative verdict wins.
         winning_verdict = max(
             counts,
             key=lambda v: (counts[v], order[v]),
@@ -2325,12 +2640,7 @@ def _merge_store_verdicts(
     return merged
 def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     """Merge raw batch verdicts and consistency observations."""
-    store_check_ids = [
-        c["id"]
-        for checks in CHECKS.values()
-        for c in checks
-        if c["level"] == "store" and c["id"] != "consistency"
-    ]
+    store_check_ids = llm_store_check_ids()
 
     by_id: dict[str, dict[str, Any]] = {}
 
@@ -2346,6 +2656,7 @@ def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
         "option_names": [],
         "product_types": [],
         "format_variations": [],
+        "measurement_observations": [],
         "issues": [],
     }
 
@@ -2367,7 +2678,7 @@ def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
             if value not in merged_consistency["option_names"]:
                 merged_consistency["option_names"].append(value)
 
-        # Merge product types.
+         # Merge product types.
         for value in observations.get("product_types") or []:
             if value not in merged_consistency["product_types"]:
                 merged_consistency["product_types"].append(value)
@@ -2377,221 +2688,76 @@ def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
             if variation not in merged_consistency["format_variations"]:
                 merged_consistency["format_variations"].append(variation)
 
-                # Merge consistency issues across batches.
-                consistency_issue_map: dict[tuple[str, str], dict[str, Any]] = {}
+        # Merge structured measurement observations.
+        for observation in observations.get("measurement_observations") or []:
+            if not isinstance(observation, dict):
+                continue
 
-                for existing_issue in merged_consistency["issues"]:
-                    key = (
-                        str(existing_issue.get("issue_type", "")),
-                        str(existing_issue.get("field", "")),
-                    )
-                    consistency_issue_map[key] = existing_issue
+            if observation not in merged_consistency["measurement_observations"]:
+                merged_consistency["measurement_observations"].append(
+                    observation
+                )
 
-                for issue in observations.get("issues") or []:
-                    issue_type = str(issue.get("issue_type", "")).strip()
-                    field = str(issue.get("field", "")).strip()
+        # Merge consistency issues across batches.
+        consistency_issue_map: dict[tuple[str, str], dict[str, Any]] = {}
 
-                    key = (issue_type, field)
+        for existing_issue in merged_consistency["issues"]:
+            key = (
+                str(existing_issue.get("issue_type", "")),
+                str(existing_issue.get("field", "")),
+            )
+            consistency_issue_map[key] = existing_issue
 
-                    if key not in consistency_issue_map:
-                        consistency_issue_map[key] = {
-                            "issue_type": issue_type,
-                            "status": issue.get("status", "existing"),
-                            "field": field,
-                            "description": issue.get("description", ""),
-                            "affected_product_ids": [],
-                        }
+        for issue in observations.get("issues") or []:
+            issue_type = str(issue.get("issue_type", "")).strip()
+            field = str(issue.get("field", "")).strip()
 
-                    merged_issue = consistency_issue_map[key]
+            key = (issue_type, field)
 
-                    if not merged_issue.get("description") and issue.get("description"):
-                        merged_issue["description"] = issue["description"]
+            if key not in consistency_issue_map:
+                consistency_issue_map[key] = {
+                    "issue_type": issue_type,
+                    "status": issue.get("status", "existing"),
+                    "field": field,
+                    "description": issue.get("description", ""),
+                    "affected_product_ids": [],
+                }
 
-                    if merged_issue.get("status") != "existing" and issue.get("status") == "existing":
-                        merged_issue["status"] = "existing"
+            merged_issue = consistency_issue_map[key]
 
-                    existing_ids = set(
-                        str(pid)
-                        for pid in merged_issue.get("affected_product_ids", []) or []
-                        if pid
-                    )
+            if (
+                not merged_issue.get("description")
+                and issue.get("description")
+            ):
+                merged_issue["description"] = issue["description"]
 
-                    for pid in issue.get("affected_product_ids", []) or []:
-                        if pid:
-                            existing_ids.add(str(pid))
+            if (
+                merged_issue.get("status") != "existing"
+                and issue.get("status") == "existing"
+            ):
+                merged_issue["status"] = "existing"
 
-                    merged_issue["affected_product_ids"] = sorted(existing_ids)
+            existing_ids = set(
+                str(pid)
+                for pid in merged_issue.get("affected_product_ids", []) or []
+                if pid
+            )
 
-                merged_consistency["issues"] = list(consistency_issue_map.values())
+            for pid in issue.get("affected_product_ids", []) or []:
+                if pid:
+                    existing_ids.add(str(pid))
+
+            merged_issue["affected_product_ids"] = sorted(existing_ids)
+
+        merged_consistency["issues"] = list(
+            consistency_issue_map.values()
+        )
 
     return {
         "store_verdicts": _merge_store_verdicts(reports, store_check_ids),
         "products": list(by_id.values()),
         "consistency_observations": merged_consistency,
     }
-
-def evaluate_consistency_observations(
-    observations: dict[str, Any],
-    total_product_count: int,
-) -> dict[str, Any]:
-    """
-    Evaluate the final store-wide consistency check from merged batch observations.
-
-    This check is deterministic: the AI supplies observations, while Python
-    decides the final verdict.
-    """
-    issues = observations.get("issues") or []
-
-    if not issues:
-        return {
-            "verdict": "pass",
-            "evidence": "No catalog consistency issues were observed across the analyzed batches.",
-            "enrichment": "",
-            "why_it_matters_for_agents": "",
-            "example": "",
-        }
-
-    # Count distinct products affected across all consistency issues.
-    # A product affected by multiple issues is counted only once.
-    affected_product_ids = set()
-
-    for issue in issues:
-        for product_id in issue.get("affected_product_ids", []) or []:
-            if product_id:
-                affected_product_ids.add(str(product_id))
-
-    affected_product_count = len(affected_product_ids)
-
-    if affected_product_count == 0:
-        verdict = "pass"
-    elif affected_product_count < total_product_count:
-        verdict = "partial"
-    else:
-        verdict = "fail"
-
-    descriptions = [
-        issue.get("description", "")
-        for issue in issues
-        if issue.get("description")
-    ]
-    affected_fields = []
-    for issue in issues:
-        field = issue.get("field")
-        if field and field not in affected_fields:
-            affected_fields.append(field)
-
-    field_text = ", ".join(affected_fields) if affected_fields else "the affected catalog fields"
-
-    evidence = "Catalog consistency observations: " + "; ".join(descriptions)
-
-    return {
-        "verdict": verdict,
-        "evidence": evidence,
-        "enrichment": "Catalog consistency",
-        "why_it_matters_for_agents": (
-            "Consistent fields and value formats make it easier for agents "
-            "to compare, filter, and reason across products."
-        ),
-        "example": (
-            f"Standardize {field_text} so similar products use consistent "
-            "field names, value formats, and representations."
-        ),
-    }
-
-def run_store_analysis(
-    store_url: str,
-    language: str = "English",
-    store_context: dict[str, Any] = None,
-) -> dict[str, Any]:
-    settings = get_app_settings()
-    max_products = settings["max_products"]
-    raw_products = fetch_products_public(store_url, max_products)
-
-    if not raw_products:
-        raise EmptyStoreError(
-            f"'{store_url}' appears to be a Shopify store but has no publicly "
-            "visible products. The catalogue may be password-protected, "
-            "set to draft, or not yet published."
-        )
-
-    products = [compact_product(p, store_url) for p in raw_products]
-
-    try:
-        agent_discovery = check_agent_discovery_readiness(store_url)
-    except Exception as error:
-        import traceback
-        print(f"[AgentDiscovery] check failed for {store_url!r}: {error}")
-        traceback.print_exc()
-        agent_discovery = None
-
-    provider = settings["provider"]
-    model = settings["model"]
-    batch_size = max(1, int(os.getenv("MAX_PRODUCTS_PER_BATCH", "5")))
-    products.sort(key=lambda p: str(p.get("product_id") or p.get("id") or p.get("title", "")))
-    batches = chunked(products, batch_size)
-    batch_reports: list[dict[str, Any]] = []
-
-    for idx, batch in enumerate(batches, start=1):
-        print("=" * 80)
-        print(f"[{provider}] Batch {idx}/{len(batches)}")
-        print(f"[{provider}] Products in batch: {len(batch)}")
-        start = time.time()
-
-        result = analyze_products(
-            batch,
-            store_context or {},
-            store_url,
-            provider,
-            model,
-            language,
-        )
-        batch_reports.append(result)
-
-        print(
-            f"[{provider}] Batch {idx} completed in "
-            f"{time.time() - start:.2f}s"
-        )
-
-    raw_report = merge_reports(batch_reports)
-
-    if not store_context:
-        unavailable_store_checks = {
-            "fulfillment_context",
-            "policy_semantics",
-            "faq_or_guidance",
-            "store_guardrails",
-            "legal_pages",
-            "contact_brand",
-        }
-
-        for check_id in unavailable_store_checks:
-            if check_id in raw_report.get("store_verdicts", {}):
-                raw_report["store_verdicts"][check_id]["verdict"] = "na"
-
-    product_check_ids = [
-        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "product"
-    ]
-    store_check_ids = [
-        c["id"] for checks in CHECKS.values() for c in checks if c["level"] == "store"
-    ]
-    report = assemble_report_from_verdicts(
-        raw_report,
-        store_check_ids,
-        product_check_ids,
-    )
-
-    report.setdefault("provider", provider)
-    report.setdefault("model", model)
-    report.setdefault("store_url", store_url)
-    report["agent_discovery"] = agent_discovery
-
-    return {
-        "settings": settings,
-        "store_url": store_url,
-        "products": products,
-        "report": report,
-    }
-
 
 def build_pdf_attachment(
     report: dict[str, Any],
