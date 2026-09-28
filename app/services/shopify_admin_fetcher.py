@@ -116,6 +116,12 @@ query ProductsForAudit($cursor: String, $first: Int!) {
                 value
               }
 
+              image {
+                id
+                url
+                altText
+              }
+
               inventoryQuantity
             }
           }
@@ -125,6 +131,7 @@ query ProductsForAudit($cursor: String, $first: Int!) {
           edges {
             node {
               ... on MediaImage {
+                id
                 image {
                   url
                   altText
@@ -164,13 +171,14 @@ def _compact_admin_product(
     media = product.get("media", {}).get("edges", [])
     product_status = product.get("status")
     compact_variants = []
-    for edge in variants[:20]:
+    for edge in variants[:100]:
         variant = edge.get("node", {})
         selected_options = variant.get("selectedOptions") or []
         option_values = [
             option.get("value")
             for option in selected_options
         ]
+        variant_image = variant.get("image") or {}
         inventory_quantity = variant.get("inventoryQuantity")
         available = (
             product_status == "ACTIVE"
@@ -185,10 +193,28 @@ def _compact_admin_product(
                 "price": variant.get("price"),
                 "barcode": variant.get("barcode"),
                 "available": available,
-                "inventory_quantity": variant.get("inventoryQuantity"),
-                "option1": option_values[0] if len(option_values) > 0 else None,
-                "option2": option_values[1] if len(option_values) > 1 else None,
-                "option3": option_values[2] if len(option_values) > 2 else None,
+                "inventory_quantity": inventory_quantity,
+                "selectedOptions": selected_options,
+                "option1": (
+                    option_values[0]
+                    if len(option_values) > 0
+                    else None
+                ),
+                "option2": (
+                    option_values[1]
+                    if len(option_values) > 1
+                    else None
+                ),
+                "option3": (
+                    option_values[2]
+                    if len(option_values) > 2
+                    else None
+                ),
+                "image": {
+                    "id": variant_image.get("id"),
+                    "src": variant_image.get("url"),
+                    "alt": variant_image.get("altText"),
+                } if variant_image.get("url") else None,
             }
         )
 
@@ -201,55 +227,69 @@ def _compact_admin_product(
 
         compact_images.append(
             {
+                "id": node.get("id"),
                 "src": image.get("url"),
                 "alt": image.get("altText"),
                 "position": None,
             }
         )
 
-        raw_metafields = product.get("metafields", {}).get("edges") or []
-        metafields: dict[str, Any] = {}
+    raw_metafields = (
+        product.get("metafields", {}).get("edges")
+        or []
+    )
+    metafields: dict[str, Any] = {}
 
-        for edge in raw_metafields:
-            node = edge.get("node") or {}
-            ns = node.get("namespace")
-            key = node.get("key")
+    for edge in raw_metafields:
+        node = edge.get("node") or {}
+        ns = node.get("namespace")
+        key = node.get("key")
 
-            if not ns or not key:
-                continue
+        if not ns or not key:
+            continue
 
-            full_key = f"{ns}.{key}"
+        full_key = f"{ns}.{key}"
 
-            metafields[full_key] = {
-                "namespace": ns,
-                "key": key,
-                "type": node.get("type"),
-                "value": node.get("value"),
-            }
-
-        handle = product.get("handle")
-        online_url = product.get("onlineStoreUrl")
-
-        url = online_url
-
-        if not url and shop_domain and handle:
-            url = f"{shop_domain.rstrip('/')}/products/{handle}"
-
-        return {
-            "id": product.get("id"),
-            "title": product.get("title"),
-            "handle": handle,
-            "url": url,
-            "vendor": product.get("vendor"),
-            "product_type": product.get("productType"),
-            "status": product.get("status"),
-            "tags": product.get("tags") or [],
-            "description": product.get("descriptionHtml") or "",
-            "options": product.get("options") or [],
-            "variants": compact_variants,
-            "images": compact_images,
-            "metafields": metafields,
+        metafields[full_key] = {
+            "namespace": ns,
+            "key": key,
+            "type": node.get("type"),
+            "value": node.get("value"),
         }
+
+    handle = product.get("handle")
+    online_url = product.get("onlineStoreUrl")
+
+    url = online_url
+
+    if not url and shop_domain and handle:
+        url = (
+            f"{shop_domain.rstrip('/')}"
+            f"/products/{handle}"
+        )
+
+    primary_image = (
+        compact_images[0]
+        if compact_images
+        else None
+    )
+
+    return {
+        "id": product.get("id"),
+        "title": product.get("title"),
+        "handle": handle,
+        "url": url,
+        "vendor": product.get("vendor"),
+        "product_type": product.get("productType"),
+        "status": product.get("status"),
+        "tags": product.get("tags") or [],
+        "description": product.get("descriptionHtml") or "",
+        "options": product.get("options") or [],
+        "image": primary_image,
+        "images": compact_images,
+        "variants": compact_variants,
+        "metafields": metafields,
+    }
 
 
 def fetch_products_admin(

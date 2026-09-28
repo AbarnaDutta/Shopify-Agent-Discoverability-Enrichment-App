@@ -21,6 +21,55 @@ from app.services.fix_engine import FixEngine
 def _new_id() -> str:
     return str(uuid.uuid4())
 
+def _issue_row(issue: dict[str, Any], audit_id: str, store_id: str) -> AuditIssue:
+    return AuditIssue(
+        id=_new_id(),
+        audit_id=audit_id,
+        store_id=store_id,
+        check_id=issue["check_id"],
+        issue_type=issue["issue_type"],
+        status=issue["status"],
+        description=issue["description"],
+        product_id=issue.get("product_id"),
+        variant_id=issue.get("variant_id"),
+        field=issue.get("field"),
+        affected_product_ids=issue.get("affected_product_ids") or [],
+        affected_variant_ids=issue.get("affected_variant_ids") or [],
+        affected_option_ids=issue.get("affected_option_ids") or [],
+        affected_variants=issue.get("affected_variants") or [],
+        affected_options=issue.get("affected_options") or [],
+        targets=issue.get("targets") or [],
+        product_title=issue.get("product_title"),
+        product_image_url=issue.get("product_image_url"),
+        scope=issue.get("scope"),
+        fix_mode=issue.get("fix_mode", "unclassified"),
+        fix_action=issue.get("fix_action"),
+    )
+
+
+def _serialize_issue(issue: AuditIssue) -> dict[str, Any]:
+    return {
+        "id": issue.id,
+        "check_id": issue.check_id,
+        "issue_type": issue.issue_type,
+        "status": issue.status,
+        "description": issue.description,
+        "product_id": issue.product_id,
+        "product_title": issue.product_title,
+        "product_image_url": issue.product_image_url,
+        "variant_id": issue.variant_id,
+        "field": issue.field,
+        "affected_product_ids": issue.affected_product_ids or [],
+        "affected_variant_ids": issue.affected_variant_ids or [],
+        "affected_option_ids": issue.affected_option_ids or [],
+        "affected_variants": issue.affected_variants or [],
+        "affected_options": issue.affected_options or [],
+        "targets": issue.targets or [],
+        "scope": issue.scope,
+        "fix_mode": issue.fix_mode,
+        "fix_action": issue.fix_action,
+        "fix_status": issue.fix_status,
+    }
 
 class AuditRepository:
 
@@ -42,6 +91,8 @@ class AuditRepository:
             db.commit()
             return store.id
 
+    
+    
     def record_audit(
         self,
         shop_domain: str,
@@ -88,42 +139,8 @@ class AuditRepository:
                 provider=report.get("provider", provider),
                 model=report.get("model", model),
             )
-            for issue in store_issues:
-                audit.issues.append(
-                    AuditIssue(
-                        id=_new_id(),
-                        audit_id=audit.id,
-                        store_id=store.id,
-                        check_id=issue["check_id"],
-                        issue_type=issue["issue_type"],
-                        status=issue["status"],
-                        description=issue["description"],
-                        product_id=issue.get("product_id"),
-                        variant_id=issue.get("variant_id"),
-                        field=issue.get("field"),
-                        affected_product_ids=issue.get("affected_product_ids") or [],
-                        scope=issue.get("scope"),
-                        fix_mode=issue.get("fix_mode", "unclassified"),
-                        fix_action=issue.get("fix_action"),
-                    )
-                )
-            for issue in product_issues:
-                audit.issues.append(
-                    AuditIssue(
-                        id=_new_id(),
-                        audit_id=audit.id,
-                        store_id=store.id,
-                        check_id=issue["check_id"],
-                        issue_type=issue["issue_type"],
-                        status=issue["status"],
-                        description=issue["description"],
-                        product_id=issue.get("product_id"),
-                        variant_id=issue.get("variant_id"),
-                        scope=issue.get("scope"),
-                        fix_mode=issue.get("fix_mode", "unclassified"),
-                        fix_action=issue.get("fix_action"),
-                    )
-                )
+            for issue in store_issues + product_issues:
+                audit.issues.append(_issue_row(issue, audit.id, store.id))
 
             for p in products:
                 enrichments = p.get("missing_enrichments") or []
@@ -131,6 +148,7 @@ class AuditRepository:
                     id=_new_id(),
                     product_id=str(p.get("product_id") or p.get("id") or ""),
                     title=p.get("title"),
+                    image_url=p.get("image_url"),
                     score=p.get("score"),
                     issue_count=len(enrichments),
                     high_priority_count=sum(1 for r in enrichments if r.get("priority") == "high"),
@@ -384,20 +402,7 @@ class AuditRepository:
             product["issues"] = []
 
             for issue in issues:
-                issue_data = {
-                    "id": issue.id,
-                    "check_id": issue.check_id,
-                    "issue_type": issue.issue_type,
-                    "status": issue.status,
-                    "description": issue.description,
-                    "product_id": issue.product_id,
-                    "variant_id": issue.variant_id,
-                    "field": issue.field,
-                    "affected_product_ids": issue.affected_product_ids or [],
-                    "scope": issue.scope,
-                    "fix_mode": issue.fix_mode,
-                    "fix_action": issue.fix_action,
-                }
+                issue_data = _serialize_issue(issue)
 
                 if (
                     issue.issue_type == "missing_product_url"
@@ -428,23 +433,7 @@ class AuditRepository:
             if audit is None:
                 return []
 
-            return [
-                {
-                    "id": issue.id,
-                    "check_id": issue.check_id,
-                    "issue_type": issue.issue_type,
-                    "status": issue.status,
-                    "description": issue.description,
-                    "product_id": issue.product_id,
-                    "variant_id": issue.variant_id,
-                    "field": issue.field,
-                    "affected_product_ids": issue.affected_product_ids or [],
-                    "scope": issue.scope,
-                    "fix_mode": issue.fix_mode,
-                    "fix_action": issue.fix_action,
-                }
-                for issue in audit.issues
-            ]
+            return [_serialize_issue(i) for i in audit.issues]
 
     def _serialize_audit(self, audit: Audit, include_children: bool = False) -> dict[str, Any]:
         data = {
@@ -459,23 +448,7 @@ class AuditRepository:
             "created_at": audit.created_at.isoformat(),
         }
         if include_children:
-            data["issues"] = [
-                {
-                    "id": issue.id,
-                    "check_id": issue.check_id,
-                    "issue_type": issue.issue_type,
-                    "status": issue.status,
-                    "description": issue.description,
-                    "product_id": issue.product_id,
-                    "variant_id": issue.variant_id,
-                    "field": issue.field,
-                    "affected_product_ids": issue.affected_product_ids or [],
-                    "scope": issue.scope,
-                    "fix_mode": issue.fix_mode,
-                    "fix_action": issue.fix_action,
-                }
-                for issue in audit.issues
-            ]
+            data["issues"] = [_serialize_issue(i) for i in audit.issues]
 
             data["products"] = [self._serialize_product(p) for p in audit.products]
             data["store_level_recommendations"] = [
@@ -502,6 +475,7 @@ class AuditRepository:
         return {
             "product_id": p.product_id,
             "title": p.title,
+            "image_url": p.image_url,
             "score": p.score,
             "issue_count": p.issue_count,
             "high_priority_count": p.high_priority_count,

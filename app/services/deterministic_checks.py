@@ -28,16 +28,38 @@ def has_placeholder(text: str | None) -> bool:
     return any(p.search(text) for p in _PLACEHOLDER_PATTERNS)
 
 
-def _make_verdict(verdict: str, evidence: str, issue_type: str | None = None) -> dict[str, Any]:
+def _variant_id(v: dict) -> str | None:
+    vid = v.get("id") or v.get("variant_id")
+    return str(vid) if vid else None
+
+
+def _option_id(o: dict) -> str | None:
+    oid = o.get("id") or o.get("option_id")
+    return str(oid) if oid else None
+
+
+def _uniq(ids) -> list[str]:
+    return list(dict.fromkeys(str(i) for i in ids if i))
+
+
+def _make_verdict(
+    verdict: str,
+    evidence: str,
+    issue_type: str | None = None,
+    *,
+    variant_ids: list[str] | None = None,
+    option_ids: list[str] | None = None,
+) -> dict[str, Any]:
     result = {"verdict": verdict, "evidence": evidence, "issues": []}
     if issue_type and verdict in ("partial", "fail"):
         result["issues"] = [{
             "issue_type": issue_type,
             "status": "existing",
             "description": evidence,
+            "affected_variant_ids": _uniq(variant_ids or []),
+            "affected_option_ids": _uniq(option_ids or []),
         }]
     return result
-
 
 # ── PRODUCT-LEVEL DETERMINISTIC CHECKS ──────────────────────────────────
 
@@ -51,129 +73,6 @@ def check_stable_ids_urls(product: dict) -> dict:
     return _make_verdict("pass", f"Product has id '{pid}' and url '{url}'.")
 
 def check_variant_selection(product: dict) -> dict:
-    """Check whether variants expose enough option information for exact selection."""
-    options = product.get("options") or []
-    variants = product.get("variants") or []
-
-    if not options or not variants:
-        return {
-            "verdict": "na",
-            "evidence": "No options/variants to evaluate.",
-            "issues": [],
-        }
-
-    option_names = [
-        (option.get("name") or "").strip().lower()
-        for option in options
-    ]
-
-    missing_option_names = [
-        index
-        for index, name in enumerate(option_names)
-        if not name
-    ]
-
-    if missing_option_names:
-        return _make_verdict(
-            "fail",
-            f"Option name(s) missing at position(s): {missing_option_names}.",
-            "missing_option_name",
-        )
-
-    generic_names = [
-        name
-        for name in option_names
-        if name in _GENERIC_OPTION_NAMES
-    ]
-
-    if generic_names:
-        return _make_verdict(
-            "partial",
-            f"Generic option name(s) found: {generic_names}.",
-            "generic_option_name",
-        )
-
-    expected_option_names = set(option_names)
-
-    incomplete_variants = []
-
-    for variant in variants:
-        selected_options = variant.get("selectedOptions") or []
-
-        selected_names = {
-            (item.get("name") or "").strip().lower()
-            for item in selected_options
-            if item.get("name")
-        }
-
-        if selected_names != expected_option_names:
-            incomplete_variants.append(
-                variant.get("id")
-                or variant.get("variant_id")
-                or variant.get("title")
-                or "unknown"
-            )
-
-    if incomplete_variants:
-        return _make_verdict(
-            "partial",
-            (
-                "Some variants do not contain a complete set of "
-                f"selected options: {incomplete_variants}."
-            ),
-            "incomplete_selected_options",
-        )
-
-    option_value_sets: dict[str, set[str]] = {
-        name: set()
-        for name in expected_option_names
-    }
-
-    inconsistent_variants = []
-
-    for variant in variants:
-        selected_options = variant.get("selectedOptions") or []
-
-        seen_names = set()
-
-        for item in selected_options:
-            name = (item.get("name") or "").strip().lower()
-            value = (item.get("value") or "").strip()
-
-            if not name:
-                continue
-
-            if name in seen_names:
-                inconsistent_variants.append(
-                    variant.get("id")
-                    or variant.get("variant_id")
-                    or variant.get("title")
-                    or "unknown"
-                )
-                continue
-
-            seen_names.add(name)
-
-            if value:
-                option_value_sets.setdefault(name, set()).add(value)
-
-    if inconsistent_variants:
-        return _make_verdict(
-            "partial",
-            (
-                "Some variants contain inconsistent selected-option "
-                f"structure: {inconsistent_variants}."
-            ),
-            "inconsistent_variant_options",
-        )
-
-    return _make_verdict(
-        "pass",
-        "Option names are meaningful and variants contain complete, consistent selected options.",
-    )
-
-def check_variant_hygiene(product: dict) -> dict:
-    """Used for BOTH variant_selection and variant_hygiene — same underlying fact."""
     options = product.get("options") or []
     variants = product.get("variants") or []
 
@@ -181,24 +80,103 @@ def check_variant_hygiene(product: dict) -> dict:
         return {"verdict": "na", "evidence": "No options/variants to evaluate.", "issues": []}
 
     option_names = [(o.get("name") or "").strip().lower() for o in options]
-    has_generic_option = any(name in _GENERIC_OPTION_NAMES for name in option_names)
 
-    variant_titles = [(v.get("title") or "").strip().lower() for v in variants]
-    all_default_title = bool(variant_titles) and all(t == "default title" for t in variant_titles)
+    missing_idx = [i for i, n in enumerate(option_names) if not n]
+    if missing_idx:
+        return _make_verdict(
+            "fail",
+            f"Option name(s) missing at position(s): {missing_idx}.",
+            "missing_option_name",
+            option_ids=[_option_id(options[i]) for i in missing_idx],
+        )
 
+    generic_opts = [o for o, n in zip(options, option_names) if n in _GENERIC_OPTION_NAMES]
+    if generic_opts:
+        return _make_verdict(
+            "partial",
+            f"Generic option name(s) found: {[o.get('name') for o in generic_opts]}.",
+            "generic_option_name",
+            option_ids=[_option_id(o) for o in generic_opts],
+        )
+
+    expected = set(option_names)
+    incomplete_ids, incomplete_labels = [], []
+    for v in variants:
+        selected = {
+            (i.get("name") or "").strip().lower()
+            for i in (v.get("selectedOptions") or []) if i.get("name")
+        }
+        if selected != expected:
+            incomplete_ids.append(_variant_id(v))
+            incomplete_labels.append(_variant_id(v) or v.get("title") or "unknown")
+    if incomplete_labels:
+        return _make_verdict(
+            "partial",
+            f"Some variants do not contain a complete set of selected options: {incomplete_labels}.",
+            "incomplete_selected_options",
+            variant_ids=incomplete_ids,
+        )
+
+    dup_ids, dup_labels = [], []
+    for v in variants:
+        seen = set()
+        for item in (v.get("selectedOptions") or []):
+            name = (item.get("name") or "").strip().lower()
+            if not name:
+                continue
+            if name in seen:
+                dup_ids.append(_variant_id(v))
+                dup_labels.append(_variant_id(v) or v.get("title") or "unknown")
+                break
+            seen.add(name)
+    if dup_labels:
+        return _make_verdict(
+            "partial",
+            f"Some variants contain inconsistent selected-option structure: {dup_labels}.",
+            "inconsistent_variant_options",
+            variant_ids=dup_ids,
+        )
+
+    return _make_verdict(
+        "pass",
+        "Option names are meaningful and variants contain complete, consistent selected options.",
+    )
+
+
+def check_variant_hygiene(product: dict) -> dict:
+    options = product.get("options") or []
+    variants = product.get("variants") or []
+
+    if not options or not variants:
+        return {"verdict": "na", "evidence": "No options/variants to evaluate.", "issues": []}
+
+    generic_opts = [
+        o for o in options
+        if (o.get("name") or "").strip().lower() in _GENERIC_OPTION_NAMES
+    ]
+    default_variants = [
+        v for v in variants
+        if (v.get("title") or "").strip().lower() == "default title"
+    ]
+    all_default_title = len(default_variants) == len(variants)
     single_option = len(options) <= 1
 
-    if has_generic_option and all_default_title and single_option:
+    opt_ids = [_option_id(o) for o in generic_opts]
+    var_ids = [_variant_id(v) for v in default_variants]
+
+    if generic_opts and all_default_title and single_option:
         return _make_verdict(
             "fail",
             f"Option name(s) {[o.get('name') for o in options]}; every variant titled 'Default Title'; no real variant structure exists.",
             "generic_option_name",
+            variant_ids=var_ids, option_ids=opt_ids,
         )
-    if has_generic_option or all_default_title:
+    if generic_opts or all_default_title:
         return _make_verdict(
             "partial",
             f"Option name(s) {[o.get('name') for o in options]}; some generic naming or default-title variants present.",
             "generic_option_name",
+            variant_ids=var_ids, option_ids=opt_ids,
         )
     return _make_verdict("pass", f"Option names {[o.get('name') for o in options]} are descriptive; variant titles are specific.")
 
@@ -212,11 +190,14 @@ def check_identifiers(product: dict) -> dict:
     missing_barcode = [v for v in variants if not v.get("barcode")]
 
     if len(missing_sku) == len(variants):
-        return _make_verdict("fail", f"All {len(variants)} variant(s) have no SKU.", "missing_sku")
+        return _make_verdict("fail", f"All {len(variants)} variant(s) have no SKU.", "missing_sku",
+                             variant_ids=[_variant_id(v) for v in missing_sku])
     if missing_sku:
-        return _make_verdict("partial", f"{len(missing_sku)}/{len(variants)} variant(s) missing SKU.", "missing_sku")
+        return _make_verdict("partial", f"{len(missing_sku)}/{len(variants)} variant(s) missing SKU.", "missing_sku",
+                             variant_ids=[_variant_id(v) for v in missing_sku])
     if missing_barcode:
-        return _make_verdict("partial", f"{len(missing_barcode)}/{len(variants)} variant(s) missing barcode/GTIN.", "missing_gtin")
+        return _make_verdict("partial", f"{len(missing_barcode)}/{len(variants)} variant(s) missing barcode/GTIN.", "missing_gtin",
+                             variant_ids=[_variant_id(v) for v in missing_barcode])
     return _make_verdict("pass", f"All {len(variants)} variant(s) have SKU and barcode.")
 
 
@@ -232,10 +213,11 @@ def check_pricing_clarity(product: dict) -> dict:
             return True
 
     zero_priced = [v for v in variants if is_zero(v)]
+    ids = [_variant_id(v) for v in zero_priced]
     if len(zero_priced) == len(variants):
-        return _make_verdict("fail", f"All {len(variants)} variant(s) priced 0.00 or missing.", "zero_price")
+        return _make_verdict("fail", f"All {len(variants)} variant(s) priced 0.00 or missing.", "zero_price", variant_ids=ids)
     if zero_priced:
-        return _make_verdict("partial", f"{len(zero_priced)}/{len(variants)} variant(s) priced 0.00 or missing.", "zero_price")
+        return _make_verdict("partial", f"{len(zero_priced)}/{len(variants)} variant(s) priced 0.00 or missing.", "zero_price", variant_ids=ids)
     return _make_verdict("pass", f"All {len(variants)} variant(s) have a real, non-zero price.")
 
 
@@ -248,12 +230,12 @@ def check_availability_signals(product: dict) -> dict:
         return not v.get("available") or (v.get("inventory_quantity") or 0) <= 0
 
     unavailable = [v for v in variants if is_unavailable(v)]
+    ids = [_variant_id(v) for v in unavailable]
     if len(unavailable) == len(variants):
-        return _make_verdict("fail", f"All {len(variants)} variant(s) unavailable / zero inventory.", "ambiguous_buyability")
+        return _make_verdict("fail", f"All {len(variants)} variant(s) unavailable / zero inventory.", "ambiguous_buyability", variant_ids=ids)
     if unavailable:
-        return _make_verdict("partial", f"{len(unavailable)}/{len(variants)} variant(s) unavailable / zero inventory.", "ambiguous_buyability")
+        return _make_verdict("partial", f"{len(unavailable)}/{len(variants)} variant(s) unavailable / zero inventory.", "ambiguous_buyability", variant_ids=ids)
     return _make_verdict("pass", f"All {len(variants)} variant(s) available with positive inventory.")
-
 
 def _product_is_risky(product: dict) -> bool:
     haystack = " ".join([
@@ -521,6 +503,18 @@ def check_catalog_consistency(
         for product in products
         if product_id(product)
     ]
+    products_by_id = {product_id(p): p for p in valid_products}
+
+    def targets_for(ids, *, include_options=False, include_variants=False) -> list[dict]:
+        out = []
+        for pid in sorted(ids):
+            p = products_by_id.get(pid) or {}
+            out.append({
+                "product_id": pid,
+                "option_ids": _uniq(_option_id(o) for o in (p.get("options") or [])) if include_options else [],
+                "variant_ids": _uniq(_variant_id(v) for v in (p.get("variants") or [])) if include_variants else [],
+            })
+        return out
 
     if len(valid_products) < 2:
         return {
@@ -627,6 +621,7 @@ def check_catalog_consistency(
                     ),
                     "field": "options.name",
                     "affected_product_ids": sorted(missing_ids),
+                    "targets": targets_for(missing_ids, include_options=True),
                 })
 
     # ---------------------------------------------------------
@@ -678,6 +673,7 @@ def check_catalog_consistency(
                     ),
                     "field": key,
                     "affected_product_ids": sorted(missing_ids),
+                    "targets": targets_for(missing_ids),
                 })
 
 
@@ -745,6 +741,7 @@ def check_catalog_consistency(
                 ),
                 "field": field,
                 "affected_product_ids": sorted(affected),
+                "targets": targets_for(affected),
             })
             
     # ---------------------------------------------------------
@@ -828,6 +825,7 @@ def check_catalog_consistency(
             ),
             "field": field,
             "affected_product_ids": sorted(affected),
+            "targets": targets_for(affected),
         })
     # ---------------------------------------------------------
     # Final deterministic verdict

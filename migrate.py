@@ -67,6 +67,44 @@ migrations = [
     ALTER TABLE audit_issues
     ADD COLUMN IF NOT EXISTS fixed_at TIMESTAMPTZ;
     """,
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS affected_variant_ids JSON NOT NULL DEFAULT '[]'::json;
+    """,
+
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS affected_option_ids JSON NOT NULL DEFAULT '[]'::json;
+    """,
+
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS affected_variants JSON NOT NULL DEFAULT '[]'::json;
+    """,
+
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS affected_options JSON NOT NULL DEFAULT '[]'::json;
+    """,
+
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS targets JSON NOT NULL DEFAULT '[]'::json;
+    """,
+
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS product_title VARCHAR(512);
+    """,
+
+    """
+    ALTER TABLE audit_issues
+    ADD COLUMN IF NOT EXISTS product_image_url VARCHAR(2048);
+    """,
+    """
+    ALTER TABLE audit_products
+    ADD COLUMN IF NOT EXISTS image_url VARCHAR(2048);
+    """,
 ]
 for sql in migrations:
     try:

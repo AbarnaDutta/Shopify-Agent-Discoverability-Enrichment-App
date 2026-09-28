@@ -852,8 +852,16 @@ export default function ProductDetails() {
         <div className="mb-6 rounded-2xl border border-[var(--app-border)] bg-white p-6 md:p-8">
           <div className="flex flex-col gap-8 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-6">
-              <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] sm:h-28 sm:w-28">
-                <Package size={36} className="text-[var(--app-muted)]" />
+              <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] sm:h-28 sm:w-28">
+                {product.image_url ? (
+                  <img
+                    src={product.image_url}
+                    alt={product.title || "Product"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <Package size={36} className="text-[var(--app-muted)]" />
+                )}
               </div>
 
               <div className="min-w-0">

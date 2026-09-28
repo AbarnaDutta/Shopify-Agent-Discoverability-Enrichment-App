@@ -43,11 +43,11 @@ CHECKS: dict[str, list[dict]] = {
         {"id": "fulfillment_context",  "level":  "store",  "desc": "Operational fulfillment information is present and actionable, such as delivery speed, shipping methods, pickup availability, and domestic vs international coverage; a shipping-policy page alone is not sufficient."},
     ],
     "mcp_knowledge": [
-        {"id": "product_understanding", "level": "product", "desc": "title + descriptionHtml + attributes clearly answer what the product is, who it's for, and what's included/excluded."},
+        {"id": "product_understanding", "level": "product", "desc": "Title , description and attributes clearly identify WHAT the product is, WHO it is for, and an itemized list of what is included/excluded in the package."},
         {"id": "comparable_attributes", "level": "product", "desc": "productType/tags/options/metafields are structured enough to filter, sort, and compare against similar products."},
         {"id": "policy_semantics", "level": "store", "desc": "Policy text is specific enough that an agent can answer edge cases (deadlines, exceptions, regions) without guessing."},
         {"id": "faq_or_guidance",       "level": "store",   "desc": "FAQ content, metaobjects, or shopping-guidance text exists."},
-        {"id": "product_clarity", "level": "product",  "desc": "Description clearly states what/included/how-to-use, no unclarified medical/financial claims."},
+        {"id": "product_clarity", "level": "product",  "desc": "Provides actionable HOW-TO instructions for use, sizing/fit, or care/maintenance, with no unclarified medical or financial claims."},
     ],
     "catalog_enrichment": [
         {"id": "identifiers",     "level": "product", "desc": "Variant sku present and non-empty; barcode/GTIN/MPN present where applicable."},

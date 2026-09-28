@@ -219,6 +219,11 @@ ISSUE_TYPES = {
             "fix_mode": "approval",
             "fix_action": "review_product_claim",
         },
+        "insufficient_product_description": {
+            "scope": "product",
+            "fix_mode": "approval",
+            "fix_action": "update_product_description",
+        },
     },
 
 

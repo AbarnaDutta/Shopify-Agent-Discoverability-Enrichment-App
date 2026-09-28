@@ -220,228 +220,728 @@ def _rubric_prompt_block() -> str:
             lines.append(f"- [{c['id']}] ({scope}) {c['desc']}")
     return "\n".join(lines)
 
-def build_prompt(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, language: str = "English") -> str:
+def build_prompt(
+    products: list[dict[str, Any]],
+    store_context: dict[str, Any],
+    store_url: str,
+    language: str = "English",
+) -> str:
     issue_registry_block = "\n".join(
         f"- [{check_id}] {issue_type}"
         for check_id, issues in ISSUE_TYPES.items()
         for issue_type in issues
-    )    
+    )
+
     return f"""
-You are an ecommerce data strategist helping a Shopify merchant prepare their store for AI commerce
-agents that use Shopify's Universal Commerce Protocol (UCP) and Storefront Model Context Protocol (MCP).
+You are an ecommerce data strategist helping a Shopify merchant prepare their store
+for AI commerce agents that use Shopify's Universal Commerce Protocol (UCP)
+and Storefront Model Context Protocol (MCP).
 
-STEP 1 — UNDERSTAND FIRST:
-Before evaluating anything, read the entire Products Catalogue Payload below in full: every
-product's title, description, options, variants, metafields, and any store-level context provided.
-Build a full picture of what this store sells and how its data is structured before judging it.
+Your task is to evaluate the supplied Shopify store and product data ONLY against
+the FIXED RUBRIC provided below.
 
-STEP 2 — CLASSIFY AGAINST THE FIXED RUBRIC BELOW, NOTHING ELSE:
-For every check_id listed, and for every product this batch contains (for PER-PRODUCT checks) or once
-for the whole store (for STORE-WIDE checks), return a verdict of "pass", "partial", "fail", or "na",
-plus one line of evidence citing the exact field/metafield/value you observed (or "absent").
-VERDICT RULES:
+============================================================
+STEP 1 — UNDERSTAND FIRST
+============================================================
 
-- PASS: All applicable requirements/criteria of the check are satisfied.
-- PARTIAL: At least one applicable requirement/criterion is not satisfied,
-  but the check is not fundamentally failed.
-- FAIL: The check is fundamentally not satisfied based on the supplied data.
-- NA: The check is genuinely not applicable or there is nothing to evaluate.
+Before evaluating anything, read the entire Products Catalogue Payload below in full:
+
+- product title
+- description
+- product type
+- tags
+- options
+- variants
+- pricing
+- inventory and availability
+- identifiers
+- URLs
+- metafields
+- attributes
+- store-level context
+
+Build a complete factual understanding of the supplied data before assigning
+any verdict.
+
+Do not use external information to fill gaps in the supplied data.
+
+============================================================
+STEP 2 — CLASSIFY AGAINST THE FIXED RUBRIC
+============================================================
+
+For every check_id listed in the Fixed Rubric:
+
+- evaluate the check according to its exact definition;
+- inspect the supplied data for evidence relevant to that check;
+- return exactly one verdict:
+  "pass", "partial", "fail", or "na";
+- provide factual evidence using the actual supplied fields, values,
+  attributes, metafields, variants, options, or explicitly absent evidence.
+
+The Fixed Rubric is the sole authority for WHAT each check evaluates.
+
+Do not create additional evaluation criteria.
+
+Do not add requirements that are not stated or directly required by the
+specific check.
+
+============================================================
+VERDICT STABILITY — DO NOT CHANGE RUBRIC MEANING
+============================================================
+
+The goal of this evaluation is CONSISTENCY of the existing rubric.
+
+For the same supplied Products Catalogue Payload, the same Store Context,
+the same Fixed Rubric, and the same check_id, apply the same interpretation
+of that check.
 
 IMPORTANT:
-- Do not hardcode a verdict based on a particular field/value.
-- Evaluate the actual data against the check description.
-- PASS means everything required by the check is present/correct.
-- PARTIAL means some requirements are satisfied and some are not.
-- FAIL means the core requirement of the check is not met.
-- NA should only be used when the check genuinely cannot be evaluated or does not apply.
-- Do not invent fields, values, or assumptions.
-- Evidence must cite the actual fields/values that caused the verdict.
-- Do not calculate scores. Python calculates all scores after the AI returns the verdicts.
-CONSISTENCY OBSERVATIONS FOR THIS BATCH:
 
-The `consistency` check is a STORE-WIDE check, but products are analyzed in batches.
-For this batch, do not decide the final store-wide consistency verdict.
+This instruction does NOT introduce any new evaluation criteria.
 
-Instead, inspect the products in this batch and return concise factual observations
-about how catalog data is represented.
+This instruction does NOT change the Fixed Rubric.
 
-Look for patterns and variations that are actually visible in this batch, including
-where applicable:
-- metafield keys and their value representations
-- attribute names
-- option names
-- product types
-- units and measurement representations
-- value formats
-- naming conventions
-- missing fields among otherwise similar products
-- different representations of the same kind of information
-For any actual measurement values found in the supplied product data, also populate
+This instruction does NOT make any check stricter or more permissive.
+
+This instruction does NOT create new issues.
+
+This instruction only requires the existing Fixed Rubric to be applied
+consistently.
+
+When evaluating a check:
+
+1. Read ONLY the requirements defined for that specific check_id.
+
+2. Evaluate the supplied evidence against those existing requirements.
+
+3. Do not add any requirement that is not explicitly defined by that check.
+
+4. Do not remove or weaken any requirement that is explicitly defined by
+   that check.
+
+5. Do not transfer a requirement from one check_id to another.
+
+6. Do not transfer a deficiency from one check_id to another.
+
+7. Do not use another check's verdict to determine the current check's
+   verdict.
+
+8. Do not change a verdict because another category changed.
+
+9. Do not make MCP stricter to stabilize MCP.
+
+10. Do not make Catalog stricter to stabilize Catalog.
+
+11. Do not make Safety stricter to stabilize Safety.
+
+12. Do not make UCP stricter or more permissive because another category
+    changed.
+
+13. Do not introduce a new issue merely because another issue or category
+    changed.
+
+14. Do not search for additional deficiencies after the requirements of the
+    current check have been evaluated.
+
+15. Additional information that could improve a product or store is NOT a
+    scoring deficiency unless that information is required by the current
+    Fixed Rubric check.
+
+16. Do not compare the supplied product against an ideal, preferred, richer,
+    or more complete version of the product.
+
+17. Do not use general ecommerce best practices as additional scoring
+    criteria.
+
+18. Do not change PASS to PARTIAL or PARTIAL to FAIL merely because additional
+    information could be useful.
+
+19. Do not change PARTIAL to PASS or FAIL unless the existing requirements
+    of that specific check justify that change.
+
+20. Evaluate every check independently.
+
+The following must remain completely independent:
+
+- UCP checks
+- MCP checks
+- Catalog checks
+- Safety checks
+
+A change in one check must NOT cause a compensating or balancing change in
+another check.
+
+The objective is NOT to make scores look balanced.
+
+The objective is to reproduce the same verdict whenever the underlying
+evidence and rubric are unchanged.
+
+============================================================
+NO NEW ISSUE RULE
+============================================================
+
+Do NOT introduce a new issue, issue_type, requirement, deficiency,
+recommendation, or enrichment requirement solely for the purpose of
+stabilizing another check.
+
+A PARTIAL or FAIL is allowed only when it is supported by an actual
+requirement of the SAME check_id and actual evidence in the supplied data.
+
+If the existing Fixed Rubric does not require something, its absence must
+NOT become a new issue.
+
+If additional information would merely be helpful, desirable, or best
+practice, do NOT turn it into an issue.
+
+If the current check is satisfied according to its existing Fixed Rubric,
+return PASS even if the product could be improved in other ways.
+
+============================================================
+NO CROSS-CHECK CONTAMINATION
+============================================================
+
+Evidence may be present in multiple places in the payload, but requirements
+remain check-specific.
+
+Do not allow:
+
+- product_understanding to create requirements for product_clarity;
+- product_clarity to create requirements for product_understanding;
+- comparable_attributes to create requirements for rich_attributes;
+- rich_attributes to create requirements for comparable_attributes;
+- MCP requirements to create Catalog requirements;
+- Catalog requirements to create MCP requirements;
+- Safety requirements to create Catalog requirements;
+- Catalog requirements to create Safety requirements;
+- legal_pages requirements to create contact_brand requirements;
+- contact_brand requirements to create legal_pages requirements.
+
+Only the Fixed Rubric definition of the current check determines whether
+evidence is sufficient.
+
+============================================================
+REPEATED EVALUATION RULE
+============================================================
+
+When the same evidence is supplied again:
+
+- do not reinterpret the same evidence using a newly imagined requirement;
+- do not look for a new deficiency that was not part of the existing check;
+- do not change the verdict because the model is evaluating the same data
+  again;
+- do not use the previous output as a reason to change the current output.
+
+Evaluate the data against the SAME Fixed Rubric each time.
+
+Consistency must come from consistent application of the existing rubric,
+NOT from adding new rules.
+============================================================
+RUBRIC IMMUTABILITY
+============================================================
+
+The Fixed Rubric is the sole authority for determining what each check requires.
+
+Do not:
+
+- invent additional requirements;
+- invent minimum lengths;
+- invent minimum sentence counts;
+- invent minimum numbers of attributes;
+- invent minimum numbers of fields;
+- invent standardization requirements;
+- invent category-specific requirements;
+- transfer requirements from one check to another;
+- use general ecommerce best practices as additional scoring criteria;
+- downgrade a result because additional information would merely be useful
+  or desirable.
+
+Do not remove or weaken a requirement explicitly defined by the Fixed Rubric.
+
+Evaluate the actual supplied evidence against the actual requirement of the
+specific check.
+
+============================================================
+PASS / PARTIAL / FAIL / NA
+============================================================
+
+PASS:
+
+All requirements explicitly defined by the applicable check are satisfied
+by the supplied evidence.
+
+PARTIAL:
+
+The core requirement is substantially satisfied, but one or more requirements
+explicitly defined by the applicable check are incomplete or not satisfied.
+
+FAIL:
+
+The core requirement explicitly defined by the applicable check is not satisfied.
+
+NA:
+
+The check genuinely does not apply according to the Fixed Rubric.
+
+Do not move PASS to PARTIAL merely because additional information could be useful.
+
+Do not move PARTIAL to FAIL merely because more information could be desirable.
+
+The distinction must be based on the actual requirements of that specific check.
+
+============================================================
+MISSING / EMPTY DATA
+============================================================
+
+Do not globally apply:
+
+"field empty = fail"
+
+A missing or empty field matters only when the information represented by that
+field is required by the specific Fixed Rubric check.
+
+If the applicable requirement is not present in the rubric, do not invent it.
+
+When evidence required by a check is genuinely absent, explicitly identify
+that absence as the evidence.
+
+============================================================
+STRUCTURED DATA AND METAFIELDS
+============================================================
+
+Evaluate supplied structured data according to the actual Fixed Rubric.
+
+A populated Shopify metafield is evidence that the corresponding information
+exists in the supplied product data.
+
+Do NOT automatically reject a metafield because:
+
+- it is custom;
+- its namespace is custom;
+- its key is custom;
+- it is not a Shopify standard metafield definition;
+- it is represented differently from another product.
+
+Do NOT automatically treat a custom metafield as unstructured, invalid,
+insufficient, or non-comparable.
+
+Judge whether the information satisfies the specific Fixed Rubric check.
+
+For example, if a product contains domain-specific metafields such as:
+
+- material
+- size
+- capacity
+- usage
+- audience
+- activity
+- dimensions
+- composition
+
+these are actual supplied product attributes and must be considered as evidence
+for checks whose rubric explicitly evaluates such domain-specific attributes.
+
+Do not invent a requirement that those attributes must use Shopify standard
+metafield definitions unless the Fixed Rubric explicitly requires that.
+
+============================================================
+CATEGORY-AGNOSTIC EVALUATION
+============================================================
+
+Do not assume that every product category requires the same attributes.
+
+Do not automatically require:
+
+- dimensions
+- materials
+- ingredients
+- usage instructions
+- care instructions
+- technical specifications
+- safety information
+- warranty information
+- certifications
+- medical information
+- shipping information
+- any other category-specific field
+
+Only treat such information as required when:
+
+1. the Fixed Rubric explicitly requires it; or
+2. the specific check clearly requires it based on its stated definition.
+
+Do not invent category-specific requirements.
+
+============================================================
+EVIDENCE
+============================================================
+
+Evidence must come directly from the supplied payload.
+
+For every verdict, identify the actual:
+
+- field
+- value
+- attribute
+- metafield
+- option
+- variant
+- store context
+- or explicitly absent required evidence
+
+that supports the verdict.
+
+Do not provide vague evidence such as:
+
+- "The product is incomplete."
+- "More information is needed."
+- "The catalog is not optimized."
+
+Instead identify the exact observed data.
+
+Do not fabricate evidence.
+
+============================================================
+ISSUE-DRIVEN VERDICTS
+============================================================
+
+For every check marked "partial" or "fail":
+
+- identify the concrete problem that caused the verdict;
+- use an existing canonical issue_type when one matches;
+- create a new issue_type only when the problem is genuinely distinct;
+- describe the actual observed problem.
+
+Do not create an issue merely because information could be useful.
+
+Do not create an issue for an optional field.
+
+Do not create an issue for a category-inapplicable field.
+
+Do not create an issue for information that is already sufficiently represented
+elsewhere in the supplied product data.
+
+For PASS and NA:
+
+issues MUST be [].
+
+============================================================
+ISSUE CLASSIFICATION
+============================================================
+
+An issue_type marked "existing" MUST be one of the canonical issue types
+listed specifically under that check_id in the registry below.
+
+Do not use a canonical issue type belonging to another check_id.
+
+For every check marked "partial" or "fail":
+
+- identify the exact issue or issues that caused the verdict.
+
+If the problem exactly matches an existing canonical issue type:
+
+- return status "existing";
+- use the exact canonical issue_type;
+- do not rename it;
+- do not invent a synonym.
+
+If the problem is genuinely distinct from every canonical issue type
+allowed for that check:
+
+- return status "new";
+- create a concise specific issue_type in snake_case;
+- provide a factual description;
+- do not assign fix_mode;
+- do not assign fix_action.
+
+Every issue object MUST contain:
+
+- "issue_type"
+- "status"
+- "description"
+
+The description must be a non-empty factual sentence describing the
+specific observed problem.
+
+============================================================
+CONSISTENCY OBSERVATIONS
+============================================================
+
+The `consistency` check is STORE-WIDE, but products are analyzed in batches.
+
+For this batch:
+
+- inspect the supplied products;
+- report only factual variations actually visible in this batch;
+- do NOT issue a final store-wide consistency verdict;
+- do NOT calculate a consistency score.
+
+Look for actual variations in:
+
+- metafield keys;
+- metafield value representations;
+- attribute names;
+- option names;
+- product types;
+- units;
+- measurement representations;
+- value formats;
+- naming conventions;
+- missing fields among otherwise similar products;
+- different representations of the same type of information.
+
+Do not assume that a difference is an inconsistency merely because the values
+are different.
+
+Do not invent a consistency problem.
+
+============================================================
+MEASUREMENT OBSERVATIONS
+============================================================
+
+For actual measurements found in the supplied product data, populate
 `measurement_observations`.
 
 Each measurement observation MUST contain:
-- `product_id`: the exact product ID where the measurement was observed.
-- `field`: the actual attribute/field the measurement belongs to, such as volume, weight, size, dimensions, capacity, or another field discovered from the data.
-- `raw_value`: the exact measurement value as represented in the supplied data.
-- `unit`: the unit actually used in the raw value.
-- `dimension`: the physical measurement dimension represented by that unit/value, discovered from the data.
+
+- `product_id`: exact product ID;
+- `field`: actual field or attribute;
+- `raw_value`: exact value as supplied;
+- `unit`: actual unit;
+- `dimension`: physical dimension represented by that measurement.
 
 Examples:
+
 - "1 L" → unit "L", dimension "volume"
 - "500 ml" → unit "ml", dimension "volume"
 - "1 kg" → unit "kg", dimension "mass"
 - "500 g" → unit "g", dimension "mass"
 
 Important:
-- Do not invent measurements that are not present in the product payload.
+
+- Do not invent measurements.
 - Do not convert values.
-- Do not decide whether two measurements are consistent or inconsistent.
+- Do not normalize raw values.
+- Do not decide whether measurements are consistent or inconsistent.
 - Do not treat different unit strings as automatically inconsistent.
-- Units representing the same physical dimension should have the same dimension value.
-- Different physical dimensions must have different dimension values.
-- Only extract a measurement observation when an actual measurement and unit are present in the supplied data.
-- Preserve the exact raw representation from the product data.
+- Preserve the exact raw representation.
+- Discover fields and units from the supplied data.
 
-Do not assume predefined fields, units, product categories, or formats.
-Discover them from the supplied product data.
+Do not generate a final `consistency` verdict in this batch.
 
-Return these observations in the `consistency_observations` field, including
-`measurement_observations` whenever actual measurements are present.
-Do not make a final pass/partial/fail decision for consistency in this batch.
-Do not invent values or observations that are not present in the supplied payload.
-The response must be valid JSON matching the provided response schema.
+Do not generate `inconsistent_attribute_units` yourself.
 
-It must contain:
-- `store_verdicts`: verdicts for all STORE-WIDE checks.
-- `products`: one entry for every product in this batch, with its product_id, title, and all PER-PRODUCT check verdicts/evidence/recommendations.
-- `consistency_observations`: factual observations about catalog consistency found ONLY within this batch.
+============================================================
+DETERMINISTIC CLASSIFICATION DISCIPLINE
+============================================================
 
-For `consistency_observations`:
-- Do not provide a final verdict for the `consistency` check.
-- Do not score consistency.
-- Do not invent fields, units, formats, or patterns.
-- Only report patterns or differences actually visible in this batch.
-- If no consistency issue is observed, return empty `issues` and still populate the other observation fields from the data that is present.
-- Do NOT invent a check that is not in this list.
-- Do NOT skip a check.
-- Mark "fail" ONLY if the relevant field is genuinely absent from the payload shown — never fail a
-  check based on assumptions about data not shown to you.
-- Mark "na" only for product_guardrails when the product is clearly not in a risky category.
-- Do NOT compute or output any aggregate score — scoring is calculated separately from your verdicts.
-- For any check you mark "partial" or "fail", also write a short human-readable "enrichment" name,
-  a 1-2 sentence "why_it_matters_for_agents", and a concrete "example" fix for that specific
-  product/store using its actual title/attributes — not a generic template.
+Do NOT calculate numerical scores.
 
-Fixed rubric checks:
+Python calculates all scores after the AI returns the verdicts.
+
+Do NOT calculate an aggregate readiness score.
+
+Do NOT rank products.
+
+Do NOT rank issues.
+
+Do NOT assign a score based on the number of issues.
+
+The final score is calculated separately from the returned verdicts.
+
+============================================================
+FIXED RUBRIC CHECKS
+============================================================
+
 {_rubric_prompt_block()}
 
-ISSUE CLASSIFICATION:
-An issue_type marked 'existing' must be one of the canonical types listed specifically under that check_id in the registry above — not any canonical type from the full list.
+The Fixed Rubric defines every check that must be evaluated.
 
-For every check marked "partial" or "fail", identify the exact issue or issues
-that caused the verdict.
+Do not invent additional checks.
 
-First compare the observed problem against the canonical issue types below.
+Do not skip any check.
 
-If the problem exactly matches an existing canonical issue type:
-- return status "existing"
-- use the exact canonical issue_type
-- do not rename it
-- do not invent a synonym
+Every store-level check must appear.
 
-If the observed problem is genuinely distinct from every canonical issue type:
-- return status "new"
-- create a concise, specific issue_type in snake_case
-- provide a factual description of the new issue
-- do not assign a fix_mode
-- do not assign a fix_action
+Every product-level check must appear for every product.
 
-A check may contain multiple issues.
+============================================================
+ISSUE REGISTRY
+============================================================
 
-Every issue object MUST include all three fields: "issue_type", "status", AND "description".
-Never omit "description" — it must always be a non-empty factual sentence explaining the
-specific problem observed, even for existing/canonical issue types.
-
-For "pass" and "na", return an empty issues array.
-STRICT ISSUE REQUIREMENT:
-
-For every check with verdict "partial" or "fail":
-
-- issues MUST contain at least one issue.
-- Do NOT return an empty issues array.
-- Every issue MUST describe a concrete problem actually observed
-  in the supplied store/product data.
-- The issue MUST NOT simply repeat the rubric/check description.
-- "enrichment" MUST describe the discovered issue, not what the
-  check is intended to evaluate.
-- "why_it_matters_for_agents" MUST explain the agent impact of
-  the discovered issue.
-- "example" MUST give a concrete example from the observed data
-  whenever possible.
-- These three fields MUST NOT be empty.
-
-For a "pass" or "na" verdict:
-- issues MUST be [].
-
-Canonical issue types:
 {issue_registry_block}
 
-STORE-LEVEL RECOMMENDATIONS — `affected_product_ids` RULES:
-- Only include product IDs in `affected_product_ids` when a PER-PRODUCT check_id you evaluated
-  applies to specific identifiable products beyond a single product's own missing_enrichments.
-  - For consistency observations, include the actual product IDs affected by the observed
-  inconsistency when those products are identifiable from the batch.
-  For `measurement_observations`:
-- Return one observation for each actual measurement that can be identified.
-- Use the exact product_id from the supplied payload.
-- Use the actual field/attribute containing the measurement.
-- Preserve the exact raw_value.
-- Extract the unit from the actual value.
-- Infer the physical dimension from the observed measurement semantics.
-- Do not generate a consistency verdict.
-- Do not generate `inconsistent_attribute_units` yourself.
-- For other Store-wide checks (fulfillment_context, policy_semantics, faq_or_guidance, store_guardrails, legal_pages, contact_brand) always use an empty array — they are not
-  product-specific by definition.
-- Never invent product IDs.
+============================================================
+AFFECTED VARIANT AND OPTION IDS
+============================================================
 
-CRITICAL CONSTRAINTS:
-- Write the entire response, including all values and examples, strictly in the requested language: {language}.
-- Do not mix languages.
-EXACT RESPONSE SHAPE:
-Every store check_id and every product check_id in the fixed rubric above MUST appear,
-following exactly the structure shown below. This example illustrates only 2 checks per
-section for brevity — every other check_id in the rubric must follow this identical shape:
+Every issue MUST include:
+
+- "affected_variant_ids": exact variant IDs from the payload;
+- "affected_option_ids": exact option IDs from the payload.
+
+Rules:
+
+- Copy IDs EXACTLY as they appear in the supplied Products Catalogue Payload
+  (for example gid://shopify/ProductVariant/123).
+- Include a variant ID only when the issue concerns specific variants
+  (for example a missing SKU, missing barcode, or a wrong variant title).
+- Include an option ID only when the issue concerns specific options
+  (for example a generic or missing option name).
+- If the issue applies to the whole product, or to the whole store, or no
+  ID is present in the payload, return an empty array.
+- NEVER invent, guess, shorten, or reformat IDs.
+- Do not use titles, SKUs or positions in place of IDs.
+- Store-level checks always return empty arrays for both fields.
+
+============================================================
+RECOMMENDATIONS
+============================================================
+
+For every check marked "partial" or "fail":
+
+- provide a concise human-readable "enrichment";
+- provide a 1-2 sentence "why_it_matters_for_agents";
+- provide a concrete "example" fix based on the actual supplied data.
+
+Recommendations must address the actual observed problem.
+
+Do not create generic recommendations unrelated to the evidence.
+
+Do not invent catalog attributes that were not supplied.
+
+For PASS and NA:
+
+- issues MUST be [];
+- do not invent enrichment requirements.
+
+============================================================
+AFFECTED PRODUCT IDS
+============================================================
+
+Only include product IDs in `affected_product_ids` when:
+
+1. a PER-PRODUCT check affects identifiable products beyond that product's
+   own missing_enrichments; or
+
+2. a consistency observation identifies actual products affected by the
+   observed variation.
+
+For these STORE-WIDE checks:
+
+- fulfillment_context
+- policy_semantics
+- faq_or_guidance
+- store_guardrails
+- legal_pages
+- contact_brand
+
+always use an empty `affected_product_ids` array.
+
+Never invent product IDs.
+
+============================================================
+NA VS FAIL
+============================================================
+
+- FAIL / PARTIAL: the data source needed for the check WAS supplied and it
+  lacks what the check requires.
+- NA: the data source needed to judge the check was NOT supplied, or the
+  check does not apply to this product/store.
+- If you cannot determine the answer from the supplied data, return "na".
+  Never return "fail" because you could not see something.
+
+If store_context is unavailable or empty, this store-level checks are out of scope for this run :
+
+- fulfillment_context
+- policy_semantics
+- faq_or_guidance
+- store_guardrails
+- legal_pages
+- contact_brand
+
+Return verdict "na", issues [], and empty strings for enrichment fields. Never return "fail".
+
+Do NOT mark them as fail merely because store_context is unavailable.
+
+`consistency` must still be evaluated from the supplied product data through
+batch-level observations.
+
+Product-level checks must still be evaluated normally from the product payload.
+
+`product_guardrails` may be "na" when the product is clearly outside the
+applicable risky/restricted categories according to the Fixed Rubric.
+
+
+============================================================
+LANGUAGE AND OUTPUT
+============================================================
+
+Write the entire response strictly in the requested language:
+
+{language}
+
+Do not mix languages.
+
+Return ONLY valid JSON.
+
+Do not return:
+
+- markdown;
+- code fences;
+- explanations outside the JSON;
+- conversational prose;
+- aggregate scores;
+- commentary before or after the JSON.
+
+============================================================
+EXACT RESPONSE SHAPE
+============================================================
+
+Every store check_id and every product check_id in the Fixed Rubric MUST appear.
+
+Every product must contain:
+
+- product_id
+- title
+- verdicts
+
+All PER-PRODUCT check results MUST be nested under the `verdicts` object.
+
+Every check must contain the exact structure defined by the response schema.
 
 {_expected_response_shape_example()}
 
-Rules that apply to every check in the real response, not just the ones shown above:
-- Per-product check results MUST be nested under a "verdicts" object on each product entry —
-  never as sibling keys of "product_id"/"title".
-- "enrichment", "why_it_matters_for_agents", and "example" MUST be flat strings — never nested
-  objects with their own sub-fields.
-- Every issue object MUST include "issue_type", "status", AND "description" — never omit any of these.
-- Every store check_id and every product check_id must be present for every product — do not
-  omit any check.
+Rules applying to the real response:
 
-Store URL: {store_url}
+- Every store check_id must be present.
+- Every product check_id must be present for every product.
+- Per-product verdicts MUST be nested under `verdicts`.
+- `enrichment`, `why_it_matters_for_agents`, and `example` MUST be flat strings.
+- Every issue MUST include `issue_type`, `status`, and `description`.
+- Every PARTIAL or FAIL check MUST contain at least one issue.
+- Every PASS or NA check MUST contain `issues: []`.
+- Evidence must be factual and based only on supplied data.
+- Never omit a required check.
+- Never invent a check.
+- Never calculate aggregate scores.
+
+============================================================
+STORE INFORMATION
+============================================================
+
+Store URL:
+{store_url}
 
 Store Context:
 {json.dumps(store_context, ensure_ascii=False, indent=2)}
-NA / unavailable evidence:
-- If store_context is unavailable or empty, mark these store-level checks as "na":
-  - fulfillment_context
-  - policy_semantics
-  - faq_or_guidance
-  - store_guardrails
-  - legal_pages
-  - contact_brand
-- Do NOT mark them as fail merely because store_context is unavailable.
-- "consistency" must still be evaluated from the product data provided.
-- Product-level checks must still be evaluated normally from the product payload.
-- product_guardrails may be "na" when the product is clearly not a risky category.
-Products Catalogue Payload:
+
+============================================================
+PRODUCTS CATALOGUE PAYLOAD
+============================================================
+
 {json.dumps(products, ensure_ascii=False, indent=2)}
 """.strip()
+
 
 def analyze_with_ollama(products: list[dict[str, Any]], store_context: dict[str, Any], store_url: str, model: str, language="English") -> dict[str, Any]:
     payload = {
@@ -505,23 +1005,15 @@ def _check_verdict_schema() -> dict:
                 "items": {
                     "type": "OBJECT",
                     "properties": {
-                        "issue_type": {
-                            "type": "STRING",
-                            "minLength": 1,
-                        },
-                        "status": {
-                            "type": "STRING",
-                            "enum": ["existing", "new"],
-                        },
-                        "description": {
-                            "type": "STRING",
-                            "minLength": 1,
-                        },
+                        "issue_type": {"type": "STRING", "minLength": 1},
+                        "status": {"type": "STRING", "enum": ["existing", "new"]},
+                        "description": {"type": "STRING", "minLength": 1},
+                        "affected_variant_ids": {"type": "ARRAY", "items": {"type": "STRING"}},
+                        "affected_option_ids": {"type": "ARRAY", "items": {"type": "STRING"}},
                     },
                     "required": [
-                        "issue_type",
-                        "status",
-                        "description",
+                        "issue_type", "status", "description",
+                        "affected_variant_ids", "affected_option_ids",
                     ],
                     "additionalProperties": False,
                 },
@@ -787,6 +1279,8 @@ def _expected_response_shape_example() -> str:
                     "issue_type": "<canonical_or_new_issue_type>",
                     "status": "existing",
                     "description": "<factual description of the specific issue>",
+                    "affected_variant_ids": ["<exact variant id from payload, or empty>"],
+                    "affected_option_ids": ["<exact option id from payload, or empty>"],
                 }
             ],
             "enrichment": "<short fix name — flat string, not an object>",
@@ -821,12 +1315,43 @@ def _expected_response_shape_example() -> str:
     }
     return json.dumps(example, indent=2, ensure_ascii=False)
 
+def _collect_valid_ids(product: dict | None) -> tuple[set[str], set[str]]:
+    if not product:
+        return set(), set()
+    variant_ids = {
+        str(v.get("id") or v.get("variant_id"))
+        for v in (product.get("variants") or [])
+        if v.get("id") or v.get("variant_id")
+    }
+    option_ids = {
+        str(o.get("id") or o.get("option_id"))
+        for o in (product.get("options") or [])
+        if o.get("id") or o.get("option_id")
+    }
+    return variant_ids, option_ids
+
+
+def _clean_ids(raw: Any, valid: set[str], cid: str, label: str) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    cleaned = []
+    for value in raw:
+        value = str(value).strip()
+        if value in valid:
+            if value not in cleaned:
+                cleaned.append(value)
+        elif value:
+            print(f"[Warning] {cid}: dropping {label} {value!r} — not found in product payload")
+    return cleaned
+
 def _extract_verdicts_and_texts(
     product_entry: dict,
     check_ids: list[str],
+    raw_product: dict | None = None,
 ) -> tuple[dict, dict, dict]:
 
     verdicts, texts, issues = {}, {}, {}
+    valid_variant_ids, valid_option_ids = _collect_valid_ids(raw_product)
 
     raw = product_entry.get("verdicts")
     if not isinstance(raw, dict) or not raw:
@@ -922,6 +1447,10 @@ def _extract_verdicts_and_texts(
                 "issue_type": issue_type,
                 "status": status,
                 "description": description,
+                "affected_variant_ids": _clean_ids(
+                    issue.get("affected_variant_ids"), valid_variant_ids, cid, "variant id"),
+                "affected_option_ids": _clean_ids(
+                    issue.get("affected_option_ids"), valid_option_ids, cid, "option id"),
             })
 
         if verdict in ("pass", "na") and normalized_issues:
@@ -946,6 +1475,84 @@ def _extract_verdicts_and_texts(
         issues[cid] = normalized_issues
 
     return verdicts, texts, issues
+
+def deduplicate_normalized_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[tuple, dict[str, Any]] = {}
+
+    for issue in issues:
+        key = (issue.get("product_id"), issue.get("check_id"), issue.get("issue_type"))
+
+        if key not in merged:
+            merged[key] = {**issue}
+            continue
+
+        for field in ("affected_variant_ids", "affected_option_ids"):
+            merged[key][field] = list(dict.fromkeys(
+                (merged[key].get(field) or []) + (issue.get(field) or [])
+            ))
+
+    return list(merged.values())
+
+def _product_image_url(product: dict | None) -> str | None:
+    img = (product or {}).get("image")
+    return img.get("src") if isinstance(img, dict) else None
+
+
+def _variant_display(v: dict, product: dict) -> dict[str, Any]:
+    own = (v.get("image") or {}).get("src")
+    return {
+        "id": v.get("id"),
+        "title": v.get("title"),
+        "selected_options": v.get("selectedOptions") or [],
+        "image_url": own or _product_image_url(product),
+        "image_source": "variant" if own else "product",
+    }
+
+
+def _option_display(o: dict) -> dict[str, Any]:
+    return {"id": o.get("id"), "name": o.get("name"), "values": o.get("values") or []}
+
+
+def _enrich_issue(
+    issue: dict[str, Any],
+    product_lookup: dict[str, dict],
+) -> dict[str, Any]:
+    product = product_lookup.get(str(issue.get("product_id") or ""))
+
+    if product:
+        variants = {str(v.get("id")): v for v in product.get("variants") or []}
+        options = {str(o.get("id")): o for o in product.get("options") or []}
+        issue["product_title"] = product.get("title")
+        issue["product_image_url"] = _product_image_url(product)
+        issue["affected_variants"] = [
+            _variant_display(variants[vid], product)
+            for vid in issue.get("affected_variant_ids") or [] if vid in variants
+        ]
+        issue["affected_options"] = [
+            _option_display(options[oid])
+            for oid in issue.get("affected_option_ids") or [] if oid in options
+        ]
+    else:
+        issue.setdefault("affected_variants", [])
+        issue.setdefault("affected_options", [])
+
+    # for consistency issues
+    enriched_targets = []
+    for t in issue.get("targets") or []:
+        tp = product_lookup.get(str(t.get("product_id") or ""))
+        if not tp:
+            continue
+        vmap = {str(v.get("id")): v for v in tp.get("variants") or []}
+        omap = {str(o.get("id")): o for o in tp.get("options") or []}
+        enriched_targets.append({
+            "product_id": t["product_id"],
+            "product_title": tp.get("title"),
+            "product_image_url": _product_image_url(tp),
+            "options": [_option_display(omap[i]) for i in t.get("option_ids") or [] if i in omap],
+            "variants": [_variant_display(vmap[i], tp) for i in t.get("variant_ids") or [] if i in vmap],
+        })
+    issue["targets"] = enriched_targets
+    return issue
 
 def assemble_report_from_verdicts(
     raw_response: dict[str, Any],
@@ -1054,6 +1661,7 @@ def assemble_report_from_verdicts(
                     "issue_type": issue_type,
                     "status": status,
                     "description": description,
+                    "targets": issue.get("targets") or [],
                 },
                 field=issue.get("field"),
                 affected_product_ids=(
@@ -1069,10 +1677,10 @@ def assemble_report_from_verdicts(
 
     for p in raw_response.get("products", []):
         pid = p.get("product_id")
-
-        v, t, i = _extract_verdicts_and_texts(p, llm_product_check_ids())  
-
         raw_product = _product_lookup.get(str(pid))
+
+        v, t, i = _extract_verdicts_and_texts(p, llm_product_check_ids(), raw_product)
+
         deterministic = run_product_deterministic_checks(raw_product) if raw_product else {}
         for cid, result in deterministic.items():
             v[cid] = result["verdict"]
@@ -1080,23 +1688,58 @@ def assemble_report_from_verdicts(
             i[cid] = result.get("issues", [])
 
         if raw_product:
+            print("\n========== DESCRIPTION DEBUG ==========")
+            print("Product:", pid)
+
+            print("BEFORE override:")
+            print("  product_understanding =", v.get("product_understanding"))
+            print("  product_clarity       =", v.get("product_clarity"))
+
             empty_desc = check_description_presence(raw_product)
+
+            print("empty_desc result =", empty_desc)
+
             if empty_desc is not None:
-                check_id = "product_understanding"
+                for check_id in (
+                    "product_understanding",
+                    "product_clarity",
+                ):
+                    print(
+                        f"OVERRIDING {check_id}: "
+                        f"{v.get(check_id)} -> {empty_desc['verdict']}"
+                    )
 
-                v[check_id] = empty_desc["verdict"]
-                t[check_id] = {
-                    "enrichment": "Add Product Description",
-                    "why_it_matters_for_agents": "An empty description gives agents nothing to work with when answering customer questions.",
-                    "example": f"Add a description for '{raw_product.get('title')}' explaining what it is and intended use.",
-                }
-                i[check_id] = empty_desc.get("issues", [])
+                    v[check_id] = empty_desc["verdict"]
+                    t[check_id] = {
+                        "enrichment": "Add Product Description",
+                        "why_it_matters_for_agents": (
+                            "An empty description gives agents nothing "
+                            "to work with when answering customer questions."
+                        ),
+                        "example": (
+                            f"Add a description for "
+                            f"'{raw_product.get('title')}' explaining "
+                            "what it is and intended use."
+                        ),
+                    }
 
+                    i[check_id] = empty_desc.get("issues", [])
+            
             empty_type = check_product_type_presence(raw_product)
-            if empty_type is not None and v.get("comparable_attributes") == "pass":
-                v["comparable_attributes"] = "partial"
-                i["comparable_attributes"] = i.get("comparable_attributes", []) + empty_type.get("issues", [])
 
+            if (
+                empty_type is not None
+                and v.get("comparable_attributes") == "pass"
+            ):
+                v["comparable_attributes"] = "partial"
+                i["comparable_attributes"] = (
+                    i.get("comparable_attributes", [])
+                    + empty_type.get("issues", [])
+                )
+        print("AFTER override:")
+        print("  product_understanding =", v.get("product_understanding"))
+        print("  product_clarity       =", v.get("product_clarity"))
+        print("=======================================\n")
         all_product_verdicts[pid] = v
         all_product_texts[pid] = t
         for check_id, issue_list in i.items():
@@ -1106,6 +1749,12 @@ def assemble_report_from_verdicts(
         products_out.append({
             "product_id": pid,
             "title": p.get("title"),
+            "image_url": (
+                raw_product.get("image", {}).get("src")
+                if raw_product
+                and isinstance(raw_product.get("image"), dict)
+                else None
+            ),
             "missing_enrichments": build_product_recommendations(
                                         v,
                                         t,
@@ -1119,7 +1768,9 @@ def assemble_report_from_verdicts(
                                         ],
                                     ),
         })
-
+    normalized_product_issues = deduplicate_normalized_issues(normalized_product_issues)
+    normalized_product_issues = [_enrich_issue(i, _product_lookup) for i in normalized_product_issues]
+    normalized_store_issues = [_enrich_issue(i, _product_lookup) for i in normalized_store_issues]
     scores = compute_scores(all_product_verdicts, store_verdicts)
     store_recs = build_store_recommendations(store_verdicts, store_texts, all_product_verdicts, all_product_texts, normalized_store_issues,)
     print("\n" + "=" * 80)

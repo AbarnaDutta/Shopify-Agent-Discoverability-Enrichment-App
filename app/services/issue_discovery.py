@@ -21,6 +21,15 @@ def normalize_issue(
     issue_type = issue["issue_type"]
     status = issue["status"]
 
+    affected_variant_ids = list(dict.fromkeys(
+        str(v) for v in (issue.get("affected_variant_ids") or []) if v
+    ))
+    affected_option_ids = list(dict.fromkeys(
+        str(o) for o in (issue.get("affected_option_ids") or []) if o
+    ))
+    if variant_id is None and len(affected_variant_ids) == 1:
+        variant_id = affected_variant_ids[0]
+
     record = {
         "check_id": check_id,
         "issue_type": issue_type,
@@ -28,6 +37,9 @@ def normalize_issue(
         "description": issue["description"],
         "product_id": product_id,
         "variant_id": variant_id,
+        "affected_variant_ids": affected_variant_ids,
+        "affected_option_ids": affected_option_ids,
+        "targets": issue.get("targets") or [],
         "field": field,
         "affected_product_ids": affected_product_ids or [],
         "scope": None,

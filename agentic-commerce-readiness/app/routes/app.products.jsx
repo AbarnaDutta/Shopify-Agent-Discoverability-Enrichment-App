@@ -233,7 +233,15 @@ export default function Products() {
                       <td className="py-4 px-6">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-md border border-[#E1E3E5] bg-[#F1F2F3] flex items-center justify-center shrink-0">
-                            <Package size={16} className="text-[#6D7175]" />
+                            {product.image_url ? (
+                              <img
+                                src={product.image_url}
+                                alt={product.title || "Product"}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <Package size={16} className="text-[#6D7175]" />
+                            )}
                           </div>
                           <div>
                             <div className="font-semibold text-[#202223] group-hover:text-[#008060] transition-colors">

@@ -111,6 +111,7 @@ class AuditProduct(Base):
     audit_id            = Column(String(36),  ForeignKey("audits.id", ondelete="CASCADE"), nullable=False, index=True)
     product_id          = Column(String(255), nullable=False, index=True)
     title               = Column(String(512), nullable=True)
+    image_url           = Column(String(2048), nullable=True)
     score               = Column(Integer,     nullable=True, index=True)
     issue_count         = Column(Integer,     nullable=False, default=0)
     high_priority_count = Column(Integer,     nullable=False, default=0)
@@ -196,6 +197,13 @@ class AuditIssue(Base):
     variant_id = Column(String(255), nullable=True)
     field = Column(String(255), nullable=True)
     affected_product_ids = Column(JSON, nullable=False, default=list)
+    affected_variant_ids = Column(JSON, nullable=False, default=list)
+    affected_option_ids  = Column(JSON, nullable=False, default=list)
+    affected_variants    = Column(JSON, nullable=False, default=list)   # display info
+    affected_options     = Column(JSON, nullable=False, default=list)   # display info
+    targets              = Column(JSON, nullable=False, default=list)   # consistency issues
+    product_title        = Column(String(512), nullable=True)
+    product_image_url    = Column(String(2048), nullable=True)
 
     scope = Column(String(32), nullable=True)
     fix_mode = Column(String(32), nullable=False, default="unclassified")
