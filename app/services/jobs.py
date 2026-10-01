@@ -320,7 +320,7 @@ class JobQueue:
             start_time = time.time()
             result = audit_products(
                 raw_products=products,
-                store_context=store_context or {},
+                store_context=store_context,
                 store_url=store_url,
                 provider=effective_provider,
                 model=model,

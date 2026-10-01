@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any
 import time
 
-from app.services.product_fetcher import compact_product
 from app.services.report_builder import (
     LLMAdapter,
     get_llm_adapter,
@@ -85,7 +84,7 @@ def audit_products(
 
             result = analyzer.analyze(
                 batch,
-                store_context or {},
+                store_context,
                 store_url,
                 language,
             )
@@ -108,8 +107,14 @@ def audit_products(
             )
 
             print(
+                f"[DEBUG] Store context: {store_context!r}"
+            )
+            print(
+                f"[DEBUG] Store context type: {type(store_context).__name__}"
+            )
+            print(
                 f"[DEBUG] Store context JSON size: "
-                f"{len(json.dumps(store_context or {}, ensure_ascii=False))} chars"
+                f"{len(json.dumps(store_context, ensure_ascii=False))} chars"
             )
 
         except Exception as e:
@@ -130,7 +135,7 @@ def audit_products(
 
             result = analyzer.analyze(
                 batch,
-                store_context or {},
+                store_context,
                 store_url,
                 language,
             )
@@ -141,7 +146,7 @@ def audit_products(
             used_model = getattr(analyzer, "model", "unknown")
             result = analyzer.analyze(
                 batch,
-                store_context or {},
+                store_context,
                 store_url,
                 language,
             )

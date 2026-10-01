@@ -405,13 +405,45 @@ STORE_DETERMINISTIC_CHECKS = {
     "store_guardrails": check_store_guardrails,
 }
 
+STORE_CONTEXT_REQUIRED_CHECKS = {
+    "fulfillment_context",
+    "policy_semantics",
+    "faq_or_guidance",
+    "store_guardrails",
+    "legal_pages",
+    "contact_brand",
+}
+
+
+def _na_store_context_result(check_id: str) -> dict[str, Any]:
+    return {
+        "verdict": "na",
+        "evidence": (
+            f"'{check_id}' cannot be evaluated because store context "
+            "was not supplied by this audit source."
+        ),
+        "issues": [],
+    }
+
 
 def run_product_deterministic_checks(product: dict) -> dict[str, dict]:
     return {check_id: fn(product) for check_id, fn in PRODUCT_DETERMINISTIC_CHECKS.items()}
 
 
 def run_store_deterministic_checks(store_context: dict | None) -> dict[str, dict]:
-    return {check_id: fn(store_context) for check_id, fn in STORE_DETERMINISTIC_CHECKS.items()}
+    results = {
+        check_id: fn(store_context)
+        for check_id, fn in STORE_DETERMINISTIC_CHECKS.items()
+    }
+
+    # None has a specific meaning: this audit source did not provide store
+    # context at all. Mark every store-context-dependent check NA
+    # deterministically so the LLM cannot turn missing evidence into FAIL.
+    if store_context is None:
+        for check_id in STORE_CONTEXT_REQUIRED_CHECKS:
+            results[check_id] = _na_store_context_result(check_id)
+
+    return results
 
 def check_catalog_consistency(
     products: list[dict],

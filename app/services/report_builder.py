@@ -36,7 +36,8 @@ from app.services.deterministic_checks import (
     run_store_deterministic_checks,
     check_catalog_consistency,
     check_description_presence,      
-    check_product_type_presence,     
+    check_product_type_presence,
+    STORE_CONTEXT_REQUIRED_CHECKS,
 )
 
 from app.services.scoring_rubric import (
@@ -49,7 +50,7 @@ class LLMAdapter(Protocol):
     def analyze(
         self,
         products: list[dict[str, Any]],
-        store_context: dict[str, Any],
+        store_context: dict[str, Any] | None,
         store_url: str,
         language: str,
     ) -> dict[str, Any]:
@@ -220,204 +221,385 @@ def _rubric_prompt_block() -> str:
             lines.append(f"- [{c['id']}] ({scope}) {c['desc']}")
     return "\n".join(lines)
 
+
 def build_prompt(
     products: list[dict[str, Any]],
     store_context: dict[str, Any],
     store_url: str,
     language: str = "English",
 ) -> str:
+
     issue_registry_block = "\n".join(
-        f"- [{check_id}] {issue_type}"
+        (
+            f"- [{check_id}] {issue_type}"
+            f" | registered_fix_action: {definition.get('fix_action', 'none')}"
+        )
         for check_id, issues in ISSUE_TYPES.items()
-        for issue_type in issues
+        for issue_type, definition in issues.items()
     )
 
     return f"""
-You are an ecommerce data strategist helping a Shopify merchant prepare their store
-for AI commerce agents that use Shopify's Universal Commerce Protocol (UCP)
-and Storefront Model Context Protocol (MCP).
+You are an ecommerce data strategist evaluating supplied store and
+product data for agentic commerce readiness.
 
-Your task is to evaluate the supplied Shopify store and product data ONLY against
-the FIXED RUBRIC provided below.
-
-============================================================
-STEP 1 — UNDERSTAND FIRST
-============================================================
-
-Before evaluating anything, read the entire Products Catalogue Payload below in full:
-
-- product title
-- description
-- product type
-- tags
-- options
-- variants
-- pricing
-- inventory and availability
-- identifiers
-- URLs
-- metafields
-- attributes
-- store-level context
-
-Build a complete factual understanding of the supplied data before assigning
-any verdict.
-
-Do not use external information to fill gaps in the supplied data.
+Your task is to evaluate the supplied data ONLY against the FIXED
+RUBRIC provided below.
 
 ============================================================
-STEP 2 — CLASSIFY AGAINST THE FIXED RUBRIC
+PURPOSE OF THIS AUDIT
 ============================================================
 
-For every check_id listed in the Fixed Rubric:
+This audit is a MEASUREMENT, not a brainstorm.
 
-- evaluate the check according to its exact definition;
-- inspect the supplied data for evidence relevant to that check;
-- return exactly one verdict:
-  "pass", "partial", "fail", or "na";
-- provide factual evidence using the actual supplied fields, values,
-  attributes, metafields, variants, options, or explicitly absent evidence.
+Each evaluation must be based only on:
 
-The Fixed Rubric is the sole authority for WHAT each check evaluates.
+1. the supplied Products Catalogue Payload;
+2. the supplied Store Context;
+3. the Fixed Rubric;
+4. the Issue Registry.
+
+The current evaluation is independent.
+
+Do not assume, infer, remember, reconstruct, or reference any
+information outside the current payload and the rules provided in
+this prompt.
+
+Do not use information from any earlier evaluation, recommendation,
+fix, batch, result, or output.
+
+Do not attempt to determine whether something was previously fixed,
+previously reported, previously passed, or previously failed.
+
+Judge only the CURRENT supplied data.
+
+A correct audit has two properties:
+
+1. FAITHFUL
+
+Every finding must correspond to an explicit requirement of the
+Fixed Rubric that the supplied data demonstrates is not satisfied.
+
+2. CONVERGENT
+
+When the supplied data satisfies the requirements of a check,
+that check must pass.
+
+Do not replace a satisfied requirement with another deficiency
+simply because the supplied data could be improved in some other way.
+
+The same supplied payload, Fixed Rubric, and Store Context must
+produce the same interpretation.
+
+The purpose is to apply the existing rubric consistently, not to
+find as many problems as possible.
+
+A successful audit is allowed to contain fewer issues than a previous
+audit, including zero issues for a check. A check does NOT need to
+remain PARTIAL or FAIL merely because it was PARTIAL or FAIL before.
+
+The audit must detect real remaining deficiencies when they exist,
+but it must not search for replacement deficiencies after a requirement
+has become satisfied.
+
+============================================================
+STEP 1 — UNDERSTAND THE CURRENT DATA FIRST
+============================================================
+
+Before evaluating any check, read and understand the complete
+supplied payload.
+
+Consider all supplied information that may be relevant, including:
+
+- product information;
+- descriptions;
+- product properties;
+- structured data;
+- attributes;
+- metafields;
+- options;
+- option values;
+- variants;
+- pricing;
+- inventory;
+- availability;
+- identifiers;
+- URLs;
+- store information;
+- store context;
+- any other fields actually supplied in the payload.
+
+Do not use external information to fill gaps.
+
+Do not assume a value exists when it is not present.
+
+Do not assume a field is missing when the same information is
+clearly represented elsewhere in the supplied payload.
+
+Understand the complete current data before assigning a verdict
+or issue.
+
+============================================================
+STEP 2 — EVALUATE ONLY AGAINST THE FIXED RUBRIC
+============================================================
+
+For every check defined by the Fixed Rubric:
+
+1. read the exact definition of that check;
+2. identify the explicit requirements of that check;
+3. inspect the supplied data for evidence relevant to those
+   requirements;
+4. determine whether the requirements are satisfied;
+5. return exactly one verdict:
+
+   "pass"
+   "partial"
+   "fail"
+   "na"
+
+The Fixed Rubric is the sole authority for what a check evaluates.
 
 Do not create additional evaluation criteria.
 
-Do not add requirements that are not stated or directly required by the
-specific check.
+Do not add requirements that are not explicitly defined by the
+current check.
+
+Do not remove requirements that are explicitly defined by the
+current check.
+
+Do not transfer a requirement from one check to another.
+
+Do not use general ecommerce best practices as additional scoring
+criteria.
+
+Do not compare the supplied data against an imagined ideal,
+preferred, richer, or more complete version of the data.
 
 ============================================================
-VERDICT STABILITY — DO NOT CHANGE RUBRIC MEANING
+VERDICT STABILITY
 ============================================================
 
-The goal of this evaluation is CONSISTENCY of the existing rubric.
+Apply the Fixed Rubric consistently.
 
-For the same supplied Products Catalogue Payload, the same Store Context,
-the same Fixed Rubric, and the same check_id, apply the same interpretation
-of that check.
+For the same:
 
-IMPORTANT:
+- supplied data;
+- Store Context;
+- Fixed Rubric;
+- check;
 
-This instruction does NOT introduce any new evaluation criteria.
+the interpretation must remain the same.
 
-This instruction does NOT change the Fixed Rubric.
+Do not change a check because another check changed.
 
-This instruction does NOT make any check stricter or more permissive.
+Do not make one check stricter or more permissive because another
+check changed.
 
-This instruction does NOT create new issues.
+Do not compensate for a result in one check by changing another
+check.
 
-This instruction only requires the existing Fixed Rubric to be applied
-consistently.
+Do not change a verdict to make results appear balanced.
 
-When evaluating a check:
+Do not create an issue to prevent a check from passing.
 
-1. Read ONLY the requirements defined for that specific check_id.
+Do not remove a valid issue to make results appear stable.
 
-2. Evaluate the supplied evidence against those existing requirements.
+Do not introduce a new requirement to explain a different result.
 
-3. Do not add any requirement that is not explicitly defined by that check.
+Do not reinterpret the same evidence using a newly imagined rule.
 
-4. Do not remove or weaken any requirement that is explicitly defined by
-   that check.
+Consistency must come from consistent application of the existing
+Fixed Rubric.
 
-5. Do not transfer a requirement from one check_id to another.
+A change in one category is NEVER a reason by itself to change
+another category.
 
-6. Do not transfer a deficiency from one check_id to another.
+For example:
 
-7. Do not use another check's verdict to determine the current check's
-   verdict.
+- an MCP result must not be changed because Catalog changed;
+- a Catalog result must not be changed because Safety changed;
+- a Safety result must not be changed because MCP changed;
+- a UCP result must not be changed because another category changed.
 
-8. Do not change a verdict because another category changed.
-
-9. Do not make MCP stricter to stabilize MCP.
-
-10. Do not make Catalog stricter to stabilize Catalog.
-
-11. Do not make Safety stricter to stabilize Safety.
-
-12. Do not make UCP stricter or more permissive because another category
-    changed.
-
-13. Do not introduce a new issue merely because another issue or category
-    changed.
-
-14. Do not search for additional deficiencies after the requirements of the
-    current check have been evaluated.
-
-15. Additional information that could improve a product or store is NOT a
-    scoring deficiency unless that information is required by the current
-    Fixed Rubric check.
-
-16. Do not compare the supplied product against an ideal, preferred, richer,
-    or more complete version of the product.
-
-17. Do not use general ecommerce best practices as additional scoring
-    criteria.
-
-18. Do not change PASS to PARTIAL or PARTIAL to FAIL merely because additional
-    information could be useful.
-
-19. Do not change PARTIAL to PASS or FAIL unless the existing requirements
-    of that specific check justify that change.
-
-20. Evaluate every check independently.
-
-The following must remain completely independent:
-
-- UCP checks
-- MCP checks
-- Catalog checks
-- Safety checks
-
-A change in one check must NOT cause a compensating or balancing change in
-another check.
-
-The objective is NOT to make scores look balanced.
-
-The objective is to reproduce the same verdict whenever the underlying
-evidence and rubric are unchanged.
+Only evidence relevant to the current check may change that
+check's verdict.
 
 ============================================================
-NO NEW ISSUE RULE
+CURRENT-STATE REQUIREMENT VERIFICATION
 ============================================================
 
-Do NOT introduce a new issue, issue_type, requirement, deficiency,
-recommendation, or enrichment requirement solely for the purpose of
-stabilizing another check.
+Evaluate every requirement from the CURRENT supplied data.
 
-A PARTIAL or FAIL is allowed only when it is supported by an actual
-requirement of the SAME check_id and actual evidence in the supplied data.
+The current payload is intentionally a fresh measurement. It may
+reflect changes made since an earlier evaluation, but no earlier
+evaluation is provided to you and must not be reconstructed.
 
-If the existing Fixed Rubric does not require something, its absence must
-NOT become a new issue.
+If the CURRENT data satisfies a requirement that could previously
+have been unsatisfied, treat that requirement as satisfied now.
 
-If additional information would merely be helpful, desirable, or best
-practice, do NOT turn it into an issue.
+Do not assume that a previously observed problem still exists.
+Do not carry an issue from one evaluation into another.
+Do not preserve an issue classification because it appeared before.
+Do not infer that a fix failed merely because the current audit
+contains another legitimate issue.
 
-If the current check is satisfied according to its existing Fixed Rubric,
-return PASS even if the product could be improved in other ways.
+The absence of historical context is intentional. Your job is to
+measure the current state accurately, not to preserve historical
+findings.
+
+============================================================
+NO ISSUE SUBSTITUTION
+============================================================
+
+The purpose of the audit is NOT to ensure that every check contains
+an issue.
+
+When a requirement is satisfied in the CURRENT data, CLOSE that
+requirement. Do not search for another problem merely because:
+
+- the same check had an issue before;
+- the same product had an issue before;
+- the category previously had a lower result;
+- a recommendation was previously made;
+- a fix was expected to improve the result;
+- another issue type exists in the registry;
+- another field could theoretically be improved.
+
+Do NOT replace a resolved condition with another issue merely to keep
+a check PARTIAL or FAIL.
+
+Do NOT reinterpret unrelated evidence more strictly after a previous
+condition is satisfied.
+
+Do NOT search for a weaker, narrower, or alternative deficiency after
+the original requirement has been satisfied.
+
+A different issue may still be reported, but ONLY if all of the
+following are true:
+
+1. It is independently demonstrated by the CURRENT supplied data.
+2. It violates a separate explicit requirement of the CURRENT
+   Fixed Rubric.
+3. It is semantically distinct from the condition that is now
+   satisfied.
+4. It would still be a valid issue if the previously observed
+   condition had never existed.
+5. Its existence does not depend on the fact that another issue
+   was previously reported or fixed.
+
+The existence of a previous issue is never evidence for a new issue.
+The existence of a previous recommendation is never evidence for a
+new issue.
+The fact that a check previously failed is never evidence that it
+should fail again.
+
+Every active issue must independently earn its existence from the
+CURRENT payload and CURRENT Fixed Rubric.
+
+============================================================
+NO NEW REQUIREMENTS
+============================================================
+
+Do not introduce:
+
+- new evaluation criteria;
+- new requirements;
+- new scoring conditions;
+- new minimum lengths;
+- new minimum numbers of fields;
+- new minimum numbers of attributes;
+- new formatting requirements;
+- new standardization requirements;
+- new category requirements;
+- new best-practice requirements.
+
+Information that could improve the supplied data is not automatically
+a scoring deficiency.
+
+A deficiency exists only when the Fixed Rubric explicitly requires
+the relevant condition and the supplied evidence demonstrates that
+the condition is not satisfied.
 
 ============================================================
 NO CROSS-CHECK CONTAMINATION
 ============================================================
 
-Evidence may be present in multiple places in the payload, but requirements
-remain check-specific.
+Every check is evaluated independently.
 
-Do not allow:
+Evidence may appear in multiple places in the supplied payload.
 
-- product_understanding to create requirements for product_clarity;
-- product_clarity to create requirements for product_understanding;
-- comparable_attributes to create requirements for rich_attributes;
-- rich_attributes to create requirements for comparable_attributes;
-- MCP requirements to create Catalog requirements;
-- Catalog requirements to create MCP requirements;
-- Safety requirements to create Catalog requirements;
-- Catalog requirements to create Safety requirements;
-- legal_pages requirements to create contact_brand requirements;
-- contact_brand requirements to create legal_pages requirements.
+That does not allow one check to create or modify requirements
+belonging to another check.
 
-Only the Fixed Rubric definition of the current check determines whether
-evidence is sufficient.
+Do not transfer between checks:
+
+- requirements;
+- deficiencies;
+- verdicts;
+- issue classifications;
+- scoring meaning;
+- remediation requirements.
+
+A relationship between two pieces of evidence does not make them
+the same requirement.
+
+The issue belongs to the check whose Fixed Rubric actually owns
+the violated condition.
+
+A single underlying defect must not be duplicated across multiple
+checks merely because related evidence appears in multiple checks.
+
+A problem may be relevant to more than one check only when the
+same underlying evidence independently violates an explicit
+requirement of each check.
+
+Do not duplicate an issue merely because:
+
+- the same field is visible to another check;
+- the same object is referenced by another check;
+- the same fix could theoretically be useful elsewhere;
+- the same issue_type string exists elsewhere;
+- another check has a related concept.
+
+============================================================
+CHECK CLOSURE — CURRENT DATA ONLY
+============================================================
+
+Evaluate each check using only the CURRENT supplied data.
+
+For each check:
+
+1. identify all explicit applicable requirements;
+2. evaluate every applicable requirement;
+3. determine whether each requirement is satisfied.
+
+If every applicable requirement is satisfied:
+
+- verdict MUST be "pass";
+- issues MUST be [];
+- enrichment MUST be "";
+- why_it_matters_for_agents MUST be "";
+- example MUST be "";
+
+STOP evaluating that check.
+
+Once all explicit requirements of a check are satisfied, that check
+is CLOSED for this evaluation.
+
+Do not continue searching for another deficiency.
+
+Do not create a replacement issue.
+
+Do not create an issue because another check contains an issue.
+
+Do not create an issue because an issue type exists in the registry.
+
+Do not create an issue because additional information could improve
+the supplied data.
+
+Do not create an issue to prevent the check from becoming PASS.
+
+Only another independently demonstrated violation of another
+explicit requirement of the SAME check may produce another issue.
 
 ============================================================
 REPEATED EVALUATION RULE
@@ -425,151 +607,439 @@ REPEATED EVALUATION RULE
 
 When the same evidence is supplied again:
 
-- do not reinterpret the same evidence using a newly imagined requirement;
-- do not look for a new deficiency that was not part of the existing check;
-- do not change the verdict because the model is evaluating the same data
-  again;
-- do not use the previous output as a reason to change the current output.
+- evaluate it against the same Fixed Rubric;
+- do not invent a new requirement;
+- do not search for a different deficiency;
+- do not change the interpretation because the evaluation is being
+  repeated;
+- do not use any previous output as evidence;
+- do not use any previous output as a reason to change the current
+  output.
 
-Evaluate the data against the SAME Fixed Rubric each time.
+The current payload is the only data being evaluated.
 
-Consistency must come from consistent application of the existing rubric,
-NOT from adding new rules.
-============================================================
-RUBRIC IMMUTABILITY
-============================================================
+Different evidence may legitimately produce a different verdict or
+different issue.
 
-The Fixed Rubric is the sole authority for determining what each check requires.
-
-Do not:
-
-- invent additional requirements;
-- invent minimum lengths;
-- invent minimum sentence counts;
-- invent minimum numbers of attributes;
-- invent minimum numbers of fields;
-- invent standardization requirements;
-- invent category-specific requirements;
-- transfer requirements from one check to another;
-- use general ecommerce best practices as additional scoring criteria;
-- downgrade a result because additional information would merely be useful
-  or desirable.
-
-Do not remove or weaken a requirement explicitly defined by the Fixed Rubric.
-
-Evaluate the actual supplied evidence against the actual requirement of the
-specific check.
+Same evidence under the same rubric should produce the same semantic
+interpretation.
 
 ============================================================
-PASS / PARTIAL / FAIL / NA
+PASS / PARTIAL / FAIL / NA — STRICT DECISION RULE
 ============================================================
 
-PASS:
+For every check, make the verdict using ONLY the Fixed Rubric and the
+CURRENT supplied data.
 
-All requirements explicitly defined by the applicable check are satisfied
-by the supplied evidence.
+Do not use previous evaluations, previous recommendations, previous fixes,
+previous batches, other checks, other categories, issue count, issue
+severity, or desired score.
 
-PARTIAL:
+STEP 1 — APPLICABILITY
 
-The core requirement is substantially satisfied, but one or more requirements
-explicitly defined by the applicable check are incomplete or not satisfied.
+Determine whether the current check applies using ONLY the Fixed Rubric.
 
-FAIL:
+If the check does not apply:
+    verdict = "na"
 
-The core requirement explicitly defined by the applicable check is not satisfied.
+Do not invent applicability rules.
 
-NA:
+------------------------------------------------------------
 
-The check genuinely does not apply according to the Fixed Rubric.
+STEP 2 — EVIDENCE AVAILABILITY
 
-Do not move PASS to PARTIAL merely because additional information could be useful.
+Determine whether the evidence required to evaluate the applicable check
+is available in the CURRENT supplied data.
 
-Do not move PARTIAL to FAIL merely because more information could be desirable.
+If required evidence is genuinely unavailable AND the Fixed Rubric
+permits NA in that situation:
+    verdict = "na"
 
-The distinction must be based on the actual requirements of that specific check.
+Do NOT treat "some data is incomplete" as automatically meaning NA.
+
+NA means the check cannot be evaluated or does not apply according to the
+Fixed Rubric.
+
+If the evidence needed to evaluate the requirement IS available, continue
+evaluating the requirement.
+
+------------------------------------------------------------
+
+STEP 3 — REQUIREMENT EVALUATION
+
+Identify every applicable explicit requirement defined by the CURRENT
+Fixed Rubric.
+
+For each requirement determine:
+
+- SATISFIED
+- NOT SATISFIED
+- NOT APPLICABLE
+
+Do not invent requirements.
+
+Do not use general ecommerce knowledge to create requirements.
+
+Do not use the existence of an issue type as evidence of a requirement.
+
+------------------------------------------------------------
+
+STEP 4 — PASS
+
+Return "pass" ONLY when every applicable explicit requirement is
+SATISFIED.
+
+If every applicable requirement is satisfied:
+
+- verdict MUST be "pass";
+- issues MUST be [];
+- enrichment MUST be "";
+- why_it_matters_for_agents MUST be "";
+- example MUST be "".
+
+STOP evaluating that check.
+
+Do not search for additional improvements.
+
+------------------------------------------------------------
+
+STEP 5 — PARTIAL
+
+Return "partial" when:
+
+- the check is applicable;
+- the required evidence needed for evaluation is available;
+- at least one applicable explicit requirement is SATISFIED;
+- at least one applicable explicit requirement is NOT SATISFIED; AND
+- the Fixed Rubric's stated purpose for the check is still meaningfully
+  achieved by the supplied data.
+
+PARTIAL means the check is working to some meaningful extent but one or
+more explicit requirements remain unsatisfied.
+
+Do NOT convert PARTIAL to FAIL merely because:
+
+- several requirements are unsatisfied;
+- several issues exist;
+- an issue is severe;
+- remediation is difficult;
+- remediation requires multiple changes;
+- the data could be substantially improved;
+- another check failed;
+- another category changed;
+- the resulting score is low.
+
+Issue count does NOT determine PARTIAL versus FAIL.
+
+Issue severity does NOT determine PARTIAL versus FAIL.
+
+Remediation size does NOT determine PARTIAL versus FAIL.
+
+------------------------------------------------------------
+
+STEP 6 — FAIL
+
+Return "fail" ONLY when ALL of the following are true:
+
+1. The check is applicable.
+2. The evidence required to evaluate the relevant requirement is
+   available in the CURRENT supplied data.
+3. An explicit requirement defined by the Fixed Rubric is NOT SATISFIED.
+4. That unsatisfied requirement is fundamental to the purpose of the
+   current check as established by the Fixed Rubric.
+5. The CURRENT supplied evidence demonstrates that the check's purpose
+   is fundamentally not achieved.
+
+FAIL does NOT mean:
+
+- information is missing;
+- information could be improved;
+- several issues exist;
+- many fields are empty;
+- the remediation is large;
+- the issue severity is high;
+- another check failed;
+- the category score is low.
+
+Do not infer a "core requirement" from general knowledge.
+
+The Fixed Rubric must establish the requirement and its relevance to the
+check.
+
+If the evidence demonstrates a deficiency but the check's stated purpose
+is still meaningfully achieved:
+    verdict = "partial"
+
+If the evidence needed to establish failure is unavailable and the Fixed
+Rubric permits NA:
+    verdict = "na"
+
+If failure of the core purpose is not directly demonstrated:
+    DO NOT return "fail".
+
+------------------------------------------------------------
+
+STEP 7 — STRICT PARTIAL VS FAIL TEST
+
+Before returning "fail", ask internally:
+
+1. What exact requirement from the Fixed Rubric is not satisfied?
+2. What exact CURRENT supplied evidence proves that?
+3. Does the Fixed Rubric establish this requirement as fundamental to
+   the purpose of the check?
+4. Does the CURRENT evidence demonstrate that the check's purpose is
+   fundamentally not achieved?
+
+If the answer to 4 is NO:
+    return "partial" when the check is still meaningfully achieved.
+
+If the required evidence is unavailable and NA is permitted:
+    return "na".
+
+Never return FAIL merely because a requirement is incomplete.
+
+------------------------------------------------------------
+
+STEP 8 — NO MOVING TARGET AFTER A FIX
+
+If the CURRENT supplied data satisfies a requirement that was previously
+unsatisfied, treat that requirement as SATISFIED.
+
+Do not preserve the previous deficiency.
+
+Do not search for a replacement deficiency merely because the original
+deficiency is now resolved.
+
+Do not make another requirement stricter because the original requirement
+was fixed.
+
+Do not create a new issue merely to keep the check PARTIAL or FAIL.
+
+A check is allowed to become PASS after a successful correction.
+
+------------------------------------------------------------
+
+STEP 9 — INDEPENDENT NEW DEFICIENCY
+
+After a requirement is satisfied, another issue may be reported ONLY if:
+
+1. it violates a separate explicit requirement of the CURRENT Fixed
+   Rubric;
+2. the CURRENT supplied data independently demonstrates that violation;
+3. the condition is semantically distinct;
+4. it would still be a valid issue even if the previously resolved
+   condition had never existed.
+
+The existence of a previous issue or recommendation is NEVER evidence
+for a new issue.
+
+------------------------------------------------------------
+
+STEP 10 — SAME INPUT STABILITY
+
+For the same:
+
+- CURRENT supplied data;
+- Store Context;
+- Fixed Rubric;
+- check;
+
+apply the same decision rules.
+
+Do not change PASS/PARTIAL/FAIL/NA merely because the evaluation is being
+repeated.
+
+A different verdict is justified only by a genuine difference in the
+CURRENT evidence, applicability, or Fixed Rubric.
+
+------------------------------------------------------------
+
+IMPORTANT:
+
+"Requirement not satisfied" and "check fundamentally failed" are NOT
+synonymous.
+
+A failed requirement may produce PARTIAL.
+
+A failed fundamental/core requirement may produce FAIL.
+
+Unavailable required evidence may produce NA when the Fixed Rubric
+permits NA.
+
+All applicable requirements satisfied produces PASS.
 
 ============================================================
-MISSING / EMPTY DATA
+PROOF OF DEFECT
 ============================================================
 
-Do not globally apply:
+Apply the following process independently to every check.
+
+A. EXTRACT THE REQUIREMENT
+
+Identify the exact conditions defined by the current check.
+
+Only those conditions count.
+
+B. FIND THE EVIDENCE
+
+Search the supplied payload for evidence relevant to those
+conditions.
+
+Evidence may appear in any supplied product field, variant,
+option, attribute, metafield, identifier, URL, or store context.
+
+Use the complete supplied data.
+
+C. TEST THE REQUIREMENT
+
+Determine whether the supplied evidence satisfies the exact
+requirement.
+
+D. PROVE A DEFECT
+
+A PARTIAL or FAIL is valid only when you can identify BOTH:
+
+1. the exact requirement from the current check that is not
+   satisfied;
+
+2. the exact supplied field, value, object, or explicitly absent
+   required data that proves it.
+
+If both cannot be identified, do not create a deficiency.
+
+E. FIX TEST — ISSUE-LEVEL, NOT CHECK-LEVEL
+
+For every identified deficiency, determine the smallest concrete change
+that would satisfy the SPECIFIC violated requirement represented by that
+issue.
+
+Ask:
+
+"If exactly this problem were corrected in the supplied data, would the
+specific violated requirement become satisfied?"
+
+If YES:
+    the issue is a valid independently supported deficiency.
+
+It is NOT necessary for fixing one issue to make the entire check PASS.
+
+A check may legitimately contain multiple independent deficiencies.
+
+Do NOT invalidate an issue merely because another independent requirement
+would remain unsatisfied after this issue is fixed.
+
+A recommendation must address the actual violated requirement and must not
+introduce additional requirements.
+
+============================================================
+EVIDENCE STANDARD
+============================================================
+
+PASS requires affirmative evidence that every applicable explicit
+requirement is satisfied.
+
+Do not mark a requirement as PASS merely because the evidence might
+possibly be interpreted favorably.
+
+Do not mark a requirement as PARTIAL or FAIL merely because the
+data could be improved.
+
+Use the exact wording of the Fixed Rubric and the actual supplied
+evidence.
+
+If the supplied data clearly satisfies the requirement, it passes.
+
+If the supplied data clearly demonstrates that the requirement is
+not satisfied, report the appropriate PARTIAL or FAIL.
+
+If the supplied data does not demonstrate a violation, do not
+invent a deficiency.
+
+Uncertainty is not evidence of failure.
+
+The existence of an issue type in the registry is not evidence
+that the issue exists.
+
+============================================================
+MISSING OR EMPTY DATA
+============================================================
+
+Do not globally interpret:
 
 "field empty = fail"
 
-A missing or empty field matters only when the information represented by that
-field is required by the specific Fixed Rubric check.
+A missing or empty field matters only when the information represented
+by that field is required by the specific Fixed Rubric check.
 
-If the applicable requirement is not present in the rubric, do not invent it.
+If the applicable requirement does not require the information,
+do not create an issue.
 
-When evidence required by a check is genuinely absent, explicitly identify
-that absence as the evidence.
+If evidence required to judge a check is genuinely unavailable,
+apply the NA rules.
+
+Do not turn lack of evidence into FAIL unless the Fixed Rubric
+explicitly makes the supplied source itself a required condition.
 
 ============================================================
 STRUCTURED DATA AND METAFIELDS
 ============================================================
 
-Evaluate supplied structured data according to the actual Fixed Rubric.
+Evaluate structured data, attributes, and metafields according to
+the actual Fixed Rubric.
 
-A populated Shopify metafield is evidence that the corresponding information
-exists in the supplied product data.
+A supplied value is evidence that the corresponding information
+exists in the supplied data.
 
-Do NOT automatically reject a metafield because:
+Do not automatically reject information because:
 
-- it is custom;
-- its namespace is custom;
-- its key is custom;
-- it is not a Shopify standard metafield definition;
-- it is represented differently from another product.
+- the field is custom;
+- the namespace is custom;
+- the key is custom;
+- the structure differs from another record;
+- the field is not a standard definition;
+- the information is represented differently elsewhere.
 
-Do NOT automatically treat a custom metafield as unstructured, invalid,
-insufficient, or non-comparable.
+Do not automatically classify information as invalid, insufficient,
+unstructured, non-comparable, or incorrect.
 
-Judge whether the information satisfies the specific Fixed Rubric check.
+Determine whether the supplied information satisfies the exact
+requirement of the current Fixed Rubric.
 
-For example, if a product contains domain-specific metafields such as:
-
-- material
-- size
-- capacity
-- usage
-- audience
-- activity
-- dimensions
-- composition
-
-these are actual supplied product attributes and must be considered as evidence
-for checks whose rubric explicitly evaluates such domain-specific attributes.
-
-Do not invent a requirement that those attributes must use Shopify standard
-metafield definitions unless the Fixed Rubric explicitly requires that.
+Do not invent a requirement about how data must be represented unless
+the Fixed Rubric explicitly requires that representation.
 
 ============================================================
 CATEGORY-AGNOSTIC EVALUATION
 ============================================================
 
-Do not assume that every product category requires the same attributes.
+Do not assume that all products, stores, or product categories
+require the same information.
 
-Do not automatically require:
+Do not automatically require any particular:
 
-- dimensions
-- materials
-- ingredients
-- usage instructions
-- care instructions
-- technical specifications
-- safety information
-- warranty information
-- certifications
-- medical information
-- shipping information
-- any other category-specific field
+- attribute;
+- field;
+- specification;
+- instruction;
+- policy;
+- document;
+- identifier;
+- metadata;
+- structured representation;
+- descriptive information.
 
-Only treat such information as required when:
+Only treat information as required when the Fixed Rubric explicitly
+requires it for the current check.
 
-1. the Fixed Rubric explicitly requires it; or
-2. the specific check clearly requires it based on its stated definition.
+Do not infer requirements from:
 
-Do not invent category-specific requirements.
+- product category;
+- product type;
+- industry;
+- common practice;
+- ecommerce conventions;
+- general recommendations;
+- model knowledge.
 
 ============================================================
 EVIDENCE
@@ -577,28 +1047,32 @@ EVIDENCE
 
 Evidence must come directly from the supplied payload.
 
-For every verdict, identify the actual:
+For every verdict, identify the actual supplied:
 
-- field
-- value
-- attribute
-- metafield
-- option
-- variant
-- store context
-- or explicitly absent required evidence
-
-that supports the verdict.
+- field;
+- value;
+- object;
+- attribute;
+- metafield;
+- option;
+- variant;
+- identifier;
+- URL;
+- store context;
+- or explicitly absent required evidence.
 
 Do not provide vague evidence such as:
 
-- "The product is incomplete."
-- "More information is needed."
-- "The catalog is not optimized."
+- "the product is incomplete";
+- "more information is needed";
+- "the catalog is not optimized";
+- "the data could be better".
 
-Instead identify the exact observed data.
+Identify the exact observed evidence.
 
 Do not fabricate evidence.
+
+Do not infer values that are not supplied.
 
 ============================================================
 ISSUE-DRIVEN VERDICTS
@@ -606,23 +1080,93 @@ ISSUE-DRIVEN VERDICTS
 
 For every check marked "partial" or "fail":
 
-- identify the concrete problem that caused the verdict;
-- use an existing canonical issue_type when one matches;
-- create a new issue_type only when the problem is genuinely distinct;
-- describe the actual observed problem.
+1. identify the concrete deficiency causing the verdict;
+2. prove that deficiency using the supplied evidence;
+3. determine which check owns that deficiency;
+4. classify the actual problem before selecting an issue_type;
+5. use an existing canonical issue_type when it accurately matches;
+6. create a new issue_type only when the problem is genuinely
+   distinct and no existing type accurately represents it.
 
 Do not create an issue merely because information could be useful.
 
 Do not create an issue for an optional field.
 
-Do not create an issue for a category-inapplicable field.
+Do not create an issue for information not required by the current
+Fixed Rubric.
 
-Do not create an issue for information that is already sufficiently represented
-elsewhere in the supplied product data.
+Do not create an issue to increase the issue count.
+
+Do not merge distinct deficiencies merely to reduce the issue count.
 
 For PASS and NA:
 
 issues MUST be [].
+
+============================================================
+MULTIPLE DISTINCT ISSUES
+============================================================
+
+A check may contain multiple distinct issues.
+
+Do not assume:
+
+- one check = one issue;
+- one product = one issue;
+- one check = one enrichment;
+- one enrichment = one issue.
+
+If multiple independent deficiencies are explicitly required by the
+current Fixed Rubric and each is supported by the supplied evidence,
+return each distinct deficiency separately.
+
+Each distinct issue must have:
+
+- its own issue_type;
+- its own description;
+- its own affected IDs where applicable;
+- its own appropriate remediation.
+
+Do not manufacture additional issues.
+
+Do not split one defect into multiple issues.
+
+Do not merge unrelated defects into one issue.
+
+The number of issues must be determined by the actual evidence and
+the Fixed Rubric.
+
+============================================================
+NEW ISSUE TYPE THRESHOLD
+============================================================
+
+A new issue_type is a LAST RESORT.
+
+Do not create a new issue_type merely because:
+
+- the wording is different;
+- the description is more specific;
+- the evidence uses a different value;
+- an existing issue can be described with different wording;
+- another issue_type sounds related;
+- the model can think of a more convenient name;
+- a different fix_action appears available.
+
+Create a new issue_type ONLY when the underlying semantic defect is
+genuinely distinct from every applicable registered issue_type AND
+that defect is explicitly required by the CURRENT Fixed Rubric AND
+that defect is directly proven by the CURRENT supplied data.
+
+Different wording does not mean different issue.
+Different evidence does not automatically mean different issue.
+Different product data does not automatically mean different issue.
+A different field or object may represent a different issue only when
+the Fixed Rubric independently requires that field or object and the
+current evidence proves the violation.
+
+Before creating a new issue_type, exhaust the exact semantic matches
+available in the current check and the legitimate cross-check reuse
+rules below.
 
 ============================================================
 ISSUE CLASSIFICATION — SEMANTIC OWNERSHIP FIRST
@@ -633,65 +1177,82 @@ the supplied evidence BEFORE selecting an issue_type.
 
 Issue classification is semantic, not name-based.
 
-The check_id and issue_type must describe the SAME underlying problem.
+The following must describe the SAME underlying problem:
+
+- check_id;
+- issue_type;
+- description;
+- evidence;
+- affected object;
+- affected field;
+- affected IDs;
+- remediation.
 
 Follow these steps in EXACT order.
 
 ------------------------------------------------------------
-STEP 1 — UNDERSTAND THE ACTUAL PROBLEM
+STEP 1 — IDENTIFY THE ACTUAL PROBLEM
 ------------------------------------------------------------
 
-First identify:
+First determine:
 
 1. What exactly is wrong?
-2. What field, attribute, metafield, option, option value,
-   variant, product property, or store property is affected?
-3. What exact supplied value or absence proves the problem?
-4. What does the problem mean for the CURRENT check being evaluated?
-5. What fix would actually correct that specific problem?
+2. What object is affected?
+3. What field or property is affected?
+4. What exact supplied value or absence proves the problem?
+5. What requirement of the CURRENT check is not satisfied?
+6. What change would actually correct that problem?
 
-Do NOT choose an issue_type before answering these questions.
+Do NOT select an issue_type before answering these questions.
 
-The issue_type must describe the actual observed problem,
-not merely a similar-looking problem.
+The issue_type must describe the actual observed problem.
+
+Do not select an issue_type merely because its name looks similar.
 
 ------------------------------------------------------------
-STEP 2 — DETERMINE THE CHECK OWNERSHIP
+STEP 2 — DETERMINE CHECK OWNERSHIP
 ------------------------------------------------------------
 
-Determine which CURRENT check_id the actual problem belongs to.
+Determine which CURRENT check owns the actual violated condition.
 
-The check_id is determined by the meaning of the problem
-and the rubric of that check.
+Ownership is determined by:
 
-Do NOT move a problem to another check merely because another
-check has a similarly named issue_type.
+- the Fixed Rubric;
+- the violated requirement;
+- the supplied evidence;
+- the semantic meaning of the problem.
 
-Do NOT change the current check_id to match an issue_type.
+Do not move a problem to another check because another check has
+a similar issue type.
 
-The issue must remain under the check whose rubric actually
+Do not change the current check_id merely to match an issue_type.
+
+The issue must remain under the check whose Fixed Rubric actually
 supports the observed deficiency.
 
 ------------------------------------------------------------
-STEP 3 — CHECK THE CURRENT CHECK'S ISSUE TYPES FIRST
+STEP 3 — CHECK THE CURRENT CHECK'S REGISTRY FIRST
 ------------------------------------------------------------
 
-Look ONLY at the canonical issue types registered under the
-CURRENT check_id.
+Look ONLY at the issue types registered under the CURRENT check first.
+
+Compare the actual observed problem against every registered issue
+type under that check.
 
 Ask:
 
-"Does one of the issue types registered under THIS check
-describe the exact same semantic problem?"
+"Does this registered issue type describe the exact same semantic
+problem?"
 
 If YES:
 
 - use that exact issue_type;
 - status = "existing";
-- preserve its meaning;
-- do not rename it;
-- do not use a synonym;
-- ensure its fix_action would actually address this problem.
+- copy the registered name exactly;
+- preserve its semantic meaning;
+- use the registered remediation semantics only as a compatibility
+  reference;
+- do not invent a different meaning for the registered issue.
 
 If NO:
 
@@ -701,186 +1262,237 @@ continue to STEP 4.
 STEP 4 — ISSUE TYPES FROM OTHER CHECKS
 ------------------------------------------------------------
 
-An issue_type registered under another check MAY be reused
-under the CURRENT check ONLY when ALL of the following are true:
+An issue_type registered under another check MAY be reused under
+the CURRENT check ONLY when ALL of the following are true:
 
 1. It describes the EXACT SAME underlying problem.
-2. It describes the SAME affected object or field.
-3. It has the SAME semantic meaning in the CURRENT check.
-4. Applying it under the CURRENT check does not change or broaden
-   the meaning of the issue_type.
-5. Its fix_action actually fixes the observed problem.
-6. The issue genuinely belongs to the CURRENT check according
-   to the Fixed Rubric.
+2. It refers to the SAME affected object.
+3. It refers to the SAME affected field or property.
+4. It has the SAME semantic meaning.
+5. Its registered remediation is compatible with the actual problem.
+6. The problem independently violates the CURRENT check's Fixed
+   Rubric.
+7. Reusing it does not hide, rename, or distort the actual problem.
 
-The existence of the same issue_type under another check is
-NEVER sufficient by itself.
+The existence of the same issue_type elsewhere is NEVER sufficient.
 
-NEVER reuse an issue_type merely because:
+Do NOT reuse an issue_type merely because:
 
-- the name looks similar;
-- the wording looks similar;
-- the affected data happens to be related;
-- the same fix_action happens to be available;
-- the issue exists somewhere else in the registry.
+- its name looks similar;
+- its wording looks similar;
+- the affected data is related;
+- the same fix_action exists;
+- it would be convenient;
+- another check already contains it.
 
-If the semantic meaning is different, DO NOT reuse it.
+If any semantic condition differs, DO NOT reuse it.
+
+The current check remains the owner.
 
 ------------------------------------------------------------
 STEP 5 — CREATE A NEW ISSUE TYPE WHEN NEEDED
 ------------------------------------------------------------
 
-If the actual problem genuinely belongs to the CURRENT check,
-but no existing issue_type under the CURRENT check accurately
-describes it, and no issue_type from another check is an exact
-semantic match that can legitimately be reused:
+If the actual problem genuinely belongs to the CURRENT check, but:
 
-CREATE A NEW ISSUE TYPE.
+- no issue type under the CURRENT check accurately describes it; and
+- no issue type from another check is an exact semantic match that
+  can legitimately be reused;
+
+then CREATE A NEW ISSUE TYPE.
 
 For a new issue:
 
 - status = "new";
 - use concise snake_case;
 - describe the actual observed problem;
-- do not force the problem into an existing issue_type;
-- do not change the check_id merely to avoid creating a new issue.
+- keep the issue specific to the actual evidence;
+- do not force the problem into an existing type;
+- do not change the check_id merely to avoid creating a new type.
 
 A new issue_type is correct when the problem is valid for the
-CURRENT check but the registry does not yet contain a suitable
-issue type for that check.
+CURRENT check but the registry does not contain a suitable semantic
+match.
+
+Do not create a new issue type that merely restates an existing one.
 
 ------------------------------------------------------------
-STEP 6 — NEVER MAP BY ISSUE_TYPE NAME ALONE
+STEP 6 — NEVER MAP BY NAME OR FIX ACTION ALONE
 ------------------------------------------------------------
 
-NEVER perform:
+Never perform:
 
-"issue_type exists somewhere → use it here."
+"issue_type exists somewhere -> use it here."
+
+Never perform:
+
+"fix_action exists -> find an issue that can use it."
 
 Always perform:
 
-"understand problem → determine ownership → compare semantics
-→ select exact existing type OR create new type."
+"understand problem
+-> determine affected object
+-> determine affected field
+-> determine violated requirement
+-> determine check ownership
+-> compare semantic meaning
+-> select exact existing issue type
+OR
+-> create a genuinely new issue type."
 
-The string/name of an issue_type is NOT evidence that it is
-semantically correct.
+The string/name of an issue_type is not evidence.
 
-------------------------------------------------------------
-STEP 7 — FIX ACTION MUST MATCH THE ACTUAL ISSUE
-------------------------------------------------------------
+The existence of a fix_action is not evidence.
 
-The fix_action must correct the actual problem described by
-the issue.
-
-Examples:
-
-- option NAME problem → option-name fix
-- option VALUE problem → variant/option-value fix
-- missing SKU → SKU fix
-- missing product type → product-type fix
-- missing metafield attribute → metafield fix
-- incorrectly structured attribute → appropriate attribute/metafield fix
-
-Never select an issue_type whose fix_action would modify the
-wrong field or object.
+A matching fix_action does not make two issue types semantically
+equivalent.
 
 ------------------------------------------------------------
-STEP 8 — CRITICAL EXAMPLES
+STEP 7 — FIX ACTION AS SEMANTIC COMPATIBILITY SIGNAL
 ------------------------------------------------------------
 
-Example A:
+The application owns the executable fix_action, but the registered
+fix_action remains an IMPORTANT semantic compatibility signal during
+issue classification.
 
-Observed:
+The application will ultimately resolve the executable fix from:
 
-details.product = "jwelery"
+check_id + issue_type
 
-This is a PRODUCT METAFIELD / PRODUCT ATTRIBUTE value.
-
-It is NOT a variant option value.
+However, when comparing otherwise similar candidate issue types, the
+registered_fix_action may be used to verify whether the candidate
+actually corresponds to the observed problem.
 
 Therefore:
 
-DO NOT classify it as:
+- keep registered_fix_action in the Issue Registry context;
+- use it as a compatibility check, not as the primary classifier;
+- do NOT invent fix_action values;
+- do NOT create a new fix_action;
+- do NOT return a model-invented fix_action as the classification;
+- do NOT select an issue_type solely because its fix_action is
+  convenient;
+- do NOT change an issue_type solely to obtain a preferred fix_action.
 
-generic_option_value
+The correct order is:
 
-because generic_option_value describes a VARIANT OPTION VALUE.
+actual problem
+-> affected object/field
+-> violated requirement
+-> check ownership
+-> semantic issue_type match
+-> registered_fix_action compatibility check
+-> final issue_type
 
-If the current check is comparable_attributes:
+If the registered fix_action is incompatible with the observed
+problem, the issue_type is NOT an exact semantic match. Do not force
+the classification merely because the name looks similar.
 
-1. determine whether an existing comparable_attributes issue
-   exactly describes the problem;
-2. if yes, use it;
-3. if no, create a NEW comparable_attributes issue_type.
+The registry's fix_action does NOT create a requirement and does NOT
+prove that an issue exists.
 
-Do NOT use generic_option_value simply because that issue_type
-exists under variant_hygiene.
-
-------------------------------------------------------------
-
-Example B:
-
-Observed:
-
-option name = "Title"
-
-This is an OPTION NAME problem.
-
-If evaluating variant_selection and generic_option_name exists
-there with the same meaning:
-
-use:
-
-generic_option_name
-
-status = existing
+The application remains responsible for assigning the executable
+fix_action after receiving the final check_id + issue_type.
 
 ------------------------------------------------------------
-
-Example C:
-
-Observed:
-
-option value = "Default Title"
-
-This is an OPTION VALUE problem.
-
-It is NOT an option-name problem.
-
-Do NOT classify it as generic_option_name merely because
-generic_option_name exists elsewhere.
-
-If the current check requires identifying that option-value
-problem and no exact current-check issue_type exists:
-
-create an appropriate NEW issue_type under the CURRENT check.
-
+STEP 8 — OBJECT AND FIELD SEMANTICS
 ------------------------------------------------------------
 
-Example D:
+Classify the issue according to the actual object and field affected
+by the supplied evidence.
 
-Observed:
+The affected object and field must be determined from the CURRENT
+payload and the CURRENT requirement.
 
-product_type = "Necklace"
+Do not infer the affected object from the issue_type name.
+Do not infer the affected field from a similar issue elsewhere in
+the registry.
 
-The actual problem is that the PRODUCT TYPE classification is
-too generic.
+If an existing issue type describes a different object, field, or
+semantic condition, it MUST NOT be reused.
 
-Do NOT automatically classify this as:
+Use these generic semantic distinctions:
 
-unstructured_product_attribute
+1. OBJECT SCOPE
 
-unless the actual evidence shows that the attribute is
-incorrectly/unstructurally represented.
+Distinguish correctly between product-level, variant-level,
+option-level, field-level, and store-level conditions.
 
-"Generic" and "unstructured" are different semantic problems.
+If the evidence identifies a specific nested object or property,
+classify the issue according to that actual object.
+Do not broaden or narrow the object scope merely to match an
+available issue type.
 
-If comparable_attributes has no exact existing issue_type for
-a generic product type, create a new issue_type such as an
-appropriate generic-product-type issue under comparable_attributes.
+2. FIELD MEANING
 
-Do NOT reuse unstructured_product_attribute merely because it
-exists under another check.
+Distinguish the actual meaning of the affected field or property.
+A field's presence does not prove that its content satisfies the
+requirement, and an empty field does not automatically prove failure.
+
+Determine whether the requirement concerns the field's presence,
+value, structure, consistency, relationship, or another explicitly
+defined property. Use only the meaning established by the Fixed
+Rubric.
+
+3. VALUE VS FIELD OR NAME
+
+A problem with the VALUE stored in a field is not automatically a
+problem with the FIELD or NAME that contains that value. Likewise,
+a problem with a field's structure is not automatically a problem
+with the value itself.
+
+Classify the actual semantic defect shown by the payload.
+
+4. MISSING VS PRESENT-BUT-INVALID
+
+A missing value and a present value that fails a structural, semantic,
+or quality requirement are different conditions when the Fixed Rubric
+distinguishes them.
+
+Do not convert one into the other merely because the remediation may
+be similar.
+
+5. EVIDENCE SCOPE
+
+The affected field, object, and IDs must be traceable directly to the
+CURRENT payload. Do not infer them from the issue registry, a
+previous result, or a convenient remediation.
+
+The selected issue_type must describe this exact semantic condition.
+
+------------------------------------------------------------
+STEP 9 — COPY REGISTERED NAMES EXACTLY
+------------------------------------------------------------
+
+When an existing issue type is selected:
+
+- copy the registry identifier exactly;
+- do not rename it;
+- do not shorten it;
+- do not expand it;
+- do not translate it;
+- do not pluralize it;
+- do not replace it with a synonym.
+
+A problem already covered by the registry is not new merely because
+the description uses different wording.
+
+For a new issue_type, use concise English snake_case describing the
+actual problem.
+
+------------------------------------------------------------
+STEP 10 — ONE DEFECT, ONE ISSUE
+------------------------------------------------------------
+
+One underlying defect must be reported once.
+
+Do not create multiple issue types for the same defect.
+
+Do not duplicate the same defect across checks.
+
+However, genuinely independent deficiencies may be reported as
+separate issues when each is explicitly supported by the Fixed
+Rubric and current evidence.
 
 ------------------------------------------------------------
 FINAL ISSUE VALIDATION
@@ -890,73 +1502,106 @@ Before returning every issue, internally verify:
 
 1. What exactly is wrong?
 2. What exact evidence proves it?
-3. What field/object is affected?
-4. Which check owns the problem?
-5. Does the selected issue_type describe that exact problem?
-6. Does that issue_type belong to this check?
-7. If it belongs to another check, is it truly the EXACT SAME
-   semantic issue and legitimately applicable here?
-8. Does the fix_action actually fix the observed problem?
-9. If no existing type is an exact match, did I create a NEW
-   issue_type under the correct current check?
+3. What object is affected?
+4. What field is affected?
+5. Which requirement is violated?
+6. Which check owns that requirement?
+7. Does the selected issue_type describe the exact problem?
+8. Does the issue_type legitimately apply to this check?
+9. If the issue_type exists under another check, is it truly the
+   exact same semantic problem?
+10. Is the registered remediation compatible with the problem?
+11. Are the affected IDs correct and taken directly from the payload?
+12. If no existing issue type is an exact semantic match, was a new
+    issue_type created under the correct check?
+13. If the actual problem were corrected, would this SAME check
+    satisfy its existing Fixed Rubric?
+14. Am I classifying the problem itself rather than selecting an
+    issue_type or fix_action first?
+15. Did I avoid creating this issue only because another category
+    or check changed?
 
-If any answer is NO, reconsider the classification before
-returning the issue.
-
+If any answer is NO, reconsider the classification before returning
+the issue.
 
 ============================================================
 MEASUREMENT OBSERVATIONS
 ============================================================
 
-For actual measurements found in the supplied product data, populate
-`measurement_observations`.
+For actual measurements found in the supplied product data,
+populate measurement_observations.
 
 Each measurement observation MUST contain:
 
-- `product_id`: exact product ID;
-- `field`: actual field or attribute;
-- `raw_value`: exact value as supplied;
-- `unit`: actual unit;
-- `dimension`: physical dimension represented by that measurement.
+- product_id;
+- field;
+- raw_value;
+- unit;
+- dimension.
 
-Examples:
+Use the exact values supplied in the payload.
 
-- "1 L" → unit "L", dimension "volume"
-- "500 ml" → unit "ml", dimension "volume"
-- "1 kg" → unit "kg", dimension "mass"
-- "500 g" → unit "g", dimension "mass"
+Do not:
 
-Important:
+- invent measurements;
+- convert values;
+- normalize values;
+- rewrite raw values;
+- decide whether measurements are consistent;
+- treat different unit strings as automatically inconsistent.
 
-- Do not invent measurements.
-- Do not convert values.
-- Do not normalize raw values.
-- Do not decide whether measurements are consistent or inconsistent.
-- Do not treat different unit strings as automatically inconsistent.
-- Preserve the exact raw representation.
-- Discover fields and units from the supplied data.
+Preserve the supplied representation.
 
-Do not generate a final `consistency` verdict in this batch.
-
-Do not generate `inconsistent_attribute_units` yourself.
+Do not generate a final consistency verdict unless the Fixed Rubric
+explicitly requires one at this evaluation stage.
 
 ============================================================
-DETERMINISTIC CLASSIFICATION DISCIPLINE
+CONSISTENCY OBSERVATIONS
+============================================================
+
+If the response schema contains consistency_observations, use them
+only as factual observations from the supplied payload.
+
+They must describe only information actually visible in the current
+payload.
+
+Do not turn observations into verdicts unless explicitly required
+by the Fixed Rubric.
+
+Do not invent a variation.
+
+Do not report a variation that cannot be demonstrated from the
+supplied data.
+
+Do not create a consistency issue merely because different values
+exist.
+
+Only report an issue when the Fixed Rubric and Issue Registry
+explicitly support that classification.
+
+============================================================
+SCORING DISCIPLINE
 ============================================================
 
 Do NOT calculate numerical scores.
 
-Python calculates all scores after the AI returns the verdicts.
-
-Do NOT calculate an aggregate readiness score.
+Do NOT calculate aggregate readiness.
 
 Do NOT rank products.
 
 Do NOT rank issues.
 
-Do NOT assign a score based on the number of issues.
+Do NOT assign scores based on issue count.
 
-The final score is calculated separately from the returned verdicts.
+Do NOT modify verdicts to achieve a desired numerical result.
+
+Do NOT modify verdicts to make category scores appear balanced.
+
+The application calculates scores separately from the returned
+verdicts.
+
+Your responsibility is only to return accurate check-level verdicts,
+evidence, issues, and recommendations.
 
 ============================================================
 FIXED RUBRIC CHECKS
@@ -968,15 +1613,43 @@ The Fixed Rubric defines every check that must be evaluated.
 
 Do not invent additional checks.
 
-Do not skip any check.
+Do not skip any defined check.
 
-Every store-level check must appear.
-
-Every product-level check must appear for every product.
+Every defined check must appear in the response.
 
 ============================================================
 ISSUE REGISTRY
 ============================================================
+
+The Issue Registry below contains the canonical issue types available
+for classification.
+
+Each entry has:
+
+[check_id] issue_type | registered_fix_action
+
+The registered_fix_action is APPLICATION METADATA.
+
+It is NOT an instruction to invent, return, or select a fix_action.
+
+Use the exact issue_type string when an existing registered issue
+is selected.
+
+The existence of an issue type does NOT mean that the issue exists.
+
+An issue must first be proven by:
+
+1. the current payload;
+2. the current Fixed Rubric;
+3. semantic issue classification.
+
+The registry does NOT override the Fixed Rubric.
+
+The registry does NOT create new requirements.
+
+The registry does NOT justify a deficiency.
+
+The registry does NOT determine check ownership by name alone.
 
 {issue_registry_block}
 
@@ -986,107 +1659,138 @@ AFFECTED VARIANT AND OPTION IDS
 
 Every issue MUST include:
 
-- "affected_variant_ids": exact variant IDs from the payload;
-- "affected_option_ids": exact option IDs from the payload.
+- "affected_variant_ids"
+- "affected_option_ids"
 
 Rules:
 
-- Copy IDs EXACTLY as they appear in the supplied Products Catalogue Payload
-  (for example gid://shopify/ProductVariant/123).
-- Include a variant ID only when the issue concerns specific variants
-  (for example a missing SKU, missing barcode, or a wrong variant title).
-- Include an option ID only when the issue concerns specific options
-  (for example a generic or missing option name).
-- If the issue applies to the whole product, or to the whole store, or no
-  ID is present in the payload, return an empty array.
-- NEVER invent, guess, shorten, or reformat IDs.
-- Do not use titles, SKUs or positions in place of IDs.
-- Store-level checks always return empty arrays for both fields.
+1. Copy IDs exactly as they appear in the supplied payload.
+2. Include a variant ID only when the issue actually concerns a
+   specific variant.
+3. Include an option ID only when the issue actually concerns a
+   specific option.
+4. If the issue applies to the whole product or store, use [].
+5. If the relevant ID is not supplied, use [].
+6. Never invent an ID.
+7. Never guess an ID.
+8. Never shorten or reformat an ID.
+9. Never use a title, position, or other value as an ID.
+10. Store-level issues must use [] for both fields.
 
 ============================================================
 RECOMMENDATIONS
 ============================================================
 
-For every check marked "partial" or "fail":
+For every PARTIAL or FAIL check:
 
 - provide a concise human-readable "enrichment";
 - provide a 1-2 sentence "why_it_matters_for_agents";
-- provide a concrete "example" fix based on the actual supplied data.
+- provide a concrete "example" based only on the supplied data.
 
-Recommendations must address the actual observed problem.
+Recommendations must address the actual observed deficiency.
+
+Do not create recommendations for deficiencies that do not exist.
 
 Do not create generic recommendations unrelated to the evidence.
 
-Do not invent catalog attributes that were not supplied.
+Do not recommend information that is not required by the current
+Fixed Rubric.
+
+Do not invent missing product or store attributes.
+
+The recommendation must correspond to the actual issue and its
+compatible remediation.
+
+Do not make the recommendation broader than the violated
+requirement.
 
 For PASS and NA:
 
 - issues MUST be [];
-- do not invent enrichment requirements.
+- enrichment MUST be "";
+- why_it_matters_for_agents MUST be "";
+- example MUST be "".
 
 ============================================================
 AFFECTED PRODUCT IDS
 ============================================================
 
-Only include product IDs in `affected_product_ids` when:
+Only include product IDs in affected_product_ids when the supplied
+evidence demonstrates that identifiable products are affected by
+the relevant store-level or cross-product condition.
 
-1. a PER-PRODUCT check affects identifiable products beyond that product's
-   own missing_enrichments; or
+Rules:
 
-2. a consistency observation identifies actual products affected by the
-   observed variation.
+- use only exact product IDs from the payload;
+- never invent product IDs;
+- never infer product IDs;
+- if no specific products are affected, return [].
 
-For these STORE-WIDE checks:
-
-- fulfillment_context
-- policy_semantics
-- faq_or_guidance
-- store_guardrails
-- legal_pages
-- contact_brand
-
-always use an empty `affected_product_ids` array.
-
-Never invent product IDs.
+For per-product checks, use the product's own identity only when
+the response schema requires it.
 
 ============================================================
-NA VS FAIL
+NA VS FAIL — STRICT BOUNDARY
 ============================================================
 
-- FAIL / PARTIAL: the data source needed for the check WAS supplied and it
-  lacks what the check requires.
-- NA: the data source needed to judge the check was NOT supplied, or the
-  check does not apply to this product/store.
-- If you cannot determine the answer from the supplied data, return "na".
-  Never return "fail" because you could not see something.
+NA and FAIL represent different situations.
 
-If store_context is unavailable or empty, this store-level checks are out of scope for this run :
+NA:
 
-- fulfillment_context
-- policy_semantics
-- faq_or_guidance
-- store_guardrails
-- legal_pages
-- contact_brand
+Use "na" ONLY when:
 
-Return verdict "na", issues [], and empty strings for enrichment fields. Never return "fail".
+- the check genuinely does not apply; OR
+- the evidence required to evaluate the check is genuinely unavailable;
+- AND the Fixed Rubric permits NA in that situation.
 
-Do NOT mark them as fail merely because store_context is unavailable.
+FAIL:
 
-`consistency` must still be evaluated from the supplied product data through
-batch-level observations.
+Use "fail" ONLY when:
 
-Product-level checks must still be evaluated normally from the product payload.
+- the check applies;
+- the evidence required to evaluate the relevant requirement is
+  available;
+- the Fixed Rubric explicitly requires the condition;
+- the CURRENT evidence demonstrates that the condition is not satisfied;
+- AND failure of that condition means the check's stated purpose is
+  fundamentally not achieved.
 
-`product_guardrails` may be "na" when the product is clearly outside the
-applicable risky/restricted categories according to the Fixed Rubric.
+IMPORTANT:
 
+Do NOT use NA because evidence is merely inconvenient to interpret.
 
+Do NOT use NA because the data is poor when the supplied data is still
+sufficient to evaluate the requirement.
+
+Do NOT use FAIL because evidence is unavailable.
+
+Do NOT use FAIL because a field is empty unless the Fixed Rubric makes
+that field/value relevant to the current check.
+
+Do NOT use FAIL because information could be improved.
+
+Do NOT use FAIL because several issues exist.
+
+Do NOT use FAIL because another check failed.
+
+Do NOT use FAIL because the category score is low.
+
+If required evidence is unavailable and NA is permitted:
+    NA.
+
+If evidence is available and the requirement is not satisfied but the
+check's purpose remains meaningfully achieved:
+    PARTIAL.
+
+If evidence is available and a fundamental requirement is not satisfied
+such that the check's purpose is fundamentally not achieved:
+    FAIL.
+    
 ============================================================
 LANGUAGE AND OUTPUT
 ============================================================
 
-Write the entire response strictly in the requested language:
+Write the entire response strictly in:
 
 {language}
 
@@ -1098,58 +1802,146 @@ Do not return:
 
 - markdown;
 - code fences;
-- explanations outside the JSON;
+- explanations outside JSON;
 - conversational prose;
 - aggregate scores;
-- commentary before or after the JSON.
+- commentary before JSON;
+- commentary after JSON.
 
 ============================================================
 EXACT RESPONSE SHAPE
 ============================================================
 
-Every store check_id and every product check_id in the Fixed Rubric MUST appear.
-
-Every product must contain:
-
-- product_id
-- title
-- verdicts
-
-All PER-PRODUCT check results MUST be nested under the `verdicts` object.
-
-Every check must contain the exact structure defined by the response schema.
-
 {_expected_response_shape_example()}
 
 Rules applying to the real response:
 
-- Every store check_id must be present.
-- Every product check_id must be present for every product.
-- Per-product verdicts MUST be nested under `verdicts`.
-- `enrichment`, `why_it_matters_for_agents`, and `example` MUST be flat strings.
-- Every issue MUST include `issue_type`, `status`, and `description`.
+- Every check defined by the Fixed Rubric must be present.
+- Every required product must contain its required check results.
+- Every product must contain its required product identity fields.
+- Every issue MUST contain:
+  - issue_type;
+  - status;
+  - description.
 - Every PARTIAL or FAIL check MUST contain at least one issue.
-- Every PASS or NA check MUST contain `issues: []`.
-- Evidence must be factual and based only on supplied data.
+- Every PASS or NA check MUST contain:
+  issues: []
+- Evidence must be factual and based only on the supplied payload.
 - Never omit a required check.
 - Never invent a check.
 - Never calculate aggregate scores.
+- Never return information outside the required JSON schema.
+- Do NOT return fix_action as an LLM-generated classification field.
+- The application assigns fix_action from check_id + issue_type
+  after receiving this response.
 
 ============================================================
-STORE INFORMATION
+CURRENT STORE INFORMATION
 ============================================================
 
 Store URL:
+
 {store_url}
 
 Store Context:
+
 {json.dumps(store_context, ensure_ascii=False, indent=2)}
 
 ============================================================
-PRODUCTS CATALOGUE PAYLOAD
+CURRENT PRODUCTS CATALOGUE PAYLOAD
 ============================================================
 
 {json.dumps(products, ensure_ascii=False, indent=2)}
+
+============================================================
+FINAL INSTRUCTION
+============================================================
+
+Evaluate ONLY the current supplied data.
+
+Apply ONLY the Fixed Rubric.
+
+For every check:
+
+current evidence
+-> current requirement
+-> current verdict.
+
+For every PARTIAL or FAIL:
+
+current evidence
+-> actual deficiency
+-> affected object/field
+-> check ownership
+-> semantic issue classification
+-> existing exact issue type OR genuinely new issue type
+-> evidence-backed recommendation.
+
+The issue classification process MUST happen in that order.
+
+Never reverse this process.
+
+Never start with an issue_type and search for evidence to justify it.
+
+Never start with a fix_action and search for a problem that it can fix.
+
+Never select an issue_type because its name is similar to the
+observed problem.
+
+Never select an issue_type because its fix_action is convenient.
+
+Never create a problem merely because the registry contains a
+corresponding issue type.
+
+Never create a problem merely because the data could be improved.
+
+Never create a problem merely because another category changed.
+
+Never change a satisfied check into another issue.
+Never replace a resolved requirement with a newly invented deficiency.
+Never preserve an old issue merely because it existed before.
+Never assume a fix failed unless the CURRENT data itself demonstrates
+that the relevant requirement remains unsatisfied.
+
+Never transfer requirements between checks.
+
+Never use another check's result as evidence for the current check.
+
+Never use information outside the current payload.
+
+Remember:
+
+The LLM's responsibility is:
+
+evidence
+-> requirement
+-> verdict
+-> actual problem
+-> check ownership
+-> issue_type
+-> description
+-> affected IDs
+-> recommendation.
+
+The application's responsibility is:
+
+check_id + issue_type
+-> registry lookup
+-> fix_action.
+
+Do NOT return or invent the final fix_action yourself.
+
+For existing issue types, copy the issue_type exactly as registered.
+
+For genuinely new issues, create a concise snake_case issue_type only
+when the current Fixed Rubric and evidence prove that the problem is
+real and no existing semantic issue type accurately represents it.
+
+Same evidence + same rubric = same semantic interpretation.
+
+Different evidence may legitimately produce a different issue.
+
+Return ONLY the required JSON.
 """.strip()
 
 
@@ -1793,6 +2585,9 @@ def assemble_report_from_verdicts(
     normalized_store_issues = []
 
     for check_id, issue_list in store_issues.items():
+        if store_context is None and check_id in STORE_CONTEXT_REQUIRED_CHECKS:
+            continue
+
         for issue in issue_list:
             normalized_store_issues.append(
                 normalize_issue(
@@ -1910,31 +2705,45 @@ def assemble_report_from_verdicts(
             print("empty_desc result =", empty_desc)
 
             if empty_desc is not None:
-                for check_id in (
-                    "product_understanding",
-                    "product_clarity",
-                ):
-                    print(
-                        f"OVERRIDING {check_id}: "
-                        f"{v.get(check_id)} -> {empty_desc['verdict']}"
+                print(
+                        f"OVERRIDING product_understanding: "
+                        f"{v.get('product_understanding')} -> {empty_desc['verdict']}"
                     )
-
-                    v[check_id] = empty_desc["verdict"]
-                    t[check_id] = {
-                        "enrichment": "Add Product Description",
-                        "why_it_matters_for_agents": (
-                            "An empty description gives agents nothing "
-                            "to work with when answering customer questions."
-                        ),
-                        "example": (
-                            f"Add a description for "
-                            f"'{raw_product.get('title')}' explaining "
-                            "what it is and intended use."
-                        ),
+                v["product_understanding"] = empty_desc["verdict"]
+                t["product_understanding"] = {
+                    "enrichment": "Add Product Description",
+                    "why_it_matters_for_agents": "Agents need an itemized breakdown of what is included to match customer search intent.",
+                    "example": f"Add a description for '{raw_product.get('title')}' specifying what is in the package and who it is for.",
+                }
+                i["product_understanding"] = [
+                    {
+                        "issue_type": "insufficient_product_description",
+                        "status": "existing",
+                        "description": empty_desc.get("evidence", "Product description is empty or a stub."),
+                        "affected_variant_ids": [],
+                        "affected_option_ids": [],
                     }
+                ]
 
-                    i[check_id] = empty_desc.get("issues", [])
-            
+                print(
+                    f"OVERRIDING product_clarity: "
+                    f"{v.get('product_clarity')} -> {empty_desc['verdict']}"
+                )
+                v["product_clarity"] = empty_desc["verdict"]
+                t["product_clarity"] = {
+                    "enrichment": "Add Usage and Care Guidelines",
+                    "why_it_matters_for_agents": "Clear instructions prevent customer confusion and returns.",
+                    "example": f"Add care, sizing, or how-to-use instructions for '{raw_product.get('title')}'.",
+                }
+                i["product_clarity"] = [
+                    {
+                        "issue_type": "insufficient_product_description",
+                        "status": "existing",
+                        "description": "No product usage, care, or maintenance instructions are provided.",
+                        "affected_variant_ids": [],
+                        "affected_option_ids": [],
+                    }
+                ]
             empty_type = check_product_type_presence(raw_product)
 
             if (

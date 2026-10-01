@@ -60,7 +60,7 @@ CHECKS: dict[str, list[dict]] = {
         {"id": "store_guardrails",   "level": "store",   "desc": "Store-level guardrail metafields or policy text exist (age gating, region limits, manual-approval categories)."},
         {"id": "legal_pages",     "level": "store",   "desc": "All four policy bodies (privacy, refund, shipping, terms) present and non-placeholder."},
         {"id": "contact_brand", "level": "store", "desc": "Contact details (email/phone) or brand/about content discoverable via shop metafields/metaobjects ONLY. Do NOT factor in policy-document text or placeholders — those are covered separately by policy_semantics and legal_pages."},
-        {"id": "fulfillment_context",  "level":  "store",  "desc": "Operational fulfillment information is present and actionable, such as delivery speed, shipping methods, pickup availability, and domestic vs international coverage; a shipping-policy page alone is not sufficient."},
+        {"id": "fulfillment_context",  "level": "store",  "desc": "Operational fulfillment information is present and actionable, such as delivery speed, shipping methods, pickup availability, and domestic vs international coverage; a shipping-policy page alone is not sufficient."},
         {"id": "policy_semantics", "level": "store", "desc": "Policy text is specific enough that an agent can answer edge cases (deadlines, exceptions, regions) without guessing."},
         {"id": "faq_or_guidance",       "level": "store",   "desc": "FAQ content, metaobjects, or shopping-guidance text exists."},
         
