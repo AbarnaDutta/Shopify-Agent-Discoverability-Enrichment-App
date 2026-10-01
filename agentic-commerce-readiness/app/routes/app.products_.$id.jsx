@@ -18,15 +18,42 @@ import { useFetcher } from "react-router";
 
 const API_BASE = "https://geo.properoapps.in/api";
 
-const FIX_KIND_BY_ISSUE = {
-  "missing_product_url:update_product_handle": "handle",
-  "invalid_product_url:update_product_handle": "handle",
-  "missing_required_attribute:set_metafield": "metafields",
-  "unstructured_product_attribute:set_metafield": "metafields",
+const FIX_ACTION_PANEL = {
+  update_product_handle: "handle",
+  set_metafield: "metafields",
+  set_product_type: "product_type",
+  update_product_description: "description",
+  update_product_title: "title",
+  rename_product_option: "rename_option",
+  generate_sku: "sku",
+  set_gtin: "gtin",
+  set_mpn: "mpn",
+  fix_variant_options: "variant_options",
 };
 
-function getFixKind(issue) {
-  return FIX_KIND_BY_ISSUE[`${issue.issue_type}:${issue.fix_action}`] || null;
+const FIX_ACTION_LABEL = {
+  update_product_handle: "Product URL",
+  set_metafield: "Attributes",
+  set_product_type: "Product Type",
+  update_product_description: "Description",
+  update_product_title: "Title",
+  rename_product_option: "Option Name",
+  generate_sku: "SKU",
+  set_gtin: "GTIN",
+  set_mpn: "MPN",
+  fix_variant_options: "Options & Variants",
+};
+
+function getFixablePanels(issues) {
+  const seen = new Set();
+  const out = [];
+  for (const issue of issues || []) {
+    const panel = FIX_ACTION_PANEL[issue.fix_action];
+    if (!panel || seen.has(issue.fix_action)) continue;
+    seen.add(issue.fix_action);
+    out.push({ ...issue, panel });
+  }
+  return out;
 }
 
 function getProductStatus(product) {
@@ -95,10 +122,9 @@ function SeverityBadge({ priority }) {
   );
 }
 
-
 function useApplyFix({ issue, productId, onDone }) {
   const fetcher = useFetcher();
-  const [status, setStatus] = useState("idle"); 
+  const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
 
   const submit = (extraFields) => {
@@ -138,51 +164,42 @@ function useApplyFix({ issue, productId, onDone }) {
   return { submit, status, message };
 }
 
-function HandleFixPanel({ issue, productId, onDone }) {
+/* ---------- fix panels ---------- */
+
+function HandleFixPanel({ issue, productId }) {
   const [handle, setHandle] = useState(issue.suggested_handle || "");
-  const { submit, status, message } = useApplyFix({ issue, productId, onDone });
+  const { submit, status, message } = useApplyFix({ issue, productId });
   const disabled = status === "submitting" || status === "done";
 
-  const handleApprove = () => {
-    if (!handle.trim()) return;
-    submit({ handle: handle.trim() });
-  };
-
   return (
-    <div className="mt-3 space-y-2 rounded-lg border border-[var(--app-border)] bg-white p-3">
+    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
       <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
         Product handle
       </label>
-
       <input
         type="text"
         value={handle}
         onChange={(e) => setHandle(e.target.value)}
         disabled={disabled}
         placeholder="product-handle-slug"
-        className="w-full rounded-md border border-[var(--app-border)] px-2.5 py-1.5 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+        className="mt-2 w-full rounded-md border border-[var(--app-border)] px-2.5 py-1.5 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
       />
-
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          type="button"
-          onClick={handleApprove}
-          disabled={disabled || !handle.trim()}
-          className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Approve & Apply"}
-        </button>
-      </div>
-
+      <button
+        type="button"
+        onClick={() => handle.trim() && submit({ handle: handle.trim() })}
+        disabled={disabled || !handle.trim()}
+        className="mt-2 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Approve & Apply"}
+      </button>
       {message && (
-        <p className={`text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
+        <p className={`mt-1 text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
           {message}
         </p>
       )}
     </div>
   );
 }
-
 
 const METAFIELD_TYPES = [
   { value: "single_line_text_field", label: "Text (single line)" },
@@ -194,21 +211,11 @@ const METAFIELD_TYPES = [
 ];
 
 const METAFIELD_TYPE_HELP = {
-  single_line_text_field:
-    "Enter a single line of text.",
-
-  multi_line_text_field:
-    "Enter text that can contain multiple lines.",
-
-  number_integer:
-    "Enter a whole number without decimal places.",
-
-  number_decimal:
-    "Enter a number that may contain decimal places.",
-
-  dimension:
-    "Enter a numeric measurement and select its unit.",
-
+  single_line_text_field: "Enter a single line of text.",
+  multi_line_text_field: "Enter text that can contain multiple lines.",
+  number_integer: "Enter a whole number without decimal places.",
+  number_decimal: "Enter a number that may contain decimal places.",
+  dimension: "Enter a numeric measurement and select its unit.",
   "list.single_line_text_field":
     "Add one or more text values. Each value is stored as an item in the list.",
 };
@@ -223,72 +230,35 @@ function emptyAttributeRow() {
   };
 }
 
-function MetafieldsFixPanel({ issue, productId, onDone }) {
+function MetafieldsFixPanel({ issue, productId }) {
   const [rows, setRows] = useState([emptyAttributeRow()]);
   const [showTypeGuide, setShowTypeGuide] = useState(false);
-
-  const { submit, status, message } = useApplyFix({
-    issue,
-    productId,
-    onDone,
-  });
-
+  const { submit, status, message } = useApplyFix({ issue, productId });
   const disabled = status === "submitting" || status === "done";
 
   const updateRow = (index, field, value) => {
+    setRows((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  };
+
+  const addRow = () => setRows((prev) => [...prev, emptyAttributeRow()]);
+  const removeRow = (index) =>
+    setRows((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== index)));
+
+  const addListValue = (rowIndex) =>
     setRows((prev) =>
-      prev.map((row, i) =>
-        i === index
-          ? {
-              ...row,
-              [field]: value,
-            }
-          : row
-      )
+      prev.map((row, i) => (i === rowIndex ? { ...row, values: [...row.values, ""] } : row))
     );
-  };
 
-  const addRow = () => {
-    setRows((prev) => [...prev, emptyAttributeRow()]);
-  };
-
-  const removeRow = (index) => {
-    setRows((prev) =>
-      prev.length === 1
-        ? prev
-        : prev.filter((_, i) => i !== index)
-    );
-  };
-
-  const addListValue = (rowIndex) => {
+  const updateListValue = (rowIndex, valueIndex, value) =>
     setRows((prev) =>
       prev.map((row, i) =>
         i === rowIndex
-          ? {
-              ...row,
-              values: [...row.values, ""],
-            }
+          ? { ...row, values: row.values.map((item, vi) => (vi === valueIndex ? value : item)) }
           : row
       )
     );
-  };
 
-  const updateListValue = (rowIndex, valueIndex, value) => {
-    setRows((prev) =>
-      prev.map((row, i) =>
-        i === rowIndex
-          ? {
-              ...row,
-              values: row.values.map((item, valueI) =>
-                valueI === valueIndex ? value : item
-              ),
-            }
-          : row
-      )
-    );
-  };
-
-  const removeListValue = (rowIndex, valueIndex) => {
+  const removeListValue = (rowIndex, valueIndex) =>
     setRows((prev) =>
       prev.map((row, i) =>
         i === rowIndex
@@ -297,119 +267,67 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
               values:
                 row.values.length === 1
                   ? row.values
-                  : row.values.filter(
-                      (_, valueI) => valueI !== valueIndex
-                    ),
+                  : row.values.filter((_, vi) => vi !== valueIndex),
             }
           : row
       )
     );
-  };
 
   const buildAttribute = (row) => {
     const key = row.key.trim();
 
     if (row.type === "dimension") {
-      return {
-        key,
-        type: row.type,
-        value: JSON.stringify({
-          unit: row.unit,
-          value: Number(row.value),
-        }),
-      };
+      return { key, type: row.type, value: JSON.stringify({ unit: row.unit, value: Number(row.value) }) };
     }
-
     if (row.type === "list.single_line_text_field") {
       return {
         key,
         type: row.type,
-        value: JSON.stringify(
-          row.values
-            .map((item) => item.trim())
-            .filter(Boolean)
-        ),
+        value: JSON.stringify(row.values.map((v) => v.trim()).filter(Boolean)),
       };
     }
-
-    return {
-      key,
-      type: row.type,
-      value: row.value.trim(),
-    };
+    return { key, type: row.type, value: row.value.trim() };
   };
 
   const isRowValid = (row) => {
     if (!row.key.trim()) return false;
-
-    if (row.type === "list.single_line_text_field") {
-      return row.values.some((item) => item.trim());
-    }
-
-    if (row.type === "dimension") {
-      return (
-        row.value.trim() !== "" &&
-        Number.isFinite(Number(row.value))
-      );
-    }
-
+    if (row.type === "list.single_line_text_field") return row.values.some((v) => v.trim());
+    if (row.type === "dimension") return row.value.trim() !== "" && Number.isFinite(Number(row.value));
     return row.value.trim() !== "";
   };
 
   const validRows = rows.filter(isRowValid);
 
-  const handleApply = () => {
-    if (validRows.length === 0) return;
-
-    submit({
-      attributes: validRows.map(buildAttribute),
-    });
-  };
-
   return (
-    <div className="mt-3 space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
+    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
       <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
         Metafield attributes
       </label>
 
       <div className="space-y-4">
         {rows.map((row, index) => (
-          <div
-            key={index}
-            className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3"
-          >
+          <div key={index} className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
             <div className="flex flex-wrap items-start gap-2">
-              {/* Attribute name */}
               <input
                 type="text"
                 value={row.key}
-                onChange={(e) =>
-                  updateRow(index, "key", e.target.value)
-                }
+                onChange={(e) => updateRow(index, "key", e.target.value)}
                 disabled={disabled}
                 placeholder="Attribute name"
                 className="min-w-[150px] flex-1 rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
               />
-
-              {/* Type */}
               <select
                 value={row.type}
-                onChange={(e) =>
-                  updateRow(index, "type", e.target.value)
-                }
+                onChange={(e) => updateRow(index, "type", e.target.value)}
                 disabled={disabled}
                 className="rounded-md border border-[var(--app-border)] bg-white px-2 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
               >
                 {METAFIELD_TYPES.map((type) => (
-                  <option
-                    key={type.value}
-                    value={type.value}
-                  >
+                  <option key={type.value} value={type.value}>
                     {type.label}
                   </option>
                 ))}
               </select>
-
               {rows.length > 1 && !disabled && (
                 <button
                   type="button"
@@ -422,27 +340,21 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
               )}
             </div>
 
-            {/* Single-line text */}
             {row.type === "single_line_text_field" && (
               <input
                 type="text"
                 value={row.value}
-                onChange={(e) =>
-                  updateRow(index, "value", e.target.value)
-                }
+                onChange={(e) => updateRow(index, "value", e.target.value)}
                 disabled={disabled}
                 placeholder="Value"
                 className="mt-2 w-full rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
               />
             )}
 
-            {/* Multi-line text */}
             {row.type === "multi_line_text_field" && (
               <textarea
                 value={row.value}
-                onChange={(e) =>
-                  updateRow(index, "value", e.target.value)
-                }
+                onChange={(e) => updateRow(index, "value", e.target.value)}
                 disabled={disabled}
                 placeholder="Enter value..."
                 rows={4}
@@ -450,56 +362,44 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
               />
             )}
 
-            {/* Integer */}
             {row.type === "number_integer" && (
               <input
                 type="number"
                 step="1"
                 value={row.value}
-                onChange={(e) =>
-                  updateRow(index, "value", e.target.value)
-                }
+                onChange={(e) => updateRow(index, "value", e.target.value)}
                 disabled={disabled}
                 placeholder="Enter whole number"
                 className="mt-2 w-full rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
               />
             )}
 
-            {/* Decimal */}
             {row.type === "number_decimal" && (
               <input
                 type="number"
                 step="any"
                 value={row.value}
-                onChange={(e) =>
-                  updateRow(index, "value", e.target.value)
-                }
+                onChange={(e) => updateRow(index, "value", e.target.value)}
                 disabled={disabled}
                 placeholder="Enter decimal"
                 className="mt-2 w-full rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
               />
             )}
 
-            {/* Dimension */}
             {row.type === "dimension" && (
               <div className="mt-2 flex gap-2">
                 <input
                   type="number"
                   step="any"
                   value={row.value}
-                  onChange={(e) =>
-                    updateRow(index, "value", e.target.value)
-                  }
+                  onChange={(e) => updateRow(index, "value", e.target.value)}
                   disabled={disabled}
                   placeholder="Value"
                   className="min-w-0 flex-1 rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
                 />
-
                 <select
                   value={row.unit}
-                  onChange={(e) =>
-                    updateRow(index, "unit", e.target.value)
-                  }
+                  onChange={(e) => updateRow(index, "unit", e.target.value)}
                   disabled={disabled}
                   className="rounded-md border border-[var(--app-border)] bg-white px-2 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
                 >
@@ -513,35 +413,22 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
               </div>
             )}
 
-            {/* List of text */}
             {row.type === "list.single_line_text_field" && (
               <div className="mt-2 space-y-2">
                 {row.values.map((value, valueIndex) => (
-                  <div
-                    key={valueIndex}
-                    className="flex items-center gap-2"
-                  >
+                  <div key={valueIndex} className="flex items-center gap-2">
                     <input
                       type="text"
                       value={value}
-                      onChange={(e) =>
-                        updateListValue(
-                          index,
-                          valueIndex,
-                          e.target.value
-                        )
-                      }
+                      onChange={(e) => updateListValue(index, valueIndex, e.target.value)}
                       disabled={disabled}
                       placeholder={`Value ${valueIndex + 1}`}
                       className="min-w-0 flex-1 rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
                     />
-
                     {row.values.length > 1 && !disabled && (
                       <button
                         type="button"
-                        onClick={() =>
-                          removeListValue(index, valueIndex)
-                        }
+                        onClick={() => removeListValue(index, valueIndex)}
                         className="text-xs font-bold text-red-500 hover:text-red-700"
                       >
                         ✕
@@ -549,7 +436,6 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
                     )}
                   </div>
                 ))}
-
                 {!disabled && (
                   <button
                     type="button"
@@ -576,18 +462,13 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
               + Add Attribute
             </button>
           )}
-
           <button
             type="button"
-            onClick={handleApply}
+            onClick={() => validRows.length > 0 && submit({ attributes: validRows.map(buildAttribute) })}
             disabled={disabled || validRows.length === 0}
             className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {status === "submitting"
-              ? "Applying..."
-              : status === "done"
-                ? "Applied"
-                : "Apply Fix"}
+            {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Apply Fix"}
           </button>
         </div>
         <div>
@@ -596,9 +477,7 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
             onClick={() => setShowTypeGuide((v) => !v)}
             className="text-xs font-semibold text-[var(--app-muted)] underline hover:text-[var(--app-text)]"
           >
-            {showTypeGuide
-              ? "Hide type guide"
-              : "What type should I pick?"}
+            {showTypeGuide ? "Hide type guide" : "What type should I pick?"}
           </button>
         </div>
       </div>
@@ -608,9 +487,7 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
           <ul className="space-y-1.5">
             {METAFIELD_TYPES.map((type) => (
               <li key={type.value}>
-                <span className="font-mono font-semibold text-[var(--app-text)]">
-                  {type.value}
-                </span>
+                <span className="font-mono font-semibold text-[var(--app-text)]">{type.value}</span>
                 {" — "}
                 {METAFIELD_TYPE_HELP[type.value]}
               </li>
@@ -618,6 +495,522 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
           </ul>
         </div>
       )}
+
+      {message && (
+        <p className={`text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SimpleTextFixPanel({ issue, productId, field, label, placeholder, multiline }) {
+  const [value, setValue] = useState("");
+  const { submit, status, message } = useApplyFix({ issue, productId });
+  const disabled = status === "submitting" || status === "done";
+  const Field = multiline ? "textarea" : "input";
+
+  return (
+    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
+        {label}
+      </label>
+      <Field
+        {...(!multiline && { type: "text" })}
+        {...(multiline && { rows: 5 })}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        disabled={disabled}
+        placeholder={placeholder || `Enter ${label.toLowerCase()}`}
+        className={`mt-2 w-full rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60 ${
+          multiline ? "resize-y py-2" : ""
+        }`}
+      />
+      <button
+        type="button"
+        onClick={() => value.trim() && submit({ [field]: value.trim() })}
+        disabled={disabled || !value.trim()}
+        className="mt-2 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Apply Fix"}
+      </button>
+      {message && (
+        <p className={`mt-1 text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RenameOptionFixPanel({ issue, productId }) {
+  const options = issue.affected_options || [];
+
+  if (options.length === 0) {
+    return (
+      <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+        <p className="text-xs text-[var(--app-muted)]">No specific option identified for this issue.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {options.map((option) => (
+        <RenameOneOption key={option.id} option={option} issue={issue} productId={productId} />
+      ))}
+    </div>
+  );
+}
+
+function RenameOneOption({ option, issue, productId }) {
+  const [value, setValue] = useState("");
+  const { submit, status, message } = useApplyFix({ issue, productId });
+  const disabled = status === "submitting" || status === "done";
+
+  return (
+    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <p className="text-xs font-semibold text-[var(--app-text)]">
+        Current name: <span className="font-mono">{option.name || "(unnamed)"}</span>
+      </p>
+      {option.values?.length > 0 && (
+        <p className="mt-0.5 text-[11px] text-[var(--app-muted)]">Values: {option.values.join(", ")}</p>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          disabled={disabled}
+          className="min-w-0 flex-1 rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+        />
+        <button
+          type="button"
+          onClick={() => value.trim() && submit({ option_id: option.id, new_name: value.trim() })}
+          disabled={disabled || !value.trim()}
+          className="shrink-0 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Rename"}
+        </button>
+      </div>
+      {message && (
+        <p className={`mt-1 text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SkuFixPanel({ issue, productId }) {
+  const variants = issue.affected_variants || [];
+  const [values, setValues] = useState(() =>
+    Object.fromEntries(variants.map((v) => [v.id, v.suggested_sku || v.sku || ""]))
+  );
+  const { submit, status, message } = useApplyFix({ issue, productId });
+  const disabled = status === "submitting" || status === "done";
+
+  if (variants.length === 0) {
+    return (
+      <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+        <p className="text-xs text-[var(--app-muted)]">No specific variant identified for this issue.</p>
+      </div>
+    );
+  }
+
+  const ready = variants.filter((v) => values[v.id]?.trim());
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
+        SKU
+      </label>
+
+      {variants.map((v) => (
+        <div key={v.id} className="flex items-center gap-2">
+          {v.image_url && <img src={v.image_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />}
+          <span className="min-w-0 flex-1 truncate text-xs text-[var(--app-muted)]">
+            {v.title || v.selected_options?.map((o) => o.value).join(" / ") || "Variant"}
+          </span>
+          <input
+            type="text"
+            value={values[v.id] || ""}
+            onChange={(e) => setValues((prev) => ({ ...prev, [v.id]: e.target.value }))}
+            disabled={disabled}
+            className="w-36 shrink-0 rounded-md border border-[var(--app-border)] px-2 py-1 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+          />
+        </div>
+      ))}
+
+      <button
+        type="button"
+        onClick={() => submit({ variants: ready.map((v) => ({ id: v.id, sku: values[v.id].trim() })) })}
+        disabled={disabled || ready.length === 0}
+        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : `Apply to ${ready.length} variant(s)`}
+      </button>
+      {message && (
+        <p className={`text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function VariantFieldFixPanel({ issue, productId, field, label, placeholder }) {
+  const variants = issue.affected_variants || [];
+
+  if (variants.length === 0) {
+    return (
+      <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+        <p className="text-xs text-[var(--app-muted)]">No specific variant identified for this issue.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {variants.map((v) => (
+        <VariantFieldRow
+          key={v.id}
+          variant={v}
+          field={field}
+          label={label}
+          placeholder={placeholder}
+          issue={issue}
+          productId={productId}
+        />
+      ))}
+    </div>
+  );
+}
+
+function VariantFieldRow({ variant, field, label, placeholder, issue, productId }) {
+  const [value, setValue] = useState("");
+  const { submit, status, message } = useApplyFix({ issue, productId });
+  const disabled = status === "submitting" || status === "done";
+
+  return (
+    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <div className="flex items-center gap-2">
+        {variant.image_url && (
+          <img src={variant.image_url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+        )}
+        <div className="min-w-0">
+          <p className="truncate text-xs font-semibold text-[var(--app-text)]">
+            {variant.title || variant.selected_options?.map((o) => o.value).join(" / ") || "Variant"}
+          </p>
+          {variant.sku && <p className="text-[11px] text-[var(--app-muted)]">SKU: {variant.sku}</p>}
+        </div>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          disabled={disabled}
+          placeholder={placeholder}
+          className="min-w-0 flex-1 rounded-md border border-[var(--app-border)] px-2.5 py-1.5 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+        />
+        <button
+          type="button"
+          onClick={() => value.trim() && submit({ variant_id: variant.id, [field]: value.trim() })}
+          disabled={disabled || !value.trim()}
+          className="shrink-0 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : `Save ${label}`}
+        </button>
+      </div>
+      {message && (
+        <p className={`mt-1 text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const VARIANT_OPTIONS_SOLVABLE = new Set([
+  "incomplete_selected_options",
+  "inconsistent_variant_options",
+  "inconsistent_option_values",
+  "generic_option_value",
+]);
+
+function VariantOptionsFixPanel({ issue, productId }) {
+  const stateFetcher = useFetcher();
+  const applyFetcher = useFetcher();
+
+  const [live, setLive] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [message, setMessage] = useState("");
+  const [values, setValues] = useState({});
+
+  const isSolvable = VARIANT_OPTIONS_SOLVABLE.has(issue.issue_type);
+  const isNormalizeMode = issue.issue_type === "inconsistent_option_values";
+
+  useEffect(() => {
+    if (!isSolvable) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setLoadError("");
+    setLive(null);
+    setValues({});
+
+    stateFetcher.submit(
+      {
+        __endpoint: "/products/variant-options-state",
+        product_id: productId,
+      },
+      {
+        method: "post",
+        action: window.location.pathname + window.location.search,
+        encType: "application/json",
+      }
+    );
+  }, [issue.issue_type, productId, isSolvable]);
+
+  useEffect(() => {
+    if (stateFetcher.state !== "idle" || !stateFetcher.data) return;
+
+    if (stateFetcher.data.detail) {
+      setLoadError(stateFetcher.data.detail);
+      setLive(null);
+    } else {
+      setLive(stateFetcher.data);
+      setLoadError("");
+    }
+
+    setLoading(false);
+  }, [stateFetcher.state, stateFetcher.data]);
+
+  useEffect(() => {
+    if (!live) return;
+
+    const flaggedIds = new Set(
+      (issue.affected_variants || []).map((v) => v.id)
+    );
+
+    const allVariants = live.variants || [];
+    const optionNames = live.options || [];
+
+    const variants = isNormalizeMode
+      ? allVariants
+      : allVariants.filter(
+          (v) => flaggedIds.size === 0 || flaggedIds.has(v.id)
+        );
+
+    const initialValues = Object.fromEntries(
+      variants.map((variant) => [
+        variant.id,
+        Object.fromEntries(
+          optionNames.map((optionName) => {
+            const existing = (variant.selected_options || []).find(
+              (option) => option.name === optionName
+            );
+
+            if (!existing) {
+              return [optionName, ""];
+            }
+
+            return [
+              optionName,
+              isNormalizeMode
+                ? existing.suggested_value || existing.value || ""
+                : existing.value || "",
+            ];
+          })
+        ),
+      ])
+    );
+
+    setValues(initialValues);
+  }, [live, issue.affected_variants, isNormalizeMode]);
+
+  useEffect(() => {
+    if (applyFetcher.state !== "idle" || !applyFetcher.data) return;
+
+    if (applyFetcher.data.success) {
+      setStatus("done");
+      setMessage(applyFetcher.data.message || "Applied.");
+    } else {
+      setStatus("error");
+      setMessage(
+        applyFetcher.data.detail ||
+          applyFetcher.data.message ||
+          "Failed to apply fix."
+      );
+    }
+  }, [applyFetcher.state, applyFetcher.data]);
+
+
+  if (!isSolvable) {
+    return (
+      <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+        <p className="text-xs text-[var(--app-muted)]">
+          This issue needs the product's variant structure rebuilt in Shopify
+          admin directly.
+        </p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <p className="text-xs text-[var(--app-muted)]">
+        Loading current variants…
+      </p>
+    );
+  }
+
+  if (loadError) {
+    return <p className="text-xs text-red-600">{loadError}</p>;
+  }
+
+  if (!live) {
+    return (
+      <p className="text-xs text-red-600">
+        Unable to load the current variant state.
+      </p>
+    );
+  }
+
+  const flaggedIds = new Set(
+    (issue.affected_variants || []).map((v) => v.id)
+  );
+
+  const allVariants = live.variants || [];
+  const optionNames = live.options || [];
+
+  const variants = isNormalizeMode
+    ? allVariants
+    : allVariants.filter(
+        (v) => flaggedIds.size === 0 || flaggedIds.has(v.id)
+      );
+
+  const disabled = status === "submitting" || status === "done";
+
+  const setCell = (variantId, optionName, value) => {
+    setValues((previous) => ({
+      ...previous,
+      [variantId]: {
+        ...previous[variantId],
+        [optionName]: value,
+      },
+    }));
+  };
+
+  const ready =
+    variants.length > 0 &&
+    variants.every((variant) =>
+      optionNames.every(
+        (optionName) => values[variant.id]?.[optionName]?.trim()
+      )
+    );
+
+  const submit = () => {
+    if (!ready || disabled) return;
+
+    setStatus("submitting");
+    setMessage("");
+
+    applyFetcher.submit(
+      {
+        __endpoint: "/products/fix-variant-options",
+        product_id: productId,
+        issue_id: issue.id,
+        check_id: issue.check_id,
+        issue_type: issue.issue_type,
+        variant_option_values: Object.fromEntries(
+          variants.map((variant) => [
+            variant.id,
+            values[variant.id],
+          ])
+        ),
+      },
+      {
+        method: "post",
+        action: window.location.pathname + window.location.search,
+        encType: "application/json",
+      }
+    );
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <p className="text-[11px] text-[var(--app-muted)]">
+        {isNormalizeMode
+          ? "Suggested consistent formatting is pre-filled — edit any value, then apply."
+          : "Fill in every option value for the affected variant(s)."}
+      </p>
+
+      {variants.length === 0 ? (
+        <p className="text-xs text-[var(--app-muted)]">
+          No affected variants were found in the current product state.
+        </p>
+      ) : (
+        variants.map((variant) => (
+          <div
+            key={variant.id}
+            className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2"
+          >
+            <p className="mb-1.5 text-xs font-semibold text-[var(--app-text)]">
+              {variant.title || "Variant"}
+              {variant.sku && (
+                <span className="font-mono text-[var(--app-muted)]">
+                  {" "}
+                  · {variant.sku}
+                </span>
+              )}
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {optionNames.map((name) => (
+                <div key={name}>
+                  <label className="block text-[10px] font-semibold text-[var(--app-muted)]">
+                    {name}
+                  </label>
+
+                  <input
+                    type="text"
+                    value={values[variant.id]?.[name] || ""}
+                    onChange={(e) =>
+                      setCell(
+                        variant.id,
+                        name,
+                        e.target.value
+                      )
+                    }
+                    disabled={disabled}
+                    className="mt-0.5 w-full rounded-md border border-[var(--app-border)] px-2 py-1 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+
+      <button
+        type="button"
+        onClick={submit}
+        disabled={disabled || !ready}
+        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "submitting"
+          ? "Applying..."
+          : status === "done"
+            ? "Applied"
+            : "Apply Fix"}
+      </button>
 
       {message && (
         <p
@@ -634,15 +1027,78 @@ function MetafieldsFixPanel({ issue, productId, onDone }) {
   );
 }
 
+function FixPanel({ fixIssue, productId }) {
+  switch (fixIssue.panel) {
+    case "handle":
+      return <HandleFixPanel issue={fixIssue} productId={productId} />;
+    case "metafields":
+      return <MetafieldsFixPanel issue={fixIssue} productId={productId} />;
+    case "product_type":
+      return (
+        <SimpleTextFixPanel
+          issue={fixIssue}
+          productId={productId}
+          field="product_type"
+          label="Product type"
+        />
+      );
+    case "title":
+      return <SimpleTextFixPanel issue={fixIssue} productId={productId} field="title" label="Product title" />;
+    case "description":
+      return (
+        <SimpleTextFixPanel
+          issue={fixIssue}
+          productId={productId}
+          field="description_html"
+          label="Product description"
+          placeholder="Describe what this product is, who it's for, and what's included..."
+          multiline
+        />
+      );
+    case "rename_option":
+      return <RenameOptionFixPanel issue={fixIssue} productId={productId} />;
+    case "sku":
+      return <SkuFixPanel issue={fixIssue} productId={productId} />;
+    case "gtin":
+      return (
+        <VariantFieldFixPanel
+          issue={fixIssue}
+          productId={productId}
+          field="gtin"
+          label="GTIN"
+          placeholder="e.g. 0123456789012"
+        />
+      );
+    case "mpn":
+      return (
+        <VariantFieldFixPanel
+          issue={fixIssue}
+          productId={productId}
+          field="mpn"
+          label="MPN"
+          placeholder="Manufacturer part number"
+        />
+      );
+    case "variant_options":
+      return fixIssue.issue_type === "default_title_with_real_variations"
+        ? <DefaultTitleFixPanel fixIssue={fixIssue} productId={productId} />
+        : <VariantOptionsFixPanel issue={fixIssue} productId={productId} />;
+    default:
+      return null;
+  }
+}
+
+/* ---------- Issue row ---------- */
+
 function IssueRow({ issue, productId }) {
   const [showFix, setShowFix] = useState(false);
-  const fixKind = getFixKind(issue);
-  const fixable = Boolean(fixKind);
+  const fixablePanels = issue.fixablePanels || [];
+  const fixable = fixablePanels.length > 0;
 
   return (
     <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <SeverityBadge priority={issue.priority} />
           </div>
@@ -663,12 +1119,19 @@ function IssueRow({ issue, productId }) {
             </div>
           )}
 
-          {fixable && showFix && fixKind === "handle" && (
-            <HandleFixPanel issue={issue} productId={productId} onDone={() => {}} />
-          )}
-
-          {fixable && showFix && fixKind === "metafields" && (
-            <MetafieldsFixPanel issue={issue} productId={productId} onDone={() => {}} />
+          {showFix && fixable && (
+            <div className="mt-3 space-y-3">
+              {fixablePanels.map((fixIssue) => (
+                <div key={fixIssue.fix_action}>
+                  {fixablePanels.length > 1 && (
+                    <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
+                      {FIX_ACTION_LABEL[fixIssue.fix_action] || "Fix"}
+                    </p>
+                  )}
+                  <FixPanel fixIssue={fixIssue} productId={productId} />
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -685,11 +1148,7 @@ function IssueRow({ issue, productId }) {
           )}
           <AlertCircle
             size={17}
-            className={
-              issue.priority === "high"
-                ? "text-red-600"
-                : "text-[var(--app-orange)]"
-            }
+            className={issue.priority === "high" ? "text-red-600" : "text-[var(--app-orange)]"}
           />
         </div>
       </div>
@@ -699,35 +1158,20 @@ function IssueRow({ issue, productId }) {
 
 export async function action({ request }) {
   const { session } = await authenticate.admin(request);
-
   if (!session?.shop || !session?.accessToken) {
-    return Response.json(
-      { detail: "Shopify session is not authenticated." },
-      { status: 401 }
-    );
+    return Response.json({ detail: "Shopify session is not authenticated." }, { status: 401 });
   }
-
   const payload = await request.json();
+  const endpoint = payload.__endpoint || "/products/fix";
+  delete payload.__endpoint;
 
-  const response = await fetch(`${API_BASE}/products/fix`, {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      ...payload,
-      shop_domain: session.shop,
-      access_token: session.accessToken,
-    }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, shop_domain: session.shop, access_token: session.accessToken }),
   });
-
-  const data = await response.json().catch(() => ({
-    detail: "Invalid response from fix backend.",
-  }));
-
-  return Response.json(data, {
-    status: response.status,
-  });
+  const data = await response.json().catch(() => ({ detail: "Invalid response from fix backend." }));
+  return Response.json(data, { status: response.status });
 }
 
 export default function ProductDetails() {
@@ -747,9 +1191,7 @@ export default function ProductDetails() {
     const loadProduct = async () => {
       try {
         const response = await fetch(
-          `${API_BASE}/products/detail?shop_domain=${encodeURIComponent(
-            shopDomain
-          )}&product_id=${encodeURIComponent(id)}`
+          `${API_BASE}/products/detail?shop_domain=${encodeURIComponent(shopDomain)}&product_id=${encodeURIComponent(id)}`
         );
 
         if (response.status === 404) {
@@ -794,14 +1236,9 @@ export default function ProductDetails() {
 
           <div className="rounded-2xl border border-[var(--app-border)] bg-white px-6 py-16 text-center">
             <Package size={30} className="mx-auto mb-4 text-[var(--app-muted)]" />
-
-            <h1 className="text-xl font-extrabold text-[var(--app-green)]">
-              No Previous Audit Data
-            </h1>
-
+            <h1 className="text-xl font-extrabold text-[var(--app-green)]">No Previous Audit Data</h1>
             <p className="mx-auto mt-2 max-w-md text-sm text-[var(--app-muted)]">
-              This product has not been included in any completed audit for this
-              store.
+              This product has not been included in any completed audit for this store.
             </p>
           </div>
         </div>
@@ -812,22 +1249,19 @@ export default function ProductDetails() {
   const status = getProductStatus(product);
   const StatusIcon = status.icon;
   const enrichments = product.missing_enrichments || [];
+
   const issuesByCheckId = new Map();
   for (const issue of product.issues || []) {
-    if (!issuesByCheckId.has(issue.check_id)) {
-      issuesByCheckId.set(issue.check_id, issue);
-    }
+    if (!issuesByCheckId.has(issue.check_id)) issuesByCheckId.set(issue.check_id, []);
+    issuesByCheckId.get(issue.check_id).push(issue);
   }
 
   const rows = enrichments.map((enrichment, index) => {
-    const matchedIssue = issuesByCheckId.get(enrichment.check_id);
+    const matched = issuesByCheckId.get(enrichment.check_id) || [];
     return {
       key: `${enrichment.check_id}-${index}`,
       ...enrichment,
-      id: matchedIssue?.id,
-      issue_type: matchedIssue?.issue_type,
-      fix_action: matchedIssue?.fix_action,
-      suggested_handle: matchedIssue?.suggested_handle,
+      fixablePanels: getFixablePanels(matched),
     };
   });
 
@@ -847,18 +1281,12 @@ export default function ProductDetails() {
           Back to Products
         </button>
 
-        {/* Hero card — image + title on the left, status (real, derived)
-            on the right in place of the mockup's fabricated numeric gauge */}
         <div className="mb-6 rounded-2xl border border-[var(--app-border)] bg-white p-6 md:p-8">
           <div className="flex flex-col gap-8 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-6">
               <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] sm:h-28 sm:w-28">
                 {product.image_url ? (
-                  <img
-                    src={product.image_url}
-                    alt={product.title || "Product"}
-                    className="h-full w-full object-cover"
-                  />
+                  <img src={product.image_url} alt={product.title || "Product"} className="h-full w-full object-cover" />
                 ) : (
                   <Package size={36} className="text-[var(--app-muted)]" />
                 )}
@@ -871,9 +1299,7 @@ export default function ProductDetails() {
                 <h1 className="text-xl font-extrabold text-[var(--app-text)] md:text-2xl">
                   {product.title || "Untitled product"}
                 </h1>
-                <p className="mt-2 max-w-md text-xs leading-relaxed text-[var(--app-muted)]">
-                  {status.blurb}
-                </p>
+                <p className="mt-2 max-w-md text-xs leading-relaxed text-[var(--app-muted)]">{status.blurb}</p>
               </div>
             </div>
 
@@ -888,13 +1314,11 @@ export default function ProductDetails() {
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* Left column — only real fields: product ID and issue counts */}
           <div className="space-y-6 lg:col-span-1">
             <div className="rounded-2xl border border-[var(--app-border)] bg-white p-5">
               <h3 className="mb-4 border-b border-[var(--app-border)] pb-2 text-xs font-bold uppercase tracking-wider text-[var(--app-text)]">
                 Product Information
               </h3>
-
               <div className="space-y-3 text-xs">
                 <div className="flex items-center justify-between border-b border-[var(--app-bg)] py-1">
                   <span className="font-medium text-[var(--app-muted)]">Product ID:</span>
@@ -902,7 +1326,6 @@ export default function ProductDetails() {
                     {product.product_id || "Unavailable"}
                   </span>
                 </div>
-
                 <div className="flex items-center justify-between py-1">
                   <span className="font-medium text-[var(--app-muted)]">Total issues:</span>
                   <span className="font-bold text-[var(--app-text)]">{rows.length}</span>
@@ -914,7 +1337,6 @@ export default function ProductDetails() {
               <h3 className="mb-4 border-b border-[var(--app-border)] pb-2 text-xs font-bold uppercase tracking-wider text-[var(--app-text)]">
                 Issue Breakdown
               </h3>
-
               <div className="space-y-3 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-[var(--app-muted)]">High priority</span>
@@ -932,33 +1354,22 @@ export default function ProductDetails() {
             </div>
           </div>
 
-          {/* Right column — issues list */}
           <div className="lg:col-span-2">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-[var(--app-text)]">
-                Issues ({rows.length})
-              </h2>
-              <span className="text-xs text-[var(--app-muted)]">
-                Resolve these to elevate product readiness
-              </span>
+              <h2 className="text-sm font-bold text-[var(--app-text)]">Issues ({rows.length})</h2>
+              <span className="text-xs text-[var(--app-muted)]">Resolve these to elevate product readiness</span>
             </div>
 
             {rows.length > 0 ? (
               <div className="flex flex-col gap-3">
                 {rows.map((issue) => (
-                  <IssueRow
-                    key={issue.key}
-                    issue={issue}
-                    productId={product.product_id}
-                  />
+                  <IssueRow key={issue.key} issue={issue} productId={product.product_id} />
                 ))}
               </div>
             ) : (
               <div className="rounded-2xl border border-green-100 bg-green-50 p-10 text-center">
                 <CheckCircle2 size={30} className="mx-auto mb-3 text-[var(--app-green)]" />
-                <h3 className="text-sm font-extrabold text-[var(--app-green)]">
-                  All checks passed
-                </h3>
+                <h3 className="text-sm font-extrabold text-[var(--app-green)]">All checks passed</h3>
                 <p className="mx-auto mt-1.5 max-w-sm text-xs text-[var(--app-muted)]">
                   This product currently meets the checks included in the audit.
                 </p>

@@ -625,74 +625,284 @@ For PASS and NA:
 issues MUST be [].
 
 ============================================================
-ISSUE CLASSIFICATION
+ISSUE CLASSIFICATION — SEMANTIC OWNERSHIP FIRST
 ============================================================
 
-An issue_type marked "existing" MUST be one of the canonical issue types
-listed specifically under that check_id in the registry below.
+For every PARTIAL or FAIL check, identify the actual problem from
+the supplied evidence BEFORE selecting an issue_type.
 
-Do not use a canonical issue type belonging to another check_id.
+Issue classification is semantic, not name-based.
 
-For every check marked "partial" or "fail":
+The check_id and issue_type must describe the SAME underlying problem.
 
-- identify the exact issue or issues that caused the verdict.
+Follow these steps in EXACT order.
 
-If the problem exactly matches an existing canonical issue type:
+------------------------------------------------------------
+STEP 1 — UNDERSTAND THE ACTUAL PROBLEM
+------------------------------------------------------------
 
-- return status "existing";
-- use the exact canonical issue_type;
+First identify:
+
+1. What exactly is wrong?
+2. What field, attribute, metafield, option, option value,
+   variant, product property, or store property is affected?
+3. What exact supplied value or absence proves the problem?
+4. What does the problem mean for the CURRENT check being evaluated?
+5. What fix would actually correct that specific problem?
+
+Do NOT choose an issue_type before answering these questions.
+
+The issue_type must describe the actual observed problem,
+not merely a similar-looking problem.
+
+------------------------------------------------------------
+STEP 2 — DETERMINE THE CHECK OWNERSHIP
+------------------------------------------------------------
+
+Determine which CURRENT check_id the actual problem belongs to.
+
+The check_id is determined by the meaning of the problem
+and the rubric of that check.
+
+Do NOT move a problem to another check merely because another
+check has a similarly named issue_type.
+
+Do NOT change the current check_id to match an issue_type.
+
+The issue must remain under the check whose rubric actually
+supports the observed deficiency.
+
+------------------------------------------------------------
+STEP 3 — CHECK THE CURRENT CHECK'S ISSUE TYPES FIRST
+------------------------------------------------------------
+
+Look ONLY at the canonical issue types registered under the
+CURRENT check_id.
+
+Ask:
+
+"Does one of the issue types registered under THIS check
+describe the exact same semantic problem?"
+
+If YES:
+
+- use that exact issue_type;
+- status = "existing";
+- preserve its meaning;
 - do not rename it;
-- do not invent a synonym.
+- do not use a synonym;
+- ensure its fix_action would actually address this problem.
 
-If the problem is genuinely distinct from every canonical issue type
-allowed for that check:
+If NO:
 
-- return status "new";
-- create a concise specific issue_type in snake_case;
-- provide a factual description;
-- do not assign fix_mode;
-- do not assign fix_action.
+continue to STEP 4.
 
-Every issue object MUST contain:
+------------------------------------------------------------
+STEP 4 — ISSUE TYPES FROM OTHER CHECKS
+------------------------------------------------------------
 
-- "issue_type"
-- "status"
-- "description"
+An issue_type registered under another check MAY be reused
+under the CURRENT check ONLY when ALL of the following are true:
 
-The description must be a non-empty factual sentence describing the
-specific observed problem.
+1. It describes the EXACT SAME underlying problem.
+2. It describes the SAME affected object or field.
+3. It has the SAME semantic meaning in the CURRENT check.
+4. Applying it under the CURRENT check does not change or broaden
+   the meaning of the issue_type.
+5. Its fix_action actually fixes the observed problem.
+6. The issue genuinely belongs to the CURRENT check according
+   to the Fixed Rubric.
 
-============================================================
-CONSISTENCY OBSERVATIONS
-============================================================
+The existence of the same issue_type under another check is
+NEVER sufficient by itself.
 
-The `consistency` check is STORE-WIDE, but products are analyzed in batches.
+NEVER reuse an issue_type merely because:
 
-For this batch:
+- the name looks similar;
+- the wording looks similar;
+- the affected data happens to be related;
+- the same fix_action happens to be available;
+- the issue exists somewhere else in the registry.
 
-- inspect the supplied products;
-- report only factual variations actually visible in this batch;
-- do NOT issue a final store-wide consistency verdict;
-- do NOT calculate a consistency score.
+If the semantic meaning is different, DO NOT reuse it.
 
-Look for actual variations in:
+------------------------------------------------------------
+STEP 5 — CREATE A NEW ISSUE TYPE WHEN NEEDED
+------------------------------------------------------------
 
-- metafield keys;
-- metafield value representations;
-- attribute names;
-- option names;
-- product types;
-- units;
-- measurement representations;
-- value formats;
-- naming conventions;
-- missing fields among otherwise similar products;
-- different representations of the same type of information.
+If the actual problem genuinely belongs to the CURRENT check,
+but no existing issue_type under the CURRENT check accurately
+describes it, and no issue_type from another check is an exact
+semantic match that can legitimately be reused:
 
-Do not assume that a difference is an inconsistency merely because the values
-are different.
+CREATE A NEW ISSUE TYPE.
 
-Do not invent a consistency problem.
+For a new issue:
+
+- status = "new";
+- use concise snake_case;
+- describe the actual observed problem;
+- do not force the problem into an existing issue_type;
+- do not change the check_id merely to avoid creating a new issue.
+
+A new issue_type is correct when the problem is valid for the
+CURRENT check but the registry does not yet contain a suitable
+issue type for that check.
+
+------------------------------------------------------------
+STEP 6 — NEVER MAP BY ISSUE_TYPE NAME ALONE
+------------------------------------------------------------
+
+NEVER perform:
+
+"issue_type exists somewhere → use it here."
+
+Always perform:
+
+"understand problem → determine ownership → compare semantics
+→ select exact existing type OR create new type."
+
+The string/name of an issue_type is NOT evidence that it is
+semantically correct.
+
+------------------------------------------------------------
+STEP 7 — FIX ACTION MUST MATCH THE ACTUAL ISSUE
+------------------------------------------------------------
+
+The fix_action must correct the actual problem described by
+the issue.
+
+Examples:
+
+- option NAME problem → option-name fix
+- option VALUE problem → variant/option-value fix
+- missing SKU → SKU fix
+- missing product type → product-type fix
+- missing metafield attribute → metafield fix
+- incorrectly structured attribute → appropriate attribute/metafield fix
+
+Never select an issue_type whose fix_action would modify the
+wrong field or object.
+
+------------------------------------------------------------
+STEP 8 — CRITICAL EXAMPLES
+------------------------------------------------------------
+
+Example A:
+
+Observed:
+
+details.product = "jwelery"
+
+This is a PRODUCT METAFIELD / PRODUCT ATTRIBUTE value.
+
+It is NOT a variant option value.
+
+Therefore:
+
+DO NOT classify it as:
+
+generic_option_value
+
+because generic_option_value describes a VARIANT OPTION VALUE.
+
+If the current check is comparable_attributes:
+
+1. determine whether an existing comparable_attributes issue
+   exactly describes the problem;
+2. if yes, use it;
+3. if no, create a NEW comparable_attributes issue_type.
+
+Do NOT use generic_option_value simply because that issue_type
+exists under variant_hygiene.
+
+------------------------------------------------------------
+
+Example B:
+
+Observed:
+
+option name = "Title"
+
+This is an OPTION NAME problem.
+
+If evaluating variant_selection and generic_option_name exists
+there with the same meaning:
+
+use:
+
+generic_option_name
+
+status = existing
+
+------------------------------------------------------------
+
+Example C:
+
+Observed:
+
+option value = "Default Title"
+
+This is an OPTION VALUE problem.
+
+It is NOT an option-name problem.
+
+Do NOT classify it as generic_option_name merely because
+generic_option_name exists elsewhere.
+
+If the current check requires identifying that option-value
+problem and no exact current-check issue_type exists:
+
+create an appropriate NEW issue_type under the CURRENT check.
+
+------------------------------------------------------------
+
+Example D:
+
+Observed:
+
+product_type = "Necklace"
+
+The actual problem is that the PRODUCT TYPE classification is
+too generic.
+
+Do NOT automatically classify this as:
+
+unstructured_product_attribute
+
+unless the actual evidence shows that the attribute is
+incorrectly/unstructurally represented.
+
+"Generic" and "unstructured" are different semantic problems.
+
+If comparable_attributes has no exact existing issue_type for
+a generic product type, create a new issue_type such as an
+appropriate generic-product-type issue under comparable_attributes.
+
+Do NOT reuse unstructured_product_attribute merely because it
+exists under another check.
+
+------------------------------------------------------------
+FINAL ISSUE VALIDATION
+------------------------------------------------------------
+
+Before returning every issue, internally verify:
+
+1. What exactly is wrong?
+2. What exact evidence proves it?
+3. What field/object is affected?
+4. Which check owns the problem?
+5. Does the selected issue_type describe that exact problem?
+6. Does that issue_type belong to this check?
+7. If it belongs to another check, is it truly the EXACT SAME
+   semantic issue and legitimately applicable here?
+8. Does the fix_action actually fix the observed problem?
+9. If no existing type is an exact match, did I create a NEW
+   issue_type under the correct current check?
+
+If any answer is NO, reconsider the classification before
+returning the issue.
+
 
 ============================================================
 MEASUREMENT OBSERVATIONS

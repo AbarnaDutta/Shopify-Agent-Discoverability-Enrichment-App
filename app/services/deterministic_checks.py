@@ -150,41 +150,70 @@ def check_variant_hygiene(product: dict) -> dict:
     if not options or not variants:
         return {"verdict": "na", "evidence": "No options/variants to evaluate.", "issues": []}
 
-    generic_opts = [
+    generic_name_opts = [
         o for o in options
         if (o.get("name") or "").strip().lower() in _GENERIC_OPTION_NAMES
     ]
-    default_variants = [
+    default_title_variants = [
         v for v in variants
         if (v.get("title") or "").strip().lower() == "default title"
     ]
-    all_default_title = len(default_variants) == len(variants)
+    all_default_title = bool(variants) and len(default_title_variants) == len(variants)
     single_option = len(options) <= 1
 
-    opt_ids = [_option_id(o) for o in generic_opts]
-    var_ids = [_variant_id(v) for v in default_variants]
+    name_ids = [_option_id(o) for o in generic_name_opts]
+    variant_ids = [_variant_id(v) for v in default_title_variants]
 
-    if generic_opts and all_default_title and single_option:
+    if generic_name_opts and all_default_title and single_option:
         return _make_verdict(
             "fail",
-            f"Option name(s) {[o.get('name') for o in options]}; every variant titled 'Default Title'; no real variant structure exists.",
+            f"Option name(s) {[o.get('name') for o in options]} are generic "
+            "and every variant is titled 'Default Title'; no real variant "
+            "structure exists.",
             "generic_option_name",
-            variant_ids=var_ids, option_ids=opt_ids,
+            variant_ids=variant_ids, option_ids=name_ids,
         )
-    if generic_opts or all_default_title:
+
+    if generic_name_opts:
         return _make_verdict(
             "partial",
-            f"Option name(s) {[o.get('name') for o in options]}; some generic naming or default-title variants present.",
+            f"Option name(s) {[o.get('name') for o in generic_name_opts]} "
+            "are generic and don't describe what they represent.",
             "generic_option_name",
-            variant_ids=var_ids, option_ids=opt_ids,
+            option_ids=name_ids,
         )
-    return _make_verdict("pass", f"Option names {[o.get('name') for o in options]} are descriptive; variant titles are specific.")
 
+    if all_default_title:
+        return _make_verdict(
+            "partial",
+            f"Option name(s) {[o.get('name') for o in options]} are "
+            "descriptive, but every variant's value is the placeholder "
+            "'Default Title' instead of a real value.",
+            "generic_option_value",
+            variant_ids=variant_ids,
+        )
+
+    return _make_verdict(
+        "pass",
+        f"Option names {[o.get('name') for o in options]} are descriptive; "
+        "variant titles are specific.",
+    )
 
 def check_identifiers(product: dict) -> dict:
     variants = product.get("variants") or []
     if not variants:
         return {"verdict": "na", "evidence": "No variants to evaluate.", "issues": []}
+    print(
+        "[IDENTIFIERS INPUT]",
+        [
+            {
+                "variant_id": v.get("id"),
+                "sku": v.get("sku"),
+                "barcode": v.get("barcode"),
+            }
+            for v in variants
+        ],
+    )
 
     missing_sku = [v for v in variants if not v.get("sku")]
     missing_barcode = [v for v in variants if not v.get("barcode")]

@@ -404,20 +404,23 @@ class AuditRepository:
             for issue in issues:
                 issue_data = _serialize_issue(issue)
 
-                if (
-                    issue.issue_type == "missing_product_url"
-                    and issue.fix_action == "update_product_handle"
-                ):
+                if issue.fix_action == "update_product_handle":
                     suggestion = fix_engine.suggest_product_handle(
                         product_title=row.title or "",
                     )
-
                     issue_data["suggested_handle"] = suggestion["suggested_handle"]
+
+                elif issue.fix_action == "generate_sku":
+                    for variant in issue_data.get("affected_variants") or []:
+                        suggestion = fix_engine.suggest_sku(
+                            product_title=row.title or "",
+                            selected_options=variant.get("selected_options") or [],
+                        )
+                        variant["suggested_sku"] = suggestion["suggested_sku"]
 
                 product["issues"].append(issue_data)
 
             return product
-
     def get_audit_issues(self, audit_id: str) -> list[dict[str, Any]]:
         with safe_db("get_audit_issues") as db:
             if db is None:

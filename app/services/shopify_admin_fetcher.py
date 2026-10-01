@@ -378,6 +378,70 @@ def fetch_products_admin(
 
     return products
 
+# ── PRODUCT VARIANT STATE ───────────────
+
+_PRODUCT_VARIANT_STATE_QUERY = """
+query ProductVariantsForFix($id: ID!) {
+  product(id: $id) {
+    id
+    title
+    options {
+      id
+      name
+      position
+      values
+    }
+    variants(first: 100) {
+      edges {
+        node {
+          id
+          title
+          sku
+          price
+          selectedOptions {
+            name
+            value
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def fetch_product_variant_state(
+    shop_domain: str,
+    access_token: str,
+    api_version: str,
+    product_id: str,
+) -> dict[str, Any]:
+
+    if not shop_domain:
+        raise ValueError("shop_domain is required.")
+
+    if not access_token:
+        raise ValueError("access_token is required.")
+
+    if not product_id:
+        raise ValueError("product_id is required.")
+
+    result = _graphql_request(
+        shop_domain=shop_domain,
+        access_token=access_token,
+        api_version=api_version,
+        query=_PRODUCT_VARIANT_STATE_QUERY,
+        variables={"id": product_id},
+    )
+
+    product = (result.get("data") or {}).get("product")
+
+    if not product:
+        raise ShopifyAdminAPIError(
+            f"Product '{product_id}' not found or inaccessible."
+        )
+
+    return product
 
 # ── STORE CONTEXT FOR AUDIT ───────────────────────────────────────────
 

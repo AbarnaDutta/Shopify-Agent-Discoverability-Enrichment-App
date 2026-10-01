@@ -10,6 +10,7 @@ from app.services.audit_repository import audit_repo
 from app.services.fix_engine import FixEngine
 from app.core.database import AuditIssue, safe_db
 import datetime as dt
+from typing import Any  
 
 router = APIRouter()
 
@@ -31,7 +32,6 @@ def _validate_email(email: str) -> None:
 
 
 def _validate_store_url(store_url: str) -> str:
-    """Normalize and do a cheap structural check before the job even enters the queue."""
     try:
         return normalize_store_url(store_url)
     except InvalidStoreURLError as error:
@@ -62,16 +62,10 @@ def create_shopify_app_report_request(
     _validate_email(payload.email)
 
     if not payload.shop_domain.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="Shopify shop domain is required.",
-        )
+        raise HTTPException(status_code=422, detail="Shopify shop domain is required.")
 
     if not payload.access_token.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="Shopify access token is required.",
-        )
+        raise HTTPException(status_code=422, detail="Shopify access token is required.")
 
     store_url = f"https://{payload.shop_domain.strip()}"
 
@@ -106,16 +100,10 @@ def get_audit_history(
 ) -> dict:
 
     if page < 1:
-        raise HTTPException(
-            status_code=422,
-            detail="Page must be 1 or greater.",
-        )
+        raise HTTPException(status_code=422, detail="Page must be 1 or greater.")
 
     if page_size < 1:
-        raise HTTPException(
-            status_code=422,
-            detail="Page size must be greater than 0.",
-        )
+        raise HTTPException(status_code=422, detail="Page size must be greater than 0.")
 
     return audit_repo.list_audits(
         shop_domain=shop_domain.strip(),
@@ -126,18 +114,12 @@ def get_audit_history(
 @router.get("/audits/latest")
 def get_latest_audit(shop_domain: str) -> dict:
     if not shop_domain.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="Shop domain is required.",
-        )
+        raise HTTPException(status_code=422, detail="Shop domain is required.")
 
     audit = audit_repo.get_latest_audit(shop_domain.strip())
 
     if audit is None:
-        raise HTTPException(
-            status_code=404,
-            detail="No audit found for this Shopify store.",
-        )
+        raise HTTPException(status_code=404, detail="No audit found for this Shopify store.")
 
     return audit
 
@@ -154,10 +136,7 @@ def get_audit_products(audit_id: str) -> dict:
 @router.get("/products")
 def get_all_products(shop_domain: str) -> dict:
     if not shop_domain.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="Shop domain is required.",
-        )
+        raise HTTPException(status_code=422, detail="Shop domain is required.")
 
     result = audit_repo.get_all_unique_products(shop_domain.strip())
 
@@ -174,16 +153,10 @@ def get_product(
     shop_domain: str,
 ) -> dict:
     if not shop_domain.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="Shop domain is required.",
-        )
+        raise HTTPException(status_code=422, detail="Shop domain is required.")
 
     if not product_id.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="Product ID is required.",
-        )
+        raise HTTPException(status_code=422, detail="Product ID is required.")
 
     product = audit_repo.get_unique_product(
         shop_domain=shop_domain.strip(),
@@ -191,15 +164,13 @@ def get_product(
     )
 
     if product is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Product has not been audited for this Shopify store.",
-        )
+        raise HTTPException(status_code=404, detail="Product has not been audited for this Shopify store.")
 
     return {
         "shop_domain": shop_domain.strip(),
         "product": product,
     }
+
 
 class FixIssueRequest(BaseModel):
     shop_domain: str
@@ -207,9 +178,20 @@ class FixIssueRequest(BaseModel):
     issue_id: str
     check_id: str
     issue_type: str
+    access_token: str
     handle: str | None = None
     attributes: list[dict[str, str]] | None = None
-    access_token: str
+    product_type: str | None = None
+    description_html: str | None = None
+    title: str | None = None
+    option_id: str | None = None
+    new_name: str | None = None
+    variant_id: str | None = None
+    gtin: str | None = None
+    mpn: str | None = None
+    variants: list[dict[str, str]] | None = None
+    product_set_input: dict | None = None
+    synchronous: bool | None = None
 
 
 @router.post("/products/fix")
@@ -219,15 +201,22 @@ def fix_product_issue(payload: FixIssueRequest) -> dict:
         raise HTTPException(status_code=422, detail="shop_domain and product_id are required.")
 
     fix_engine = FixEngine()
+    fix_kwargs = payload.dict(
+        exclude={
+            "shop_domain", "product_id", "issue_id", "check_id",
+            "issue_type", "access_token",
+        },
+        exclude_none=True,
+    )
+
     try:
         result = fix_engine.execute(
             check_id=payload.check_id,
             issue_type=payload.issue_type,
             product_id=payload.product_id,
-            handle=payload.handle,
-            attributes=payload.attributes,
             shop_domain=payload.shop_domain.strip(),
             access_token=payload.access_token,
+            **fix_kwargs,
         )
         with safe_db("record_fix") as db:
             if db is not None:
@@ -249,3 +238,143 @@ def fix_product_issue(payload: FixIssueRequest) -> dict:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
     return result
+
+class VariantOptionsFixRequest(BaseModel):
+    shop_domain: str
+    product_id: str
+    issue_id: str
+    check_id: str
+    issue_type: str
+    access_token: str
+    variant_option_values: dict[str, dict[str, str]] | None = None
+
+
+@router.post("/products/fix-variant-options")
+def fix_variant_options_endpoint(payload: VariantOptionsFixRequest) -> dict:
+    fix_engine = FixEngine()
+    try:
+        product_set_input = fix_engine.build_variant_options_input(
+            shop_domain=payload.shop_domain.strip(),
+            access_token=payload.access_token,
+            product_id=payload.product_id,
+            variant_option_values=payload.variant_option_values,
+        )
+        result = fix_engine.execute(
+            check_id=payload.check_id,
+            issue_type=payload.issue_type,
+            product_id=payload.product_id,
+            shop_domain=payload.shop_domain.strip(),
+            access_token=payload.access_token,
+            product_set_input=product_set_input,
+            synchronous=True,
+        )
+        with safe_db("record_fix") as db:
+            if db is not None:
+                issue = (
+                    db.query(AuditIssue)
+                    .filter(AuditIssue.id == payload.issue_id, AuditIssue.product_id == payload.product_id)
+                    .one_or_none()
+                )
+                if issue is not None:
+                    issue.fix_status = "applied"
+                    issue.fixed_at = dt.datetime.now(dt.timezone.utc)
+                    db.commit()
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    return result
+
+
+class VariantMatrixFixRequest(BaseModel):
+    shop_domain: str
+    product_id: str
+    issue_id: str
+    check_id: str
+    issue_type: str
+    access_token: str
+    options: list[dict[str, Any]]
+    default_price: str | None = None
+
+
+@router.post("/products/fix-variant-matrix")
+def fix_variant_matrix_endpoint(payload: VariantMatrixFixRequest) -> dict:
+    fix_engine = FixEngine()
+    try:
+        product_set_input = fix_engine.build_variant_matrix_input(
+            shop_domain=payload.shop_domain.strip(),
+            access_token=payload.access_token,
+            product_id=payload.product_id,
+            options=payload.options,
+            default_price=payload.default_price,
+        )
+        result = fix_engine.execute(
+            check_id=payload.check_id,
+            issue_type=payload.issue_type,
+            product_id=payload.product_id,
+            shop_domain=payload.shop_domain.strip(),
+            access_token=payload.access_token,
+            product_set_input=product_set_input,
+            synchronous=True,
+        )
+        with safe_db("record_fix") as db:
+            if db is not None:
+                issue = (
+                    db.query(AuditIssue)
+                    .filter(AuditIssue.id == payload.issue_id, AuditIssue.product_id == payload.product_id)
+                    .one_or_none()
+                )
+                if issue is not None:
+                    issue.fix_status = "applied"
+                    issue.fixed_at = dt.datetime.now(dt.timezone.utc)
+                    db.commit()
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    return result
+
+
+class VariantOptionsStateRequest(BaseModel):
+    shop_domain: str
+    access_token: str
+    product_id: str
+
+
+@router.post("/products/variant-options-state")
+def get_variant_options_state(payload: VariantOptionsStateRequest) -> dict:
+    from app.services.shopify_admin_fetcher import fetch_product_variant_state
+
+    fix_engine = FixEngine()
+    try:
+        product = fetch_product_variant_state(
+            shop_domain=payload.shop_domain.strip(),
+            access_token=payload.access_token,
+            api_version="2026-07",
+            product_id=payload.product_id,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    variants = []
+    for edge in (product.get("variants") or {}).get("edges", []):
+        v = edge.get("node") or {}
+        selected = v.get("selectedOptions") or []
+        variants.append({
+            "id": v.get("id"),
+            "title": v.get("title"),
+            "sku": v.get("sku"),
+            "selected_options": [
+                {
+                    "name": s.get("name"),
+                    "value": s.get("value"),
+                    "suggested_value": fix_engine.suggest_normalized_option_value(s.get("value")),
+                }
+                for s in selected
+            ],
+        })
+
+    return {
+        "product_id": product.get("id"),
+        "title": product.get("title"),
+        "options": [o.get("name") for o in (product.get("options") or [])],
+        "variants": variants,
+    }

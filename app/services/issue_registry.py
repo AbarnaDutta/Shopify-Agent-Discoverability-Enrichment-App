@@ -145,7 +145,17 @@ ISSUE_TYPES = {
             "fix_mode": "approval",
             "fix_action": "set_product_type",
         },
+        "generic_product_type": {
+            "scope": "product",
+            "fix_mode": "user_input",
+            "fix_action": "update_product_type",  
+        },
         "missing_structured_attribute": {
+            "scope": "product",
+            "fix_mode": "user_input",
+            "fix_action": "set_metafield",
+        },
+        "unstructured_product_attribute": {
             "scope": "product",
             "fix_mode": "user_input",
             "fix_action": "set_metafield",
@@ -155,6 +165,17 @@ ISSUE_TYPES = {
             "fix_mode": "user_input",
             "fix_action": "set_metafield",
         },
+        "generic_option_value": {
+            "scope": "variant",
+            "fix_mode": "approval",
+            "fix_action": "fix_variant_options",
+        },
+        "generic_option_name": {
+            "scope": "product",
+            "fix_mode": "approval",
+            "fix_action": "rename_product_option",
+        },
+        
     },
 
     "policy_semantics": {
@@ -275,6 +296,11 @@ ISSUE_TYPES = {
         },
         "default_title_with_real_variations": {
             "scope": "product",
+            "fix_mode": "approval",
+            "fix_action": "fix_variant_options",
+        },
+        "generic_option_value": {
+            "scope": "variant",
             "fix_mode": "approval",
             "fix_action": "fix_variant_options",
         },
