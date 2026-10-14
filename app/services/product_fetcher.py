@@ -170,20 +170,61 @@ def strip_html(value: str | None) -> str:
 
 
 def compact_product(product: dict[str, Any], store_url: str) -> dict[str, Any]:
+    """Public /products.json product, shaped like the Admin fetcher's compact product
+    so every deterministic check and the LLM prompt see the same keys.
+    Admin-only fields (metafields, category, status, published_channels) are deliberately
+    left out so the checks that need them return NA instead of failing."""
     handle = product.get("handle")
     variants = product.get("variants") or []
     images = product.get("images") or []
+    options = product.get("options") or []
+    url = f"{store_url}/products/{handle}" if handle else None
+    description = strip_html(product.get("body_html"))
 
+    option_names = [(o.get("name") or "") for o in options]
+
+    def selected_options(variant: dict[str, Any]) -> list[dict[str, Any]]:
+        out = []
+        for i, name in enumerate(option_names[:3]):
+            value = variant.get(f"option{i + 1}")
+            if value is not None:
+                out.append({"name": name, "value": value})
+        return out
+
+    compact_images = [
+        {
+            "id": image.get("id"),
+            "src": image.get("src"),
+            "alt": image.get("alt"),
+            "position": image.get("position"),
+        }
+        for image in images[:10]
+    ]
+
+    has_only_default = (
+        len(variants) == 1
+        and (variants[0].get("title") or "").strip().lower() == "default title"
+    )
+    warnings = []
+    if len(variants) > 20:
+        warnings.append("variants_truncated")
+    if len(images) > 10:
+        warnings.append("media_truncated")
     return {
         "id": product.get("id"),
         "title": product.get("title"),
         "handle": handle,
-        "url": f"{store_url}/products/{handle}" if handle else None,
+        "url": url,
+        "online_store_url": url,
         "vendor": product.get("vendor"),
         "product_type": product.get("product_type"),
-        "tags": product.get("tags"),
-        "description": strip_html(product.get("body_html")),
-        "options": product.get("options"),
+        "tags": product.get("tags") or [],
+        "description": description,
+        "description_text": description,
+        "has_only_default_variant": has_only_default,
+        "options": options,
+        "image": compact_images[0] if compact_images else None,
+        "images": compact_images,
         "variants": [
             {
                 "id": variant.get("id"),
@@ -193,18 +234,12 @@ def compact_product(product: dict[str, Any], store_url: str) -> dict[str, Any]:
                 "barcode": variant.get("barcode"),
                 "available": variant.get("available"),
                 "inventory_quantity": variant.get("inventory_quantity"),
+                "selectedOptions": selected_options(variant),
                 "option1": variant.get("option1"),
                 "option2": variant.get("option2"),
                 "option3": variant.get("option3"),
             }
             for variant in variants[:20]
         ],
-        "images": [
-            {
-                "src": image.get("src"),
-                "alt": image.get("alt"),
-                "position": image.get("position"),
-            }
-            for image in images[:10]
-        ],
+        "data_warnings": warnings,
     }
