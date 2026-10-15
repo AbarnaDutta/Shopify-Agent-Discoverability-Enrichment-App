@@ -7,7 +7,7 @@ import datetime as dt
 from contextlib import contextmanager
 from typing import Any, Generator
 
-from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON
+from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON, inspect, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy import ForeignKey, Integer
@@ -143,6 +143,12 @@ class AuditAgentDiscovery(Base):
     templates_customized = Column(Integer, nullable=True)
     templates_total      = Column(Integer, nullable=True)
     files                = Column(JSON,    nullable=True)
+    # Persist the raw content returned by the store separately so Preview/Generate
+    # can use the saved audit snapshot without fetching the storefront again.
+    agents_md_content    = Column(Text,    nullable=True)
+    llms_txt_content     = Column(Text,    nullable=True)
+    llms_full_txt_content = Column(Text,   nullable=True)
+    ucp_content          = Column(Text,    nullable=True)
     recommendations      = Column(JSON,    nullable=True)
 
     audit = relationship("Audit", back_populates="agent_discovery")
@@ -224,6 +230,32 @@ def init_db() -> None:
         return
     try:
         Base.metadata.create_all(bind=engine)
+
+        # create_all() does not add new columns to an existing table.
+        # Add the Agent Discovery content columns for existing databases.
+        inspector = inspect(engine)
+        table_name = "audit_agent_discovery"
+        existing_columns = {
+            column["name"] for column in inspector.get_columns(table_name)
+        } if table_name in inspector.get_table_names() else set()
+
+        content_columns = {
+            "agents_md_content": "TEXT",
+            "llms_txt_content": "TEXT",
+            "llms_full_txt_content": "TEXT",
+            "ucp_content": "TEXT",
+        }
+
+        with engine.begin() as connection:
+            for column_name, column_type in content_columns.items():
+                if column_name not in existing_columns:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE {table_name} "
+                            f"ADD COLUMN {column_name} {column_type}"
+                        )
+                    )
+
         print("Database initialised.")
     except OperationalError as e:
         log.warning("Database is configured but could not be reached at startup: %s", e)

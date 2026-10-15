@@ -3940,7 +3940,8 @@ def _fetch_agent_discovery_url(url: str, timeout: int = 15) -> dict[str, Any]:
         "final_url": final_url,
         "word_count": word_count,
         "looks_customized": state == "served_custom",
-        "_body": text,  
+        "_body": text,
+        "content": text,
     }
 
 
@@ -4137,9 +4138,27 @@ def check_agent_discovery_readiness(store_url: str) -> dict[str, Any]:
 
     recommendations = _build_agent_discovery_recommendations(results)
 
+    # The audit stores file metadata separately from the raw resource bodies.
+    # The four bodies are returned once here and persisted by audit_repository.py.
+    file_metadata = {}
+    for key, info in results.items():
+        metadata = dict(info)
+        metadata.pop("_body", None)
+        # `content` is deliberately not kept inside `files`; the DB has dedicated
+        # columns for the four resources and the UI reads those saved values.
+        metadata.pop("content", None)
+        file_metadata[key] = metadata
+
     return {
         "checked_at": dt.datetime.now().isoformat(),
-        "files": results,
+        "files": file_metadata,
+
+        # Raw content fetched from the storefront on the audit run.
+        "agents_md_content": bodies.get("agents_md", ""),
+        "llms_txt_content": bodies.get("llms_txt", ""),
+        "llms_full_txt_content": bodies.get("llms_full_txt", ""),
+        "ucp_content": bodies.get("ucp_manifest", ""),
+
         "canonical_served": results["agents_md"]["status"] != "missing",
         "any_customized": customized_count > 0,
         "templates_customized": templates_customized,

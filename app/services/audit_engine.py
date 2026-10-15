@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 import time
-import json
+
 from app.services.report_builder import (
     LLMAdapter,
     get_llm_adapter,
@@ -12,7 +12,8 @@ from app.services.report_builder import (
     assemble_report_from_verdicts,
 )
 
-from app.services.deterministic_checks import compute_catalog_flags
+from app.services.scoring_rubric import CHECKS
+
 
 class AuditRunResult:
     def __init__(
@@ -80,8 +81,16 @@ def audit_products(
             print(f"[DEBUG] Sending batch {index} to Gemini")
             print(f"[DEBUG] Batch product count: {len(batch)}")
             print(f"[DEBUG] Product IDs: {[p.get('id') for p in batch]}")
-            result = analyzer.analyze(batch, store_context, store_url, language)
+
+            result = analyzer.analyze(
+                batch,
+                store_context,
+                store_url,
+                language,
+            )
+
             print(f"[DEBUG] Gemini returned successfully for batch {index}")
+            import json
 
             print(f"[DEBUG] Batch {index} product count: {len(batch)}")
 
@@ -110,26 +119,41 @@ def audit_products(
 
         except Exception as e:
             import traceback
-            print(f"[Audit] {used_provider} failed on batch {index}: {type(e).__name__}: {e}")
-            print(f"[Audit] {used_provider} exception: {e}")
+
+            print(f"[DEBUG] Gemini exception type: {type(e).__name__}")
+            print(f"[DEBUG] Gemini exception: {e}")
             traceback.print_exc()
 
             if not fallback_to_bedrock or used_provider == "bedrock":
                 raise
 
             print("[Audit] Primary provider failed; falling back to Bedrock for this batch.")
+
             analyzer = get_bedrock_adapter()
             used_provider = "bedrock"
             used_model = getattr(analyzer, "model", "unknown")
 
-            result = analyzer.analyze(batch, store_context, store_url, language)
+            result = analyzer.analyze(
+                batch,
+                store_context,
+                store_url,
+                language,
+            )
+
+            print("[Audit] Primary provider failed; falling back to Bedrock for this batch.")
+            analyzer = get_bedrock_adapter()
+            used_provider = "bedrock"
+            used_model = getattr(analyzer, "model", "unknown")
+            result = analyzer.analyze(
+                batch,
+                store_context,
+                store_url,
+                language,
+            )
 
         reports.append(result)
         print(f"[Audit] Batch completed in {time.time() - batch_started:.2f}s")
 
-    if isinstance(store_context, dict) and "sections" in store_context:
-        store_context["catalog_flags"] = compute_catalog_flags(products)
-        
     raw_report = merge_reports(reports)
 
     report = assemble_report_from_verdicts(

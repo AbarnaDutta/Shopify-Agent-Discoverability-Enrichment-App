@@ -36,109 +36,34 @@ Verdict = Literal["pass", "partial", "fail", "na"]
 
 CHECKS: dict[str, list[dict]] = {
     "ucp_commerce_flows": [
-        {"id": "stable_ids_urls", "level": "product",
-         "desc": "Product has an id and a valid handle/URL."},
-        {"id": "variant_selection", "level": "product",
-         "desc": "Every option is named and every variant has a complete, unique option combination. N/A for a single default variant."},
-        {"id": "pricing_clarity", "level": "product",
-         "desc": "Every variant has a numeric price greater than 0."},
-        {"id": "availability_signals", "level": "product",
-         "desc": "Every variant exposes an available/availableForSale value. Sold out is NOT a defect."},
-        {"id": "published_to_sales_channel", "level": "product",
-         "desc": "Product is ACTIVE, published to at least one sales channel and has an Online Store URL. N/A when channel data is unavailable."},
-        {"id": "fulfillment_context", "level": "store",
-         "desc": "At least one active shipping method or pickup location AND at least one destination zone/country. N/A for digital-only catalogs or when store context is unavailable."},
+        {"id": "stable_ids_urls",      "level": "product", "desc": "Product has a stable id and a resolvable URL/handle."},
+        {"id": "variant_selection",    "level": "product", "desc": "Variants/options let an agent pick the exact SKU: option names meaningful, selectedOptions complete and consistent."},
+        {"id": "pricing_clarity",      "level": "product", "desc": "Every variant has a real, non-zero, non-placeholder price."},
+        {"id": "availability_signals", "level": "product", "desc": "Inventory/status fields exist and are usable to determine buyable-now."},
+        {"id": "fulfillment_context",  "level":  "store",  "desc": "Operational fulfillment information is present and actionable, such as delivery speed, shipping methods, pickup availability, and domestic vs international coverage; a shipping-policy page alone is not sufficient."},
     ],
     "mcp_knowledge": [
-        {"id": "product_understanding", "level": "product",
-         "desc": (
-             "Judge the title and description with these questions. "
-             "(1) CORE: does the title or description state what kind of product this is? "
-             "If not -> issue_type insufficient_product_description. "
-             "(2) Does the text state who the product is for OR what it is used for / the occasion? "
-             "If not -> missing_target_audience. "
-             "(3) ONLY if the product is a multi-piece set, kit or bundle: does the text list what is included? "
-             "If not -> missing_included_items. For a single item this question does not apply: do NOT penalise it. "
-             "Do NOT require a list of excluded items. "
-             "Verdict: pass when every applicable question is answered yes; partial when (1) is yes but (2) or (3) is no; "
-             "fail only when (1) is no."
-         )},
-        {"id": "product_clarity", "level": "product",
-         "desc": (
-             "Judge the product text with these questions. "
-             "(1) Does the text contain at least ONE of: usage instructions, size/fit information, care/maintenance, "
-             "ingredients or technical specifications? If not -> unclear_product_usage. "
-             "(2) Does the text make a medical or health-efficacy claim WITHOUT any disclaimer or qualification? "
-             "If yes -> unclarified_medical_claim. "
-             "(3) Does the text promise financial returns or savings WITHOUT any disclaimer or qualification? "
-             "If yes -> unclarified_financial_claim. "
-             "A product that makes no such claims passes (2) and (3). "
-             "Verdict: pass when (1) is yes and (2),(3) are clean; partial when exactly one question is a problem; "
-             "fail only when the text has no usable content for (1) AND also carries an unqualified claim."
-         )},
-        {"id": "comparable_attributes", "level": "product",
-         "desc": "Taxonomy category is assigned (when available in the data) and product_type is non-empty."},
-        {"id": "policy_semantics", "level": "store",
-         "desc": (
-             "Evaluated ONCE for the whole store from the policy texts in Store Context (policies list: type + body). "
-             "(1) Does the refund/return policy state a time window (a number of days or an explicit deadline)? "
-             "If not -> missing_policy_deadline. Answer 'na' for this question when there is no refund policy "
-             "(legal_pages owns a missing policy). "
-             "(2) Does the refund/return policy state at least one exception or non-returnable condition? "
-             "If not -> missing_policy_exception. "
-             "(3) Does the shipping policy state which regions/countries are covered? If not -> missing_policy_region. "
-             "Answer 'na' for this question when there is no shipping policy. "
-             "Verdict: pass when every applicable question is yes; partial when some are no; "
-             "fail only when (1) and (2) are both no. Return 'na' for the whole check if Store Context has no policy text."
-         )},
-        {"id": "faq_or_guidance", "level": "store",
-         "desc": "A FAQ/help page, menu entry, or FAQ metaobject with entries exists."},
+        {"id": "product_understanding", "level": "product", "desc": "Title , description and attributes clearly identify WHAT the product is, WHO it is for, and an itemized list of what is included/excluded in the package."},
+        {"id": "comparable_attributes", "level": "product", "desc": "productType/tags/options/metafields are structured enough to filter, sort, and compare against similar products."},
+        {"id": "policy_semantics", "level": "store", "desc": "Policy text is specific enough that an agent can answer edge cases (deadlines, exceptions, regions) without guessing."},
+        {"id": "faq_or_guidance",       "level": "store",   "desc": "FAQ content, metaobjects, or shopping-guidance text exists."},
+        {"id": "product_clarity", "level": "product",  "desc": "Provides actionable HOW-TO instructions for use, sizing/fit, or care/maintenance, with no unclarified medical or financial claims."},
     ],
     "catalog_enrichment": [
-        {"id": "identifiers", "level": "product",
-         "desc": "Every variant has a unique SKU; any barcode present is a valid GTIN; barcodes are not mixed present/absent."},
-        {"id": "rich_attributes", "level": "product",
-         "desc": (
-             "Is every concrete spec stated in the description (material, dimensions, capacity, power...) ALSO present "
-             "in the product's metafields? If a spec has no matching metafield -> issue_type unstructured_product_attribute, "
-             "and quote the spec text that has no metafield in the description of the issue. "
-             "Return 'na' when the description states no concrete specs, or when the product payload has no "
-             "'metafields' field at all (the data source did not supply them). "
-             "Verdict: pass when every stated spec has a metafield; partial when some do; fail when none do."
-         )},
-        {"id": "variant_hygiene", "level": "product",
-         "desc": "No generic option names (Title/Option1/Custom1...) or placeholder values when there is more than one variant. N/A for a single default variant."},
-        {"id": "media_quality", "level": "product",
-         "desc": "At least one image, and every image has alt text."},
-        {"id": "consistency", "level": "store",
-         "desc": "Within a taxonomy category/product type: shared metafield keys, same metafield types, same units."},
+        {"id": "identifiers",     "level": "product", "desc": "Variant sku present and non-empty; barcode/GTIN/MPN present where applicable."},
+        {"id": "rich_attributes", "level": "product", "desc": "Metafields encode material/dimensions/capacity/usage/audience or other domain-specific specs."},
+        {"id": "variant_hygiene", "level": "product", "desc": "Options have meaningful names (Size/Color, not Option1/Custom1); not all variants 'Default Title' when real variation exists."},
+        {"id": "consistency",     "level": "store",   "desc": "Similar products share similar metafield keys and consistent units/formats across the catalog."},
     ],
     "safety_policies": [
-        {"id": "product_guardrails", "level": "product",
-         "desc": "N/A unless the product is in a risky category (age-restricted, medical, weapons, financial, children's safety-critical); then a guardrail metafield (age limit, warning, human-review flag) exists."},
-        {"id": "store_guardrails", "level": "store",
-         "desc": "Only when risky products exist: a store-level age/region guardrail metafield or policy text. N/A otherwise."},
-        {"id": "legal_pages", "level": "store",
-         "desc": "Privacy, refund, terms (and shipping if shippable) policies each have enough text and no placeholder text."},
-        {"id": "contact_brand", "level": "store",
-         "desc": "A public contact channel and brand/about content are discoverable (pages, menus, contact policy, shop brand)."},
-         {"id": "fulfillment_context", "level": "store",
-          "desc": "At least one active shipping method or pickup location AND at least one destination zone/country. N/A for digital-only catalogs or when store context is unavailable."},
-          {"id": "policy_semantics", "level": "store",
-                   "desc": (
-                       "Evaluated ONCE for the whole store from the policy texts in Store Context (policies list: type + body). "
-                       "(1) Does the refund/return policy state a time window (a number of days or an explicit deadline)? "
-                       "If not -> missing_policy_deadline. Answer 'na' for this question when there is no refund policy "
-                       "(legal_pages owns a missing policy). "
-                       "(2) Does the refund/return policy state at least one exception or non-returnable condition? "
-                       "If not -> missing_policy_exception. "
-                       "(3) Does the shipping policy state which regions/countries are covered? If not -> missing_policy_region. "
-                       "Answer 'na' for this question when there is no shipping policy. "
-                       "Verdict: pass when every applicable question is yes; partial when some are no; "
-                       "fail only when (1) and (2) are both no. Return 'na' for the whole check if Store Context has no policy text."
-                   )},
-            {"id": "faq_or_guidance", "level": "store",
-         "desc": "A FAQ/help page, menu entry, or FAQ metaobject with entries exists."},
+        {"id": "product_guardrails", "level": "product", "desc": "IF this product is in a risky category (age-restricted, medical, weapons, financial, children's safety-critical), it carries matching guardrail metafields (age limit, warnings, human-review flag). Mark 'na' if not a risky category."},
+        {"id": "store_guardrails",   "level": "store",   "desc": "Store-level guardrail metafields or policy text exist (age gating, region limits, manual-approval categories)."},
+        {"id": "legal_pages",     "level": "store",   "desc": "All four policy bodies (privacy, refund, shipping, terms) present and non-placeholder."},
+        {"id": "contact_brand", "level": "store", "desc": "Contact details (email/phone) or brand/about content discoverable via shop metafields/metaobjects ONLY. Do NOT factor in policy-document text or placeholders — those are covered separately by policy_semantics and legal_pages."},
+        {"id": "fulfillment_context",  "level": "store",  "desc": "Operational fulfillment information is present and actionable, such as delivery speed, shipping methods, pickup availability, and domestic vs international coverage; a shipping-policy page alone is not sufficient."},
+        {"id": "policy_semantics", "level": "store", "desc": "Policy text is specific enough that an agent can answer edge cases (deadlines, exceptions, regions) without guessing."},
+        {"id": "faq_or_guidance",       "level": "store",   "desc": "FAQ content, metaobjects, or shopping-guidance text exists."},
+        
     ],
 }
 
@@ -158,7 +83,7 @@ _SEVERITY_RULES = {
     "moderate": {"fail": "medium", "partial": "low"},
 }
 
-VERDICT_POINTS = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
+VERDICT_POINTS = {"pass": 1.0, "partial": 0.5, "fail": 0.0} 
 
 
 def priority_for(check_id: str, verdict: Verdict) -> str | None:
@@ -203,7 +128,7 @@ def compute_scores(
                 per_product = [
                     product_verdicts.get(pid, {}).get(
                         check["id"],
-                        "na",
+                        "fail",
                     )
                     for pid in product_verdicts
                 ]
@@ -232,18 +157,12 @@ def display_check_name(check_id: str) -> str:
         "variant_selection": "Variant Selection",
         "pricing_clarity": "Pricing Clarity",
         "availability_signals": "Availability Signals",
-        "published_to_sales_channel": "Sales Channel Publication",
         "variant_hygiene": "Variant Hygiene",
         "identifiers": "Identifiers",
         "product_guardrails": "Product Guardrails",
         "legal_pages": "Legal Pages",
         "store_guardrails": "Store Guardrails",
         "consistency": "Catalog Consistency",
-        "comparable_attributes": "Product Category & Type",
-        "media_quality": "Product Images",
-        "fulfillment_context": "Shipping & Fulfillment",
-        "contact_brand": "Contact & Brand Information",
-        "faq_or_guidance": "FAQ & Help Content",
     }
 
     return names.get(
@@ -285,6 +204,7 @@ def build_product_recommendations(
         # ---------------------------------------------------------
         # DETERMINISTIC PRODUCT CHECK
         # ---------------------------------------------------------
+        # ---------------------------------------------------------
         if check_id in DETERMINISTIC_CHECK_IDS:
 
             check_issues = issues_by_check.get(check_id, [])
@@ -321,6 +241,10 @@ def build_product_recommendations(
         # ---------------------------------------------------------
         # LLM PRODUCT CHECK
         # ---------------------------------------------------------
+        # Keep the actual text generated by the LLM.
+        # Never fall back to the rubric description.
+        # ---------------------------------------------------------
+
         if (
             not t.get("enrichment")
             and not t.get("why_it_matters_for_agents")
@@ -354,7 +278,10 @@ def build_store_recommendations(
 
     recs = []
 
+    # ---------------------------------------------------------
     # 1. GROUP ACTUAL STORE ISSUES BY CHECK
+    # ---------------------------------------------------------
+
     issues_by_check: dict[str, list[dict]] = defaultdict(list)
 
     for issue in store_issues:
@@ -366,7 +293,11 @@ def build_store_recommendations(
         if check_id:
             issues_by_check[check_id].append(issue)
 
-    # 2. STORE-LEVEL RECOMMENDATIONS 
+    # ---------------------------------------------------------
+    # 2. STORE-LEVEL RECOMMENDATIONS
+    #    ONE recommendation per failed/partial check
+    # ---------------------------------------------------------
+
     for check_id, verdict in store_verdicts.items():
 
         priority = priority_for(check_id, verdict)
@@ -374,12 +305,17 @@ def build_store_recommendations(
         if priority is None:
             continue
 
+        # Consistency has its own issue-driven recommendation
+        # below because it is derived from catalog-wide issues.
         if check_id == "consistency":
             continue
 
         t = store_texts.get(check_id, {})
 
+        # -----------------------------------------------------
         # DETERMINISTIC STORE CHECK
+        # -----------------------------------------------------
+
         if check_id in DETERMINISTIC_CHECK_IDS:
 
             check_issues = issues_by_check.get(check_id, [])
@@ -416,7 +352,13 @@ def build_store_recommendations(
 
             continue
 
+        # -----------------------------------------------------
         # LLM STORE CHECK
+        # -----------------------------------------------------
+        # Keep the actual text generated by the LLM.
+        # Never fall back to the rubric description.
+        # -----------------------------------------------------
+
         if (
             not t.get("enrichment")
             and not t.get("why_it_matters_for_agents")
@@ -436,7 +378,11 @@ def build_store_recommendations(
             "affected_product_ids": [],
         })
 
+    # ---------------------------------------------------------
     # 3. CROSS-PRODUCT RECOMMENDATIONS
+    #    ONE recommendation per check affecting multiple products
+    # ---------------------------------------------------------
+
     by_check: dict[str, list[str]] = defaultdict(list)
 
     for pid, verdicts in product_verdicts.items():
@@ -470,6 +416,11 @@ def build_store_recommendations(
                 sample_text = candidate
                 break
 
+        # If this is a deterministic product check,
+        # product_texts may intentionally be empty.
+        # In that case the individual product recommendations
+        # already contain the actual issue-derived information.
+
         if not sample_text:
             continue
 
@@ -492,7 +443,11 @@ def build_store_recommendations(
             "affected_product_ids": ids,
         })
 
-    # 4. CONSISTENCY RECOMMENDATIONS 
+    # ---------------------------------------------------------
+    # 4. CONSISTENCY RECOMMENDATIONS
+    #    Issue-driven and generated separately.
+    # ---------------------------------------------------------
+
     consistency_issues = [
         issue
         for issue in store_issues
@@ -510,6 +465,7 @@ def build_store_recommendations(
 
             field = issue.get("field")
             description = issue.get("description")
+
 
             if field and field not in fields:
                 fields.append(field)

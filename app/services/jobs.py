@@ -257,21 +257,37 @@ class JobQueue:
                     )
 
                 print(f"[JOB {job_id}] Fetching store context")
+
                 try:
                     store_context = fetch_store_context_admin(
                         shop_domain=job.shop_domain,
                         access_token=job.access_token,
                         api_version="2026-07",
                     )
-                    failed_sections = {
-                        k: v.get("status")
-                        for k, v in (store_context.get("sections") or {}).items()
-                        if v.get("status") != "ok"
-                    }
-                    print(f"[JOB {job_id}] Store context fetched; sections not ok: {failed_sections or 'none'}")
-                except Exception as ctx_error:
+
+                    print(f"[JOB {job_id}] Admin store context fetched successfully")
+
+                except ShopifyAdminAPIError as ctx_error:
                     print(f"[JOB {job_id}] Admin store context fetch failed: {ctx_error}")
                     store_context = {}
+
+                try:
+                    policies = fetch_store_policies(
+                        shop_domain=job.shop_domain,
+                        access_token=job.access_token,
+                        api_version="2026-07",
+                    )
+
+                    store_context["policies"] = policies
+
+                    print(
+                        f"[JOB {job_id}] Store policies fetched: "
+                        f"{len(policies)} policies"
+                    )
+
+                except ShopifyAdminAPIError as policy_error:
+                    print(f"[JOB {job_id}] Store policy fetch failed: {policy_error}")
+                    store_context["policies"] = []
 
                 store_url = f"https://{job.shop_domain}"
 

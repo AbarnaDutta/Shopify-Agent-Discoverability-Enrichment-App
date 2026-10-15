@@ -166,11 +166,42 @@ class AuditRepository:
                 ))
 
             if agent_discovery:
+                files = agent_discovery.get("files") or {}
+
                 audit.agent_discovery = AuditAgentDiscovery(
                     summary=agent_discovery.get("summary"),
                     templates_customized=agent_discovery.get("templates_customized"),
                     templates_total=agent_discovery.get("templates_total"),
-                    files=agent_discovery.get("files"),
+                    # Keep file metadata/statuses in JSON.
+                    files=files,
+
+                    # Save each raw discovery resource independently.
+                    agents_md_content=(
+                        agent_discovery.get("agents_md_content")
+                        or files.get("agents_md_content")
+                        or files.get("agents_md")
+                        and files.get("agents_md", {}).get("content")
+                        or files.get("agents_md", {}).get("_body")
+                    ),
+                    llms_txt_content=(
+                        agent_discovery.get("llms_txt_content")
+                        or files.get("llms_txt_content")
+                        or files.get("llms_txt", {}).get("content")
+                        or files.get("llms_txt", {}).get("_body")
+                    ),
+                    llms_full_txt_content=(
+                        agent_discovery.get("llms_full_txt_content")
+                        or files.get("llms_full_txt_content")
+                        or files.get("llms_full_txt", {}).get("content")
+                        or files.get("llms_full_txt", {}).get("_body")
+                    ),
+                    ucp_content=(
+                        agent_discovery.get("ucp_content")
+                        or files.get("ucp_content")
+                        or files.get("ucp_manifest", {}).get("content")
+                        or files.get("ucp_manifest", {}).get("_body")
+                    ),
+
                     recommendations=agent_discovery.get("recommendations"),
                 )
 
@@ -470,6 +501,11 @@ class AuditRepository:
                     "templates_customized": audit.agent_discovery.templates_customized,
                     "templates_total": audit.agent_discovery.templates_total,
                     "files": audit.agent_discovery.files,
+                    # Raw content saved from the first store fetch.
+                    "agents_md_content": audit.agent_discovery.agents_md_content,
+                    "llms_txt_content": audit.agent_discovery.llms_txt_content,
+                    "llms_full_txt_content": audit.agent_discovery.llms_full_txt_content,
+                    "ucp_content": audit.agent_discovery.ucp_content,
                     "recommendations": audit.agent_discovery.recommendations,
                 }
         return data
