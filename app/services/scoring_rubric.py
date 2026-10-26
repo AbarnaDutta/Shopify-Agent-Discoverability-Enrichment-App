@@ -6,6 +6,7 @@ from app.services.deterministic_checks import (
     PRODUCT_DETERMINISTIC_CHECKS,
     STORE_DETERMINISTIC_CHECKS,
 )
+from app.services.issue_registry import get_issue_definition
 
 DETERMINISTIC_CHECK_IDS = set(PRODUCT_DETERMINISTIC_CHECKS) | set(STORE_DETERMINISTIC_CHECKS)
 
@@ -352,6 +353,17 @@ def build_store_recommendations(
 
     from collections import defaultdict
 
+    def unique_store_issue_type(check_id: str, issues: list[dict]) -> str | None:
+        """Return an issue type only when the audit identifies one unambiguously."""
+        issue_types = {
+            issue_type
+            for issue in issues
+            if (issue_type := issue.get("issue_type"))
+            and (definition := get_issue_definition(check_id, issue_type))
+            and definition.get("scope") == "store"
+        }
+        return next(iter(issue_types)) if len(issue_types) == 1 else None
+
     recs = []
 
     # 1. GROUP ACTUAL STORE ISSUES BY CHECK
@@ -404,9 +416,11 @@ def build_store_recommendations(
             )
 
             example = " ".join(descriptions)
+            issue_type = unique_store_issue_type(check_id, check_issues)
 
             recs.append({
                 "check_id": check_id,
+                "issue_type": issue_type,
                 "priority": priority,
                 "enrichment": display_check_name(check_id),
                 "why_it_matters_for_agents": why_it_matters,
@@ -424,8 +438,14 @@ def build_store_recommendations(
         ):
             continue
 
+        issue_type = unique_store_issue_type(
+            check_id,
+            issues_by_check.get(check_id, []),
+        )
+
         recs.append({
             "check_id": check_id,
+            "issue_type": issue_type,
             "priority": priority,
             "enrichment": t.get("enrichment", ""),
             "why_it_matters_for_agents": t.get(
@@ -550,6 +570,10 @@ def build_store_recommendations(
 
             recs.append({
                 "check_id": "consistency",
+                "issue_type": unique_store_issue_type(
+                    "consistency",
+                    consistency_issues,
+                ),
                 "priority": priority,
                 "enrichment": display_check_name("consistency"),
                 "why_it_matters_for_agents": why_it_matters,

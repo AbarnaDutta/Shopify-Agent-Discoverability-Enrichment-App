@@ -3,74 +3,40 @@
 import re
 import requests
 from fastapi import APIRouter, HTTPException
-
 from app.services.issue_registry import get_issue_definition
-
 from app.api.schemas import QueueResponse, ReportRequestCreate, ReportRequestResponse
 from fastapi.responses import JSONResponse   
 from pydantic import BaseModel, Field
 from app.services.jobs import job_queue
-
 from app.services.product_fetcher import InvalidStoreURLError, normalize_store_url
-
 from pydantic import BaseModel
-
 from app.services.audit_repository import audit_repo
-
 from app.services.fix_engine import FixEngine
-
 from app.core.database import AuditIssue, safe_db
-
 import datetime as dt
-
 from typing import Any  
-
-
 
 router = APIRouter()
 
-
-
 class ShopifyAppReportRequest(BaseModel):
-
     email: str
-
     shop_domain: str
-
     access_token: str
-
     language: str = "English"
-
-
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-
-
-
-
 def _validate_email(email: str) -> None:
-
     if not _EMAIL_RE.match(email.strip()):
-
         raise HTTPException(
-
             status_code=422,
-
             detail="Please enter a valid email address (e.g. you@example.com).",
-
         )
 
-
-
-
-
 def _validate_store_url(store_url: str) -> str:
-
     try:
 
         return normalize_store_url(store_url)
-
     except InvalidStoreURLError as error:
 
         print("Store URL validation error for store URL:", store_url)

@@ -17,6 +17,8 @@ from app.core.database import (
     AuditIssue,
 )
 from app.services.fix_engine import FixEngine
+from app.services.issue_registry import get_issue_definition
+from app.services.scoring_rubric import display_check_name
 
 def _new_id() -> str:
     return str(uuid.uuid4())
@@ -163,6 +165,8 @@ class AuditRepository:
                     why_it_matters_for_agents=r.get("why_it_matters_for_agents"),
                     example=r.get("example"),
                     affected_product_ids=r.get("affected_product_ids") or [],
+                    check_id=r.get("check_id"),
+                    issue_type=r.get("issue_type"),
                 ))
 
             if agent_discovery:
@@ -453,17 +457,67 @@ class AuditRepository:
         if include_children:
             data["issues"] = [_serialize_issue(i) for i in audit.issues]
 
+            store_issue_types_by_check: dict[str, set[str]] = {}
+            for issue in audit.issues:
+                check_id = issue.check_id
+                issue_type = issue.issue_type
+                definition = (
+                    get_issue_definition(check_id, issue_type)
+                    if check_id and issue_type
+                    else None
+                )
+                if definition and definition.get("scope") == "store":
+                    store_issue_types_by_check.setdefault(check_id, set()).add(
+                        issue_type
+                    )
+
+            def recommendation_metadata(recommendation: AuditStoreRecommendation) -> tuple[str | None, str | None]:
+                check_id = recommendation.check_id
+                if not check_id and recommendation.enrichment:
+                    label = recommendation.enrichment.strip().casefold()
+                    matching_check_ids = {
+                        candidate
+                        for candidate in store_issue_types_by_check
+                        if display_check_name(candidate).strip().casefold() == label
+                    }
+                    if len(matching_check_ids) == 1:
+                        check_id = next(iter(matching_check_ids))
+
+                if not check_id and len(store_issue_types_by_check) == 1:
+                    check_id = next(iter(store_issue_types_by_check))
+
+                issue_type = recommendation.issue_type
+                matching_types = store_issue_types_by_check.get(check_id, set())
+                if not issue_type and len(matching_types) == 1:
+                    issue_type = next(iter(matching_types))
+                elif not issue_type and matching_types:
+                    definitions = [
+                        get_issue_definition(check_id, candidate)
+                        for candidate in matching_types
+                    ]
+                    fix_actions = {
+                        definition.get("fix_action")
+                        for definition in definitions
+                        if definition and definition.get("scope") == "store"
+                    }
+                    if len(fix_actions) == 1 and None not in fix_actions:
+                        issue_type = sorted(matching_types)[0]
+
+                return check_id, issue_type
+
             data["products"] = [self._serialize_product(p) for p in audit.products]
-            data["store_level_recommendations"] = [
-                {
-                    "enrichment": r.enrichment,
-                    "priority": r.priority,
-                    "why_it_matters_for_agents": r.why_it_matters_for_agents,
-                    "example": r.example,
-                    "affected_product_ids": r.affected_product_ids or [],
-                }
-                for r in audit.store_recommendations
-            ]
+            data["store_level_recommendations"] = []
+            for recommendation in audit.store_recommendations:
+                check_id, issue_type = recommendation_metadata(recommendation)
+                data["store_level_recommendations"].append({
+                    "enrichment": recommendation.enrichment,
+                    "priority": recommendation.priority,
+                    "why_it_matters_for_agents": recommendation.why_it_matters_for_agents,
+                    "example": recommendation.example,
+                    "affected_product_ids": recommendation.affected_product_ids or [],
+                    "check_id": check_id,
+                    "issue_type": issue_type,
+                })
             if audit.agent_discovery:
                 data["agent_discovery"] = {
                     "summary": audit.agent_discovery.summary,

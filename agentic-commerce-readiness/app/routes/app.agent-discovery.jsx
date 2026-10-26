@@ -1,10 +1,10 @@
 // app/routes/app.agent-discovery.jsx
 
-import { useEffect, useMemo, useState } from "react";
+import PropTypes from "prop-types";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useRouteLoaderData } from "react-router";
 import {
   Search,
-  CheckCircle2,
   AlertCircle,
   XCircle,
   ExternalLink,
@@ -68,11 +68,8 @@ const DISCOVERY_FILES = [
   },
 ];
 
-/* -------------------------------------------------------------------------- */
-/* Status helpers                                                             */
-/* -------------------------------------------------------------------------- */
+/* Status helpers*/
 
-// Matches _AGENT_DISCOVERY_STATUS / file["status"] in report_builder.py exactly.
 function getStatus(file) {
   const status = file?.status;
 
@@ -147,26 +144,6 @@ function statusClasses(type) {
   return "border-[#dfe3e1] bg-[#f4f5f4] text-[#5f6f85]";
 }
 
-function getRecommendationPriority(priority) {
-  if (priority === "high") {
-    return {
-      label: "High",
-      classes: "border-[#f0c3be] bg-[#fff2f0] text-[#c43222]",
-    };
-  }
-
-  if (priority === "low") {
-    return {
-      label: "Low",
-      classes: "border-[#d9e4df] bg-[#f1f7f4] text-[#52706a]",
-    };
-  }
-
-  return {
-    label: "Medium",
-    classes: "border-[#f2d39c] bg-[#fff8ea] text-[#9a6700]",
-  };
-}
 
 function getStoreUrl(shopDomain, path) {
   if (!shopDomain || !path) return "#";
@@ -180,21 +157,8 @@ function formatDate(value) {
   return date.toLocaleString();
 }
 
-/* -------------------------------------------------------------------------- */
-/* Backend content helpers                                                    */
-/* -------------------------------------------------------------------------- */
+/* Backend content helpers */
 
-/**
- * Reads the displayable content for a discovery file. report_builder.py's
- * _fetch_agent_discovery_url() sends both "content" and "_body" with the raw
- * fetched text, so "content" is the primary field; the rest are kept as
- * defensive fallbacks in case the API layer renames the key.
- *
- * `fallbackContent` (the agents.md content) is used when this file mirrors
- * agents.md (`file.mirrors_agents_md === true`, set by report_builder.py when
- * llms.txt / llms-full.txt have no dedicated Liquid template and Shopify just
- * serves the agents.md body back).
- */
 function getFileContent(file, fallbackContent) {
   if (!file) return fallbackContent || "";
 
@@ -216,18 +180,9 @@ function getFileContent(file, fallbackContent) {
 }
 
 function getFileDisplayUrl(shopDomain, definition, file) {
-  // Prefer whatever URL the backend actually resolved to (handles redirects),
-  // falling back to the expected canonical path.
   if (file?.final_url) return file.final_url;
   return getStoreUrl(shopDomain, definition.path);
 }
-
-// Matches _CUSTOMIZATION_LABELS / file["customization"] in report_builder.py.
-// The previous version of this file checked for "partially_customized", which
-// this backend never sends — it sends "lightly_customized" instead.
-// Builds the "no content" explanation from the backend's own fields
-// (status, http_status, final_url) instead of a fixed sentence, so it says
-// something specific to what actually happened for this file/store.
 function getMissingContentReason(file) {
   if (!file || !file.status) {
     return "This file hasn't been checked yet for this store.";
@@ -248,8 +203,6 @@ function getMissingContentReason(file) {
   }
 
   if (file.status === "served_custom" || file.status === "served_default") {
-    // Content existed but getFileContent() filtered it out as an HTML page
-    // (e.g. the storefront password/login page) rather than real file text.
     return "The response was an HTML page, not agents.md text — this usually means the storefront returned a login or password page instead of the file.";
   }
 
@@ -285,86 +238,6 @@ function getCustomizationText(file) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Discovery score                                                            */
-/* -------------------------------------------------------------------------- */
-
-// Calculation Formula — Artifact Weights & Scoring Rules
-//
-// Manifest Artifact | Max | Configured | Needs configuration | Not configured (404)
-// agents.md          | 25  | +25        | +10                  | 0
-// llms.txt            | 25  | +25        | +10                  | 0
-// llms-full.txt        | 20  | +20        | +8                   | 0
-// UCP Protocol          | 30  | +30        | +30 (baseline)       | 0
-//
-// UCP earns its full 30 points as soon as a baseline manifest exists
-// (Storefront API cart creation enabled), even before delegated checkout
-// tokens are finalized — "needs configuration" is not a partial state for
-// UCP the way it is for the three text files.
-const DISCOVERY_SCORE_WEIGHTS = {
-  agents_md: { max: 25, configured: 25, needsConfig: 10 },
-  llms_txt: { max: 25, configured: 25, needsConfig: 10 },
-  llms_full_txt: { max: 20, configured: 20, needsConfig: 8 },
-  ucp_manifest: { max: 30, configured: 30, needsConfig: 30 },
-};
-
-// Maps a file's live backend `status` to one of the three scoring buckets
-// in the table above.
-function getArtifactScoreCategory(status) {
-  if (status === "served_custom") return "configured";
-  if (status === "served_default" || status === "redirects") return "needsConfig";
-  return "notConfigured"; // "missing", "unreachable", or not checked yet
-}
-
-// Points earned for a single artifact, plus its max, so the UI can show
-// "18 / 25 pts" per file as well as the combined total.
-function getArtifactPoints(definitionKey, status) {
-  const weights = DISCOVERY_SCORE_WEIGHTS[definitionKey];
-  if (!weights) return { earned: 0, max: 0 };
-
-  const category = getArtifactScoreCategory(status);
-  const earned =
-    category === "configured"
-      ? weights.configured
-      : category === "needsConfig"
-        ? weights.needsConfig
-        : 0;
-
-  return { earned, max: weights.max };
-}
-
-function calculateDiscoveryScore(files) {
-  let total = 0;
-
-  DISCOVERY_FILES.forEach((definition) => {
-    const status = files?.[definition.key]?.status;
-    total += getArtifactPoints(definition.key, status).earned;
-  });
-
-  // Weights already sum to 100 (25 + 25 + 20 + 30), so no averaging needed.
-  return Math.round(total);
-}
-
-function getDiscoveryScore(report, agentDiscovery, files) {
-  const possibleValues = [
-    agentDiscovery?.score,
-    agentDiscovery?.discovery_score,
-    agentDiscovery?.overall_score,
-    report?.agent_discovery_score,
-    report?.discovery_score,
-  ];
-
-  for (const value of possibleValues) {
-    const numeric = Number(value);
-
-    if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 100) {
-      return Math.round(numeric);
-    }
-  }
-
-  return calculateDiscoveryScore(files);
-}
-
-/* -------------------------------------------------------------------------- */
 /* Main component                                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -381,12 +254,11 @@ export default function AgentDiscovery() {
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState(null);
 
-  /* ------------------------------------------------------------------------ */
-  /* Load latest audit — the only endpoint this uses: GET /audits/latest,     */
-  /* which already exists in your backend. No new routes are added here.     */
-  /* ------------------------------------------------------------------------ */
 
-  const fetchLatestAudit = async () => {
+  /* Load latest audit — the only endpoint this uses: GET /audits/latest,     */
+
+
+  const fetchLatestAudit = useCallback(async () => {
     if (!shopDomain) return null;
 
     const response = await fetch(
@@ -402,7 +274,7 @@ export default function AgentDiscovery() {
     }
 
     return response.json();
-  };
+  }, [shopDomain]);
 
   useEffect(() => {
     if (!shopDomain) return;
@@ -433,16 +305,9 @@ export default function AgentDiscovery() {
     return () => {
       cancelled = true;
     };
-  }, [shopDomain]);
+  }, [fetchLatestAudit, shopDomain]);
 
-  /* ------------------------------------------------------------------------ */
-  /* "Configure Agent Discovery" — re-reads the latest saved audit.           */
-  /*                                                                          */
-  /* There's no new backend route here: this just re-runs the same           */
-  /* GET /audits/latest the page loads on mount. It picks up a fresh row     */
-  /* the moment your existing audit pipeline finishes writing one — it does  */
-  /* not, by itself, trigger a new check.                                    */
-  /* ------------------------------------------------------------------------ */
+  
 
   const openConfigure = async () => {
     if (checking) return;
@@ -462,19 +327,12 @@ export default function AgentDiscovery() {
     }
   };
 
-  /* ------------------------------------------------------------------------ */
-  /* Real backend data                                                        */
-  /* ------------------------------------------------------------------------ */
+  // backend data for  the audit
 
   const agentDiscovery = report?.agent_discovery || null;
 
-  /*
-   * The audit now stores the four raw discovery resources in dedicated DB
-   * columns. The API serializes them as top-level agent_discovery fields.
-   *
-   * `files` remains metadata/status only. We attach the saved content to the
-   * matching file object for the existing card/modal UI.
-   */
+  // The audit now stores the four raw discovery resources in dedicated DB columns.
+  
   const files = useMemo(() => {
     const savedFiles = agentDiscovery?.files || {};
     if (!agentDiscovery) return {};
@@ -500,53 +358,7 @@ export default function AgentDiscovery() {
     };
   }, [agentDiscovery]);
 
-  const recommendations = Array.isArray(agentDiscovery?.recommendations)
-    ? agentDiscovery.recommendations
-    : [];
-
-  // agents.md is now read from the saved audit snapshot, not the storefront.
-  const agentsMdContent = agentDiscovery?.agents_md_content || "";
-
-  /* ------------------------------------------------------------------------ */
-  /* Summary                                                                  */
-  /* ------------------------------------------------------------------------ */
-
-  const summary = useMemo(() => {
-    let available = 0;
-    let ready = 0;
-    let attention = 0;
-
-    DISCOVERY_FILES.forEach((definition) => {
-      const status = files?.[definition.key]?.status;
-
-      if (["served_custom", "served_default", "redirects"].includes(status)) {
-        available += 1;
-      }
-
-      if (status === "served_custom") {
-        ready += 1;
-      }
-
-      if (
-        ["missing", "unreachable", "served_default", "password_protected"].includes(status)
-      ) {
-        attention += 1;
-      }
-    });
-
-    return {
-      available,
-      ready,
-      attention,
-      total: DISCOVERY_FILES.length,
-    };
-  }, [files]);
-
-  const discoveryScore = getDiscoveryScore(report, agentDiscovery, files);
-
-  /* ------------------------------------------------------------------------ */
-  /* Search                                                                   */
-  /* ------------------------------------------------------------------------ */
+  // search
 
   const filteredFiles = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -574,9 +386,7 @@ export default function AgentDiscovery() {
     });
   }, [search, files]);
 
-  /* ------------------------------------------------------------------------ */
-  /* Loading                                                                  */
-  /* ------------------------------------------------------------------------ */
+  // loading part-this shows up a run page 
 
   if (loading) {
     return (
@@ -607,9 +417,7 @@ export default function AgentDiscovery() {
     );
   }
 
-  /* ------------------------------------------------------------------------ */
-  /* Error                                                                    */
-  /* ------------------------------------------------------------------------ */
+//  Error part-this shows up if backend data fails
 
   if (error) {
     return (
@@ -647,10 +455,8 @@ export default function AgentDiscovery() {
     );
   }
 
-  /* ------------------------------------------------------------------------ */
-  /* No audit yet — but a live check is always available                     */
-  /* ------------------------------------------------------------------------ */
-
+  // no audit data yet — show a "Run Audit" page
+  
   if (!report || !agentDiscovery) {
     return (
       <div className="min-h-screen bg-[var(--app-bg)] p-8">
@@ -720,18 +526,13 @@ export default function AgentDiscovery() {
     );
   }
 
-  /* ------------------------------------------------------------------------ */
-  /* Main page                                                                */
-  /* ------------------------------------------------------------------------ */
+  // Main page                                                                
 
   return (
     <>
       <div className="min-h-screen bg-[var(--app-bg)] p-8">
         <div className="mx-auto max-w-[1500px]">
-          {/* ---------------------------------------------------------------- */}
-          {/* Header                                                           */}
-          {/* ---------------------------------------------------------------- */}
-
+        {/* Header */}
           <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h1 className="text-[26px] font-bold tracking-tight text-[var(--app-text)]">
@@ -767,11 +568,7 @@ export default function AgentDiscovery() {
               {checkError}
             </div>
           )}
-
-          {/* ---------------------------------------------------------------- */}
-          {/* Search                                                           */}
-          {/* ---------------------------------------------------------------- */}
-
+          {/* search */}
           <div className="relative mt-5 max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-muted)]" />
             <input
@@ -782,10 +579,6 @@ export default function AgentDiscovery() {
               className="w-full rounded-lg border border-[var(--app-border)] bg-white py-2.5 pl-9 pr-3 text-sm text-[var(--app-text)] placeholder:text-[var(--app-muted)] focus:border-[var(--app-green)] focus:outline-none"
             />
           </div>
-
-          {/* ---------------------------------------------------------------- */}
-          {/* Discovery cards                                                  */}
-          {/* ---------------------------------------------------------------- */}
 
           <section className="mt-6 grid grid-cols-1 gap-7 lg:grid-cols-2">
             {filteredFiles.map((definition) => {
@@ -798,7 +591,6 @@ export default function AgentDiscovery() {
                 <DiscoveryCard
                   key={definition.key}
                   definition={definition}
-                  file={file}
                   status={status}
                   Icon={Icon}
                   displayUrl={displayUrl}
@@ -811,204 +603,7 @@ export default function AgentDiscovery() {
               );
             })}
           </section>
-
-          {/* ---------------------------------------------------------------- */}
-          {/* Score                                                            */}
-          {/* ---------------------------------------------------------------- */}
-
-          <section className="mt-8 rounded-xl border border-[var(--app-border)] bg-white p-7 shadow-sm">
-            <div className="flex flex-col gap-7 lg:flex-row lg:items-center lg:justify-between">
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--app-muted)]">
-                  Discovery Engine
-                </p>
-
-                <h2 className="mt-2 text-[24px] font-bold tracking-tight text-[var(--app-text)]">
-                  Agent Discovery Score{" "}
-                  <span className="font-extrabold">{discoveryScore} / 100</span>
-                </h2>
-
-                <p className="mt-1 max-w-[850px] text-sm leading-6 text-[var(--app-muted)]">
-                  {agentDiscovery.summary ||
-                    "Your latest audit contains Agent Discovery results for this store."}
-                </p>
-              </div>
-
-              <div className="w-full lg:w-[320px]">
-                <div className="h-3 overflow-hidden rounded-full bg-[#EEF0F1]">
-                  <div
-                    className="h-full rounded-full bg-[#FFB100] transition-all"
-                    style={{ width: `${discoveryScore}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-7 border-t border-[var(--app-border)] pt-5">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                {DISCOVERY_FILES.map((definition) => {
-                  const file = files?.[definition.key] || {};
-                  const status = getStatus(file);
-                  const isReady = status.type === "success";
-                  const isWarning = status.type === "warning";
-                  const points = getArtifactPoints(definition.key, file.status);
-
-                  return (
-                    <button
-                      key={definition.key}
-                      type="button"
-                      onClick={() =>
-                        setPreviewFile({
-                          definition,
-                          file,
-                          status,
-                          displayUrl: getFileDisplayUrl(shopDomain, definition, file),
-                        })
-                      }
-                      className="flex items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[#F8F9FA] px-4 py-4 text-left transition hover:border-[#cdd4d1] hover:bg-white"
-                    >
-                      <span className="flex min-w-0 items-center gap-3">
-                        <span
-                          className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                            isReady
-                              ? "bg-[#008060]"
-                              : isWarning
-                                ? "bg-[#FFB100]"
-                                : "bg-[#D72C0D]"
-                          }`}
-                        />
-                        <span className="truncate text-sm font-semibold text-[var(--app-text)]">
-                          {definition.name === "UCP" ? "UCP Protocol" : definition.name}
-                        </span>
-                      </span>
-
-                      <span className="flex shrink-0 items-center gap-2">
-                        <span
-                          className={`text-xs font-bold ${
-                            isReady
-                              ? "text-[#008060]"
-                              : isWarning
-                                ? "text-[#9A6700]"
-                                : "text-[#D72C0D]"
-                          }`}
-                        >
-                          {status.label}
-                        </span>
-                        <span className="text-[11px] font-medium text-[var(--app-muted)]">
-                          {points.earned}/{points.max} pts
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="mt-7 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-5 text-sm text-[var(--app-muted)]">
-                <span>
-                  <strong className="text-[var(--app-text)]">{summary.available}</strong>{" "}
-                  / {summary.total} endpoints available
-                </span>
-                <span>
-                  <strong className="text-[var(--app-text)]">{summary.ready}</strong>{" "}
-                  customized
-                </span>
-                <span>
-                  <strong className="text-[var(--app-text)]">{summary.attention}</strong>{" "}
-                  need attention
-                </span>
-                {agentDiscovery.checked_at && (
-                  <span>Last checked {formatDate(agentDiscovery.checked_at)}</span>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={openConfigure}
-                disabled={checking}
-                className="inline-flex items-center gap-2 rounded-lg bg-[var(--app-green)] px-5 py-3 text-sm font-bold text-white shadow-sm hover:bg-[var(--app-green-dark)] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {checking ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Checking…
-                  </>
-                ) : (
-                  <>
-                    Configure Agent Discovery
-                    <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
-              </button>
-            </div>
-          </section>
-
-          {/* ---------------------------------------------------------------- */}
-          {/* Recommendations                                                  */}
-          {/* ---------------------------------------------------------------- */}
-
-          {recommendations.length > 0 && (
-            <section className="mt-8 rounded-xl border border-[var(--app-border)] bg-white shadow-sm">
-              <div className="border-b border-[var(--app-border)] px-6 py-5">
-                <h2 className="text-base font-bold text-[var(--app-text)]">
-                  Shopify-Aligned Recommendations
-                </h2>
-                <p className="mt-1 text-sm text-[var(--app-muted)]">
-                  Recommendations generated from the latest check for {shopDomain}.
-                </p>
-              </div>
-
-              <div className="divide-y divide-[var(--app-border)]">
-                {recommendations.map((recommendation, index) => {
-                  const priority = getRecommendationPriority(recommendation.priority);
-
-                  return (
-                    <div
-                      key={`${recommendation.enrichment || "recommendation"}-${index}`}
-                      className="p-6"
-                    >
-                      <div className="flex items-start gap-4">
-                        <div className="mt-1 flex h-3 w-3 shrink-0 rounded-full bg-[#FFB100]" />
-
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <h3 className="text-base font-bold text-[var(--app-text)]">
-                              {recommendation.enrichment || "Agent Discovery improvement"}
-                            </h3>
-
-                            <span
-                              className={`rounded-full border px-3 py-1 text-xs font-bold ${priority.classes}`}
-                            >
-                              {priority.label}
-                            </span>
-                          </div>
-
-                          {recommendation.why_it_matters_for_agents && (
-                            <p className="mt-3 text-sm leading-6 text-[var(--app-muted)]">
-                              {recommendation.why_it_matters_for_agents}
-                            </p>
-                          )}
-
-                          {recommendation.example && (
-                            <div className="mt-4 rounded-lg border-l-2 border-[#cfd9e2] bg-[#FAF9F7] px-4 py-3">
-                              <p className="font-mono text-xs leading-5 text-[#425466]">
-                                <strong>Example:</strong> {recommendation.example}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-
-          {/* ---------------------------------------------------------------- */}
-          {/* Footer                                                           */}
-          {/* ---------------------------------------------------------------- */}
+          {/* Footer */}
 
           <div className="py-8 text-center text-xs text-[var(--app-muted)]">
             Agent Discovery is based on the latest completed audit for{" "}
@@ -1018,13 +613,9 @@ export default function AgentDiscovery() {
         </div>
       </div>
 
-      {/* -------------------------------------------------------------------- */}
-      {/* Preview modal                                                        */}
-      {/* -------------------------------------------------------------------- */}
-
+      {/* Preview modal */}
       {previewFile && (
         <DiscoveryPreviewModal
-          shopDomain={shopDomain}
           item={previewFile}
           onClose={() => setPreviewFile(null)}
           onConfigure={() => {
@@ -1034,9 +625,7 @@ export default function AgentDiscovery() {
         />
       )}
 
-      {/* -------------------------------------------------------------------- */}
-      {/* Configure modal                                                      */}
-      {/* -------------------------------------------------------------------- */}
+      {/* Configure modal */}
 
       {configureOpen && (
         <ConfigureAgentDiscoveryModal
@@ -1056,13 +645,10 @@ export default function AgentDiscovery() {
   );
 }
 
-/* ========================================================================== */
-/* Discovery Card                                                             */
-/* ========================================================================== */
+// Discovery card for each discovery file
 
 function DiscoveryCard({
   definition,
-  file,
   status,
   Icon,
   displayUrl,
@@ -1143,11 +729,26 @@ function DiscoveryCard({
   );
 }
 
-/* ========================================================================== */
-/* Preview Modal                                                              */
-/* ========================================================================== */
+DiscoveryCard.propTypes = {
+  definition: PropTypes.shape({
+    key: PropTypes.string.isRequired,
+    name: PropTypes.string.isRequired,
+    description: PropTypes.string.isRequired,
+  }).isRequired,
+  status: PropTypes.shape({
+    type: PropTypes.string.isRequired,
+    label: PropTypes.string.isRequired,
+  }).isRequired,
+  Icon: PropTypes.elementType.isRequired,
+  displayUrl: PropTypes.string.isRequired,
+  checking: PropTypes.bool.isRequired,
+  onPreview: PropTypes.func.isRequired,
+  onConfigure: PropTypes.func.isRequired,
+};
 
-function DiscoveryPreviewModal({ shopDomain, item, onClose, onConfigure }) {
+// Preview modal for any discovery file
+
+function DiscoveryPreviewModal({ item, onClose, onConfigure }) {
   const { definition, file, status, displayUrl } = item;
 
   // Preview always uses the content saved with this audit.
@@ -1167,12 +768,31 @@ function DiscoveryPreviewModal({ shopDomain, item, onClose, onConfigure }) {
     } catch (error) {
       console.error("Failed to copy discovery content:", error);
     }
+
+    DiscoveryPreviewModal.propTypes = {
+      item: PropTypes.shape({
+        definition: PropTypes.shape({
+          name: PropTypes.string.isRequired,
+          description: PropTypes.string.isRequired,
+        }).isRequired,
+        file: PropTypes.object.isRequired,
+        status: PropTypes.shape({
+          type: PropTypes.string.isRequired,
+          label: PropTypes.string.isRequired,
+        }).isRequired,
+        displayUrl: PropTypes.string.isRequired,
+      }).isRequired,
+      onClose: PropTypes.func.isRequired,
+      onConfigure: PropTypes.func.isRequired,
+    };
   };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
       <div className="flex max-h-[90vh] w-full max-w-[840px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+
         {/* Header */}
+
         <div className="flex items-center justify-between border-b border-[#E1E3E5] px-6 py-5">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#F1F6F4] text-[var(--app-green)]">
@@ -1275,10 +895,7 @@ function DiscoveryPreviewModal({ shopDomain, item, onClose, onConfigure }) {
   );
 }
 
-/* ========================================================================== */
-/* Configure Modal — shows the live check result for agents.md                */
-/* ========================================================================== */
-
+// Configure modal for agents.md
 function ConfigureAgentDiscoveryModal({
   shopDomain,
   files,
@@ -1311,6 +928,18 @@ function ConfigureAgentDiscoveryModal({
     } catch (err) {
       console.error("Failed to copy agents.md content:", err);
     }
+
+    ConfigureAgentDiscoveryModal.propTypes = {
+      shopDomain: PropTypes.string.isRequired,
+      files: PropTypes.shape({
+        agents_md: PropTypes.object,
+      }).isRequired,
+      checkedAt: PropTypes.string,
+      checking: PropTypes.bool.isRequired,
+      onClose: PropTypes.func.isRequired,
+      onRecheck: PropTypes.func.isRequired,
+      onPreview: PropTypes.func.isRequired,
+    };
   };
 
   return (
