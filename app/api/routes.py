@@ -436,24 +436,76 @@ def fix_product_issue(payload: FixIssueRequest) -> dict:
 class StoreFixRequest(BaseModel):
     shop_domain: str = Field(min_length=1)
     access_token: str = Field(min_length=1)
+    issue_id: str = Field(min_length=1)  # NEW
     check_id: str = Field(min_length=1)
     issue_type: str = Field(min_length=1)
     changes: list[dict[str, Any]] = Field(min_length=1)
 
 
+
 @router.post("/store/fix")
 def store_fix(body: StoreFixRequest):
     fix_engine = FixEngine()
+
     try:
-        result = fix_engine.execute_store(**body.model_dump())
+        result = fix_engine.execute_store(
+            shop_domain=body.shop_domain.strip(),
+            access_token=body.access_token,
+            check_id=body.check_id,
+            issue_type=body.issue_type,
+            changes=body.changes,
+        )
+
+        with safe_db("record_store_fix") as db:
+            if db is not None:
+                from app.core.database import Store
+
+                store = (
+                    db.query(Store)
+                    .filter(
+                        Store.shop_domain == body.shop_domain.strip()
+                    )
+                    .one_or_none()
+                )
+
+                if store is not None:
+                    issue = (
+                        db.query(AuditIssue)
+                        .filter(
+                            AuditIssue.id == body.issue_id,
+                            AuditIssue.store_id == store.id,
+                            AuditIssue.scope == "store",
+                        )
+                        .one_or_none()
+                    )
+
+                    if issue is not None and result.get("success"):
+                        issue.fix_status = "applied"
+                        issue.fixed_at = dt.datetime.now(
+                            dt.timezone.utc
+                        )
+                        db.commit()
+
     except ValueError as exc:
-        return JSONResponse(status_code=400, content={"success": False, "detail": str(exc)})
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "detail": str(exc)},
+        )
     except Exception:
-        return JSONResponse(status_code=500, content={"success": False, "detail": "Store fix failed unexpectedly."})
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "detail": "Store fix failed unexpectedly.",
+            },
+        )
 
-    status = 200 if result.get("success") else 207 if result.get("partial_success") else 422
+    status = (
+        200 if result.get("success")
+        else 207 if result.get("partial_success")
+        else 422
+    )
     return JSONResponse(status_code=status, content=result)
-
 
 
 class VariantOptionsFixRequest(BaseModel):

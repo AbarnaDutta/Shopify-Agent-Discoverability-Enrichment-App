@@ -6,6 +6,7 @@ import {
   useState,
   Fragment,
 } from "react";
+import PropTypes from "prop-types";
 
 import {
   useFetcher,
@@ -71,6 +72,56 @@ function prettyLabel(value) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+const STORE_CHECK_LABELS = {
+  fulfillment_context: "Shipping & Fulfillment",
+  faq_or_guidance: "FAQ & Help Content",
+  legal_pages: "Legal Pages",
+  store_guardrails: "Store Guardrails",
+  contact_brand: "Contact & Brand Information",
+  consistency: "Catalog Consistency",
+};
+
+
+function resolveStoreFixMetadata(recommendation, auditIssues) {
+  const storeIssues = Array.isArray(auditIssues)
+    ? auditIssues.filter((issue) => issue?.scope === "store")
+    : [];
+  const label = String(recommendation?.enrichment || "").trim().toLowerCase();
+  const matchingChecks = new Set(
+    storeIssues
+      .filter((issue) => {
+        const issueLabel = STORE_CHECK_LABELS[issue.check_id] ||
+          prettyLabel(issue.check_id).toLowerCase();
+        return issueLabel.toLowerCase() === label;
+      })
+      .map((issue) => issue.check_id)
+      .filter(Boolean)
+  );
+
+  let checkId = recommendation?.check_id ||
+    recommendation?.fix_payload?.check_id ||
+    (matchingChecks.size === 1 ? [...matchingChecks][0] : "");
+
+  if (!checkId) {
+    const auditChecks = new Set(storeIssues.map((issue) => issue.check_id).filter(Boolean));
+    if (auditChecks.size === 1) checkId = [...auditChecks][0];
+  }
+
+  const matchingTypes = new Set(
+    storeIssues
+      .filter((issue) => issue.check_id === checkId && issue.issue_type)
+      .map((issue) => issue.issue_type)
+  );
+  const issueType = recommendation?.issue_type ||
+    recommendation?.fix_payload?.issue_type ||
+    (matchingTypes.size === 1
+      ? [...matchingTypes][0]
+        : "");
+
+  return { check_id: checkId, issue_type: issueType };
+}
+
+
 /* -------------------------------------------------------------------------- */
 
 /* Severity badge                                                             */
@@ -103,6 +154,10 @@ function SeverityBadge({ priority }) {
 
 }
 
+SeverityBadge.propTypes = {
+  priority: PropTypes.string,
+};
+
 
 /* -------------------------------------------------------------------------- */
 
@@ -113,16 +168,10 @@ function SeverityBadge({ priority }) {
 function StoreFixModal({ issue, shopDomain, onClose }) {
   const fetcher = useFetcher();
   const recommendation = issue.raw || {};
-  /*
-
-   * Use executable fields only when the audit actually supplies them.
-
-   * Do not create placeholder Shopify IDs or example attribute values.
-
-   */
 
   const suppliedFix = recommendation.fix_payload || {};
 
+  // Only use real metadata supplied by the audit.
   const initialCheckId =
     recommendation.check_id ||
     suppliedFix.check_id ||
@@ -138,11 +187,12 @@ function StoreFixModal({ issue, shopDomain, onClose }) {
     suppliedFix.changes ??
     [];
 
-  const [checkId, setCheckId] = useState(initialCheckId);
-  const [issueType, setIssueType] = useState(initialIssueType);
+  const [checkId] = useState(initialCheckId);
+  const [issueType] = useState(initialIssueType);
   const [changesText, setChangesText] = useState(() =>
     JSON.stringify(initialChanges, null, 2)
   );
+
 
   const [validationError, setValidationError] = useState("");
   const isSubmitting = fetcher.state !== "idle";
@@ -180,11 +230,10 @@ function StoreFixModal({ issue, shopDomain, onClose }) {
     responseData?.detail ||
 
     responseData?.error ||
-
     responseData?.data?.message ||
-
     responseData?.data?.detail ||
 
+    responseData?.data?.detail ||
     "";
 
   const parseChanges = () => {
@@ -236,8 +285,6 @@ function StoreFixModal({ issue, shopDomain, onClose }) {
       );
 
     }
-
-
 
     return parsedChanges;
 
@@ -433,22 +480,14 @@ function StoreFixModal({ issue, shopDomain, onClose }) {
 
 
             <h3 className="text-sm font-semibold text-[#202223]">
-
-              {issue.enrichment || "Store-wide recommendation"}
-
+              Recommendation
             </h3>
-
-
-
-            {issue.why_it_matters_for_agents && (
-
-              <p className="mt-2 text-xs leading-relaxed text-[#6D7175]">
-
-                {issue.why_it_matters_for_agents}
-
-              </p>
-
-            )}
+            <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-[#6D7175]">
+              {recommendation.example ||
+                issue.example ||
+                recommendation.description ||
+                "No recommendation description available."}
+            </p>
 
 
 
@@ -509,101 +548,47 @@ function StoreFixModal({ issue, shopDomain, onClose }) {
 
 
           {/* Backend issue configuration */}
-
           <div className="grid gap-4 sm:grid-cols-2">
-
             <div>
-
               <label
-
                 htmlFor="store-fix-check-id"
-
                 className="mb-1.5 block text-xs font-semibold text-[#202223]"
-
               >
-
                 Check ID
-
               </label>
-
-
-
               <input
-
                 id="store-fix-check-id"
-
                 type="text"
-
                 value={checkId}
-
-                onChange={(event) => setCheckId(event.target.value)}
-
-                disabled={isSubmitting || requestSucceeded}
-
-                placeholder="Enter configured check_id"
-
-                required
-
-                className="w-full rounded-md border border-[#E1E3E5] px-3 py-2 text-xs outline-none focus:border-[#D97706] disabled:bg-[#F1F2F3]"
-
+                readOnly
+                placeholder="Provided by audit metadata"
+                className="w-full rounded-md border border-[#E1E3E5] bg-[#F1F2F3] px-3 py-2 text-xs"
               />
-
-
-
               <p className="mt-1 text-[10px] leading-relaxed text-[#6D7175]">
-
                 Must match the check registered in your backend.
-
               </p>
-
             </div>
 
 
 
             <div>
-
               <label
-
                 htmlFor="store-fix-issue-type"
-
                 className="mb-1.5 block text-xs font-semibold text-[#202223]"
-
               >
-
                 Issue type
-
               </label>
-
-
-
               <input
-
                 id="store-fix-issue-type"
-
                 type="text"
-
                 value={issueType}
-
-                onChange={(event) => setIssueType(event.target.value)}
-
-                disabled={isSubmitting || requestSucceeded}
-
-                placeholder="Enter configured issue_type"
-
-                required
-
-                className="w-full rounded-md border border-[#E1E3E5] px-3 py-2 text-xs outline-none focus:border-[#D97706] disabled:bg-[#F1F2F3]"
-
+                readOnly
+                placeholder="Provided by audit metadata"
+                className="w-full rounded-md border border-[#E1E3E5] bg-[#F1F2F3] px-3 py-2 text-xs"
               />
-
-
-
               <p className="mt-1 text-[10px] leading-relaxed text-[#6D7175]">
-
                 Must match a store-wide issue supported by the backend.
-
               </p>
-
             </div>
 
           </div>
@@ -838,6 +823,26 @@ function StoreFixModal({ issue, shopDomain, onClose }) {
 
 }
 
+StoreFixModal.propTypes = {
+  issue: PropTypes.shape({
+    priority: PropTypes.string,
+    enrichment: PropTypes.string,
+    why_it_matters_for_agents: PropTypes.string,
+    example: PropTypes.string,
+    affectedProducts: PropTypes.arrayOf(
+      PropTypes.shape({
+        product_id: PropTypes.oneOfType([
+          PropTypes.string,
+          PropTypes.number,
+        ]),
+        title: PropTypes.string,
+      })
+    ),
+    raw: PropTypes.object,
+  }).isRequired,
+  shopDomain: PropTypes.string.isRequired,
+  onClose: PropTypes.func.isRequired,
+};
 
 
 /* -------------------------------------------------------------------------- */
@@ -994,22 +999,6 @@ export default function Issues() {
 
 
 
-  const products = Array.isArray(report?.products)
-
-    ? report.products
-
-    : [];
-
-
-
-  const storeRecs = Array.isArray(report?.store_level_recommendations)
-
-    ? report.store_level_recommendations
-
-    : [];
-
-
-
   /*
 
    * Keep the complete recommendation in `raw`.
@@ -1018,31 +1007,56 @@ export default function Issues() {
 
    */
 
-  const allIssues = useMemo(() => {
+  
+const allIssues = useMemo(() => {
+  const products = Array.isArray(report?.products)
+    ? report.products
+    : [];
 
-    return storeRecs.map((recommendation, index) => ({
+  const storeRecs = Array.isArray(report?.store_level_recommendations)
+    ? report.store_level_recommendations
+    : [];
 
+  // The audit endpoint returns the registered issues for this audit.
+  const auditIssues = Array.isArray(report?.issues)
+    ? report.issues
+    : [];
+
+  return storeRecs.map((recommendation, index) => {
+    const resolvedMetadata = resolveStoreFixMetadata(
+      recommendation,
+      auditIssues
+    );
+
+    // Prefer metadata attached to this recommendation by the backend.
+    const raw = {
+      ...recommendation,
+      check_id:
+        recommendation.check_id ||
+        recommendation.fix_payload?.check_id ||
+        resolvedMetadata.check_id,
+      issue_type:
+        recommendation.issue_type ||
+        recommendation.fix_payload?.issue_type ||
+        resolvedMetadata.issue_type,
+    };
+
+    return {
       key: `store-${index}`,
-
       priority: getPriority(recommendation.priority),
-
-      enrichment:
-
-        recommendation.enrichment || "Missing enrichment",
-
+      enrichment: recommendation.enrichment || "Missing enrichment",
       why_it_matters_for_agents:
-
         recommendation.why_it_matters_for_agents || "",
-
       example: recommendation.example || "",
-
       affectedProducts: getAffectedProducts(recommendation, products),
-
-      raw: recommendation,
-
-    }));
-
-  }, [storeRecs, products]);
+      raw,
+    };
+  });
+}, [
+  report?.store_level_recommendations,
+  report?.products,
+  report?.issues,
+]);
 
 
 
@@ -1228,15 +1242,13 @@ export default function Issues() {
 
                 onClick={() => setSeverity(value)}
 
-                className={`cursor-pointer rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
+                className={`cursor-pointer rounded px-3 py-1.5 text-xs font-semibold transition-colors ${severity === value
 
-                  severity === value
+                  ? "bg-white text-[#202223] shadow-sm"
 
-                    ? "bg-white text-[#202223] shadow-sm"
+                  : "text-[#6D7175] hover:text-[#202223]"
 
-                    : "text-[#6D7175] hover:text-[#202223]"
-
-                }`}
+                  }`}
 
               >
 
@@ -1423,18 +1435,16 @@ export default function Issues() {
                 {filteredIssues.map((issue) => {
 
                   const isExpanded = expandedKey === issue.key;
-
+                  const recommendation = issue.raw || {};
 
 
                   const affectedLabel =
 
                     issue.affectedProducts.length > 0
 
-                      ? `${issue.affectedProducts.length} product${
+                      ? `${issue.affectedProducts.length} product${issue.affectedProducts.length === 1 ? "" : "s"
 
-                          issue.affectedProducts.length === 1 ? "" : "s"
-
-                        }`
+                      }`
 
                       : "Store-wide";
 
@@ -1548,15 +1558,24 @@ export default function Issues() {
 
                           >
 
-                            {issue.why_it_matters_for_agents && (
-
-                              <p className="text-xs leading-relaxed text-[#4A5568]">
-
-                                {issue.why_it_matters_for_agents}
-
-                              </p>
-
-                            )}
+                            {(
+                              issue.why_it_matters_for_agents ||
+                              recommendation.description ||
+                              recommendation.recommendation ||
+                              recommendation.enrichment
+                            ) && (
+                                <div className="mt-3">
+                                  <p className="mb-1 text-xs font-semibold text-[#202223]">
+                                    Recommendation
+                                  </p>
+                                  <p className="text-xs leading-relaxed text-[#6D7175]">
+                                    {issue.why_it_matters_for_agents ||
+                                      recommendation.description ||
+                                      recommendation.recommendation ||
+                                      recommendation.enrichment}
+                                  </p>
+                                </div>
+                              )}
 
 
 
@@ -1643,25 +1662,15 @@ export default function Issues() {
 
 
                               <button
-
                                 type="button"
-
                                 onClick={(event) => {
-
                                   event.stopPropagation();
-
                                   setSelectedIssue(issue);
-
                                 }}
-
                                 className="inline-flex items-center gap-2 rounded-md bg-[#111111] px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#333333]"
-
                               >
-
                                 <Wrench className="h-3.5 w-3.5" />
-
                                 Fix Issue
-
                               </button>
 
                             </div>

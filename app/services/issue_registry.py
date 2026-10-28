@@ -14,20 +14,18 @@ ISSUE_TYPES = {
 
     "variant_selection": {
         "missing_option_name":         {"scope": "product", "fix_mode": "approval", "fix_action": "rename_product_option"},
-        "generic_option_name":         {"scope": "product", "fix_mode": "approval", "fix_action": "rename_product_option"},
         "incomplete_selected_options": {"scope": "variant", "fix_mode": "approval", "fix_action": "fix_variant_options"},
         "inconsistent_variant_options": {"scope": "product", "fix_mode": "approval", "fix_action": "fix_variant_options"},
     },
 
     "pricing_clarity": {
-        "missing_price":     {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_variant_price"},
-        "zero_price":        {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_variant_price"},
-        "placeholder_price": {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_variant_price"},
+        "missing_price": {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_variant_price"},
+        "zero_price":    {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_variant_price"},
+        "invalid_price": {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_variant_price"},
     },
 
     "availability_signals": {
         "missing_inventory_signal": {"scope": "variant", "fix_mode": "unsupported", "fix_action": None},
-        "ambiguous_buyability":     {"scope": "variant", "fix_mode": "unsupported", "fix_action": None},
     },
 
     "published_to_sales_channel": {
@@ -36,11 +34,10 @@ ISSUE_TYPES = {
     },
 
     "fulfillment_context": {
-        "missing_delivery_time":              {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
-        "missing_shipping_methods":           {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
-        "missing_pickup_information":         {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
-        "missing_region_coverage":            {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
-        "incomplete_fulfillment_constraints": {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
+        "missing_delivery_time":      {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
+        "missing_shipping_methods":   {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
+        "missing_pickup_information": {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
+        "missing_region_coverage":    {"scope": "store", "fix_mode": "user_input", "fix_action": "update_fulfillment_information"},
     },
 
     # ============================================================
@@ -61,8 +58,6 @@ ISSUE_TYPES = {
         "missing_structured_attribute":       {"scope": "product", "fix_mode": "user_input", "fix_action": "set_metafield"},
         "unstructured_product_attribute":     {"scope": "product", "fix_mode": "user_input", "fix_action": "set_metafield"},
         "insufficient_comparable_attributes": {"scope": "product", "fix_mode": "user_input", "fix_action": "set_metafield"},
-        "generic_option_value":               {"scope": "variant", "fix_mode": "approval", "fix_action": "fix_variant_options"},
-        "generic_option_name":                {"scope": "product", "fix_mode": "approval", "fix_action": "rename_product_option"},
         "missing_taxonomy_category":          {"scope": "product", "fix_mode": "unsupported", "fix_action": None},
     },
 
@@ -94,9 +89,8 @@ ISSUE_TYPES = {
     "identifiers": {
         "missing_sku":  {"scope": "variant", "fix_mode": "approval", "fix_action": "generate_sku"},
         "missing_gtin": {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_gtin"},
-        "missing_mpn":  {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_mpn"},
         "invalid_gtin": {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_gtin"},
-        "duplicate_sku": {"scope": "variant", "fix_mode": "unsupported", "fix_action": None},
+        "duplicate_sku": {"scope": "variant", "fix_mode": "user_input", "fix_action": "generate_sku"},
     },
 
     "rich_attributes": {
@@ -106,14 +100,13 @@ ISSUE_TYPES = {
 
     "variant_hygiene": {
         "generic_option_name":               {"scope": "product", "fix_mode": "approval", "fix_action": "rename_product_option"},
-        "default_title_with_real_variations": {"scope": "product", "fix_mode": "approval", "fix_action": "fix_variant_options"},
         "generic_option_value":              {"scope": "variant", "fix_mode": "approval", "fix_action": "fix_variant_options"},
         "inconsistent_option_values":        {"scope": "product", "fix_mode": "approval", "fix_action": "fix_variant_options"},
     },
 
     "media_quality": {
-        "missing_product_image": {"scope": "product", "fix_mode": "unsupported", "fix_action": None},
-        "missing_image_alt":     {"scope": "product", "fix_mode": "unsupported", "fix_action": None},
+        "missing_product_image": {"scope": "product", "fix_mode": "user_input", "fix_action": "set_product_image"},
+        "missing_image_alt":     {"scope": "product", "fix_mode": "user_input", "fix_action": "set_product_image_alt"},
     },
 
     "consistency": {
@@ -128,14 +121,12 @@ ISSUE_TYPES = {
     # ============================================================
 
     "product_guardrails": {
-        "missing_age_limit":         {"scope": "product", "fix_mode": "user_input", "fix_action": "set_guardrail_metafield"},
-        "missing_warning":           {"scope": "product", "fix_mode": "user_input", "fix_action": "set_guardrail_metafield"},
-        "missing_human_review_flag": {"scope": "product", "fix_mode": "user_input", "fix_action": "set_guardrail_metafield"},
+        "missing_age_limit": {"scope": "product", "fix_mode": "user_input", "fix_action": "set_guardrail_metafield"},
+        "missing_warning":   {"scope": "product", "fix_mode": "user_input", "fix_action": "set_guardrail_metafield"},
     },
 
     "store_guardrails": {
         "missing_age_gating":          {"scope": "store", "fix_mode": "user_input", "fix_action": "configure_store_guardrail"},
-        "missing_region_restriction":  {"scope": "store", "fix_mode": "user_input", "fix_action": "configure_store_guardrail"},
         "missing_manual_approval_rule": {"scope": "store", "fix_mode": "user_input", "fix_action": "configure_store_guardrail"},
     },
 

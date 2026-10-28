@@ -14,18 +14,23 @@ from typing import Any, Callable
 PRODUCTS_PAGE_SIZE = 5
 VARIANTS_FIRST = 25
 METAFIELDS_FIRST = 25
-MEDIA_FIRST = 6
+MEDIA_FIRST = 12             
 PUBLICATIONS_FIRST = 5
-MAX_EXTRA_PAGES = 20          
+MAX_EXTRA_PAGES = 20
 MAX_RETRIES = 5
-THROTTLE_FLOOR = 300          
+THROTTLE_FLOOR = 300
 _SHOP_DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\.myshopify\.com$", re.I)
 _API_VERSION_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _ALLOWED_PRODUCT_STATUSES = {"active", "draft", "archived"}
+_FAQ_PAGE_RE = re.compile(r"faq|help|question|fragen|preguntas|perguntas|domande|aide", re.I)
 
 
 class ShopifyAdminAPIError(Exception):
     """Raised when Shopify Admin GraphQL returns an error."""
+
+
+class ShopifyAuthError(ShopifyAdminAPIError):
+    """HTTP 401: the access token is invalid or revoked. The merchant must reconnect."""
 
 
 class ShopifyScopeError(ShopifyAdminAPIError):
@@ -105,8 +110,10 @@ def _graphql_request(
                 last_error = f"HTTP {error.code}: {text[:200]}"
                 time.sleep(_retry_after(error) or _backoff(attempt))
                 continue
-            if error.code in (401, 403):
-                raise ShopifyScopeError(f"Shopify Admin API HTTP {error.code}: {text[:300]}") from error
+            if error.code == 401:
+                raise ShopifyAuthError(f"Shopify Admin API HTTP 401: token invalid or revoked.") from error
+            if error.code == 403:
+                raise ShopifyScopeError(f"Shopify Admin API HTTP 403: {text[:300]}") from error
             raise ShopifyAdminAPIError(f"Shopify Admin API HTTP {error.code}: {text[:500]}") from error
         except urllib.error.URLError as error:
             last_error = f"connection error: {error.reason}"
@@ -162,16 +169,26 @@ def _nodes(connection: dict[str, Any] | None) -> list[dict[str, Any]]:
 
 # ── PRODUCTS FOR AUDIT ───────────────────────────────────────────────────
 
-_VARIANT_FIELDS = """
+def _variant_fields(lean: bool) -> str:
+    """lean=True drops fields that need extra scopes (read_inventory): used when the full query is denied."""
+    base = """
   id title sku barcode price compareAtPrice position taxable
   availableForSale inventoryPolicy inventoryQuantity
   selectedOptions { name value }
   image { id url altText }
-  inventoryItem { tracked requiresShipping }
 """
+    return base if lean else base + "  inventoryItem { tracked requiresShipping }\n"
 
-_PRODUCTS_QUERY = (
-    """
+
+def _build_queries(lean: bool) -> dict[str, str]:
+    """Returns {"products": ..., "more_variants": ...}. lean=True also drops resourcePublicationsV2
+    (needs read_publications), so one missing scope no longer kills the whole audit."""
+    variant = _variant_fields(lean)
+    publications = "" if lean else """
+      resourcePublicationsV2(first: __PB__, onlyPublished: true) {
+        nodes { isPublished publication { id name } }
+      }"""
+    products = ("""
 query ProductsForAudit($cursor: String, $first: Int!, $query: String) {
   products(first: $first, after: $cursor, query: $query) {
     edges { node {
@@ -191,22 +208,18 @@ query ProductsForAudit($cursor: String, $first: Int!, $query: String) {
       metafields(first: __MT__) {
         pageInfo { hasNextPage endCursor }
         edges { node { namespace key type value } }
-      }
-      resourcePublicationsV2(first: __PB__, onlyPublished: true) {
-        nodes { isPublished publication { id name } }
-      }
+      }__PUBLICATIONS__
     } }
     pageInfo { hasNextPage endCursor }
   }
 }
-""".replace("__VARIANT__", _VARIANT_FIELDS)
-    .replace("__VF__", str(VARIANTS_FIRST))
-    .replace("__MF__", str(MEDIA_FIRST))
-    .replace("__MT__", str(METAFIELDS_FIRST))
-    .replace("__PB__", str(PUBLICATIONS_FIRST))
-)
-
-_MORE_VARIANTS_QUERY = """
+""".replace("__PUBLICATIONS__", publications)
+        .replace("__VARIANT__", variant)
+        .replace("__VF__", str(VARIANTS_FIRST))
+        .replace("__MF__", str(MEDIA_FIRST))
+        .replace("__MT__", str(METAFIELDS_FIRST))
+        .replace("__PB__", str(PUBLICATIONS_FIRST)))
+    more_variants = """
 query MoreVariants($id: ID!, $after: String) {
   product(id: $id) {
     variants(first: 50, after: $after) {
@@ -215,7 +228,9 @@ query MoreVariants($id: ID!, $after: String) {
     }
   }
 }
-""".replace("__VARIANT__", _VARIANT_FIELDS)
+""".replace("__VARIANT__", variant)
+    return {"products": products, "more_variants": more_variants}
+
 
 _MORE_METAFIELDS_QUERY = """
 query MoreMetafields($id: ID!, $after: String) {
@@ -249,12 +264,15 @@ def _drain(creds, product_id, query, field, first_connection) -> tuple[list[dict
     return edges, bool(info.get("hasNextPage"))
 
 
-def _compact_admin_product(product: dict[str, Any], creds: tuple[str, str, str]) -> dict[str, Any]:
+def _compact_admin_product(product: dict[str, Any], creds: tuple[str, str, str],
+                           more_variants_query: str, lean: bool = False) -> dict[str, Any]:
     warnings: list[str] = []
+    if lean:
+        warnings.append("limited_scopes")
     product_id = product.get("id")
 
     v_conn = product.get("variants") or {}
-    v_edges, v_trunc = _drain(creds, product_id, _MORE_VARIANTS_QUERY, "variants", v_conn)
+    v_edges, v_trunc = _drain(creds, product_id, more_variants_query, "variants", v_conn)
     if v_trunc:
         warnings.append("variants_truncated")
 
@@ -265,7 +283,7 @@ def _compact_admin_product(product: dict[str, Any], creds: tuple[str, str, str])
         values = [o.get("value") for o in selected]
         image = v.get("image") or {}
         inv_item = v.get("inventoryItem") or {}
-        compact_variants.append({
+        compact = {
             "id": v.get("id"),
             "title": v.get("title"),
             "sku": v.get("sku"),
@@ -275,15 +293,17 @@ def _compact_admin_product(product: dict[str, Any], creds: tuple[str, str, str])
             "available": v.get("availableForSale"),
             "inventory_policy": v.get("inventoryPolicy"),
             "inventory_quantity": v.get("inventoryQuantity"),
-            "inventory_tracked": inv_item.get("tracked"),
-            "requires_shipping": inv_item.get("requiresShipping"),
             "selectedOptions": selected,
             "option1": values[0] if len(values) > 0 else None,
             "option2": values[1] if len(values) > 1 else None,
             "option3": values[2] if len(values) > 2 else None,
             "image": {"id": image.get("id"), "src": image.get("url"), "alt": image.get("altText")}
             if image.get("url") else None,
-        })
+        }
+        if not lean:                      
+            compact["inventory_tracked"] = inv_item.get("tracked")
+            compact["requires_shipping"] = inv_item.get("requiresShipping")
+        compact_variants.append(compact)
 
     # media
     media_conn = product.get("media") or {}
@@ -304,7 +324,7 @@ def _compact_admin_product(product: dict[str, Any], creds: tuple[str, str, str])
                 "position": len(images) + 1,
             })
 
-    # metafields 
+    # metafields
     m_edges, m_trunc = _drain(creds, product_id, _MORE_METAFIELDS_QUERY, "metafields", product.get("metafields") or {})
     if m_trunc:
         warnings.append("metafields_truncated")
@@ -317,32 +337,25 @@ def _compact_admin_product(product: dict[str, Any], creds: tuple[str, str, str])
                 "namespace": ns, "key": key, "type": node.get("type"), "value": node.get("value"),
             }
 
-    channels = [
-        (n.get("publication") or {}).get("name")
-        for n in _nodes(product.get("resourcePublicationsV2"))
-        if n.get("isPublished")
-    ]
+    online_url = product.get("onlineStoreUrl")
 
-    online_url = product.get("onlineStoreUrl") 
-
-    return {
+    out = {
         "id": product_id,
         "title": product.get("title"),
         "handle": product.get("handle"),
-        "url": online_url,                     
+        "url": online_url,
         "online_store_url": online_url,
         "vendor": product.get("vendor"),
         "product_type": product.get("productType"),
-        "category": product.get("category"),    
+        "category": product.get("category"),
         "status": product.get("status"),
         "tags": product.get("tags") or [],
-        "description": product.get("descriptionHtml") or "",           
-        "description_text": _html_to_text(product.get("descriptionHtml")),  
+        "description": product.get("descriptionHtml") or "",
+        "description_text": _html_to_text(product.get("descriptionHtml")),
         "seo": product.get("seo") or {},
         "is_gift_card": product.get("isGiftCard"),
         "has_only_default_variant": product.get("hasOnlyDefaultVariant"),
         "tracks_inventory": product.get("tracksInventory"),
-        "published_channels": [c for c in channels if c],
         "options": product.get("options") or [],
         "image": images[0] if images else None,
         "images": images,
@@ -351,6 +364,14 @@ def _compact_admin_product(product: dict[str, Any], creds: tuple[str, str, str])
         "metafields": metafields,
         "data_warnings": warnings,
     }
+    if not lean:                           # key absent -> check_published_to_sales_channel returns NA
+        channels = [
+            (n.get("publication") or {}).get("name")
+            for n in _nodes(product.get("resourcePublicationsV2"))
+            if n.get("isPublished")
+        ]
+        out["published_channels"] = [c for c in channels if c]
+    return out
 
 
 def fetch_products_count(shop_domain: str, access_token: str, api_version: str, status: str | None = "active") -> int | None:
@@ -375,7 +396,9 @@ def fetch_products_admin(
     status: str | None = "active",
 ) -> list[dict[str, Any]]:
     """Cursor-paginated product fetch. Only ACTIVE products by default:
-    drafts/archived products are not sellable and must not be audited."""
+    drafts/archived products are not sellable and must not be audited.
+    If the full query is denied for a missing scope (read_publications / read_inventory) the fetch
+    falls back to a lean query, so the audit still runs and those checks become NA."""
     _validate_shop_api_inputs(shop_domain, access_token, api_version)
     if status is not None and status not in _ALLOWED_PRODUCT_STATUSES:
         raise ValueError("status must be active, draft, archived, or None.")
@@ -385,23 +408,33 @@ def fetch_products_admin(
     creds = (shop_domain.strip().lower().rstrip("."), access_token, api_version.strip())
     products: list[dict[str, Any]] = []
     cursor: str | None = None
+    lean = False
+    queries = _build_queries(lean)
 
     while True:
         first = PRODUCTS_PAGE_SIZE
         if max_products is not None:
             first = min(first, max_products - len(products))
 
-        result = _graphql_request(
-            *creds, _PRODUCTS_QUERY,
-            {"cursor": cursor, "first": first, "query": f"status:{status}" if status else None},
-        )
+        try:
+            result = _graphql_request(
+                *creds, queries["products"],
+                {"cursor": cursor, "first": first, "query": f"status:{status}" if status else None},
+            )
+        except ShopifyScopeError:
+            if lean:
+                raise
+            lean = True
+            queries = _build_queries(True)
+            continue                                   # retry the same page with the lean query
+
         connection = (result.get("data") or {}).get("products") or {}
         edges = connection.get("edges") or []
         if not edges:
             break
 
         for edge in edges:
-            products.append(_compact_admin_product(edge.get("node") or {}, creds))
+            products.append(_compact_admin_product(edge.get("node") or {}, creds, queries["more_variants"], lean))
             if max_products is not None and len(products) >= max_products:
                 return products
 
@@ -469,7 +502,7 @@ def fetch_product_variant_state(shop_domain: str, access_token: str, api_version
 _CORE_QUERY = """
 query StoreCore {
   shop {
-    id name email contactEmail currencyCode myshopifyDomain
+    id name currencyCode myshopifyDomain
     primaryDomain { host url sslEnabled }
     metafields(first: 20) { edges { node { namespace key type value } } }
   }
@@ -493,6 +526,10 @@ query StoreProfile {
     }
   }
 }
+"""
+
+_BRAND_QUERY = """
+query StoreBrand { shop { brand { slogan shortDescription } } }
 """
 
 _DELIVERY_QUERY = """
@@ -523,8 +560,8 @@ query StoreLocations {
 
 _CONTENT_QUERY = """
 query StoreContent {
-  pages(first: 50) { nodes { id title handle bodySummary } }
-  menus(first: 10) { nodes { id handle title items { title url items { title url } } } }
+  pages(first: 50) { nodes { id title handle body } }
+  menus(first: 10) { nodes { id handle title items { title url items { title url items { title url } } } } }
 }
 """
 
@@ -554,6 +591,8 @@ def _section(sections: dict[str, dict], name: str, fn: Callable[[], Any]) -> Any
         data = fn()
         sections[name] = {"status": "ok", "error": None}
         return data
+    except ShopifyAuthError as error:
+        sections[name] = {"status": "auth_failed", "error": str(error)[:300]}
     except ShopifyScopeError as error:
         sections[name] = {"status": "scope_missing", "error": str(error)[:300]}
     except ShopifyAdminAPIError as error:
@@ -564,7 +603,8 @@ def _section(sections: dict[str, dict], name: str, fn: Callable[[], Any]) -> Any
 def fetch_store_context_admin(shop_domain: str, access_token: str, api_version: str) -> dict[str, Any]:
     """Store-level context. A failed section is recorded in ctx["sections"] and
     the matching deterministic checks return 'na' (unknown) instead of
-    reporting a defect. Never returns an empty dict silently."""
+    reporting a defect. Never returns an empty dict silently.
+    Check ctx["sections"] for status "auth_failed": the merchant must reconnect the app."""
     creds = _validate_shop_api_inputs(shop_domain, access_token, api_version)
     sections: dict[str, dict] = {}
     ctx: dict[str, Any] = {"shop": {}, "sections": sections}
@@ -584,6 +624,10 @@ def fetch_store_context_admin(shop_domain: str, access_token: str, api_version: 
     if prof:
         ctx["shop"].update(prof.get("shop") or {})
 
+    brand = _section(sections, "brand", lambda: run(_BRAND_QUERY))
+    if brand:
+        ctx["shop"]["brand"] = (brand.get("shop") or {}).get("brand") or {}
+
     deliv = _section(sections, "delivery", lambda: run(_DELIVERY_QUERY))
     ctx["delivery_profiles"] = _nodes((deliv or {}).get("deliveryProfiles"))
 
@@ -591,7 +635,12 @@ def fetch_store_context_admin(shop_domain: str, access_token: str, api_version: 
     ctx["locations"] = _nodes((loc or {}).get("locations"))
 
     content = _section(sections, "content", lambda: run(_CONTENT_QUERY))
-    ctx["pages"] = _nodes((content or {}).get("pages"))
+    pages = _nodes((content or {}).get("pages"))
+    for page in pages:
+        body = page.pop("body", None)
+        if _FAQ_PAGE_RE.search(f"{page.get('handle') or ''} {page.get('title') or ''}"):
+            page["body"] = _html_to_text(body)        # key present only for FAQ-like pages
+    ctx["pages"] = pages
     ctx["menus"] = _nodes((content or {}).get("menus"))
 
     defs = _section(sections, "definitions", lambda: run(_DEFINITIONS_QUERY))

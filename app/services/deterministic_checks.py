@@ -4,27 +4,35 @@ from __future__ import annotations
 import html
 import json
 import re
+from collections import Counter
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlparse
 
 
 def _uniq(ids) -> list[str]:
     return list(dict.fromkeys(str(i) for i in ids if i))
 
 
-# ── config ───────────────────────────────────────────────────────────────
+# ── config ──
 MIN_POLICY_WORDS = 10
+MIN_FAQ_WORDS = 30
+CONSISTENCY_MAJORITY = 0.5      
+CONSISTENCY_FAIL_RATIO = 0.9   
+
 GENERIC_OPTION_NAMES = {"title", "option", "option1", "option2", "option3",
                         "custom", "custom1", "custom2", "custom3", "variant", "default"}
 GENERIC_OPTION_VALUES = {"default title", "default", "option1", "option2", "option3",
                          "custom", "undefined", "null"}
+GENERIC_PRODUCT_TYPES = {"shop", "general", "default", "products", "product", "other", "others",
+                         "uncategorized", "uncategorised", "misc", "miscellaneous", "all", "item", "items"}
 CONTACT_TOKENS = {"contact", "kontakt", "contacto", "contato", "contatto"}
 ABOUT_TOKENS = {"about", "uber", "ueber", "propos", "acerca", "sobre", "chi", "story"}
 FAQ_TOKENS = {"faq", "faqs", "help", "questions", "fragen", "preguntas", "perguntas", "domande", "aide"}
-AGE_TAXONOMY_MARKERS = ("alcoholic beverages", "tobacco", "weapons", "mature")
-WARNING_TAXONOMY_MARKERS = ("vitamins & supplements", "health care", "baby & toddler")
+AGE_TAXONOMY_SEGMENTS = {"alcoholic beverages", "tobacco products", "weapons", "mature"}
+WARNING_TAXONOMY_SEGMENTS = {"vitamins & supplements"}
 _AGE_RE = re.compile(
-    r"\b(?:alcohol(?!-free)|tobacco|cigars?|cigarettes?|vapes?|vaping|e-liquids?|cannabis|cbd|"
+    r"\b(?:alcohol(?![\s-]*free)|tobacco|cigars?|cigarettes?|vapes?|vaping|e-liquids?|cannabis|cbd|"
     r"knife|knives|firearms?|ammunition|weapons?|lingerie)\b", re.I)
 _WARNING_RE = re.compile(
     r"\b(?:supplements?|vitamins?|medicin(?:e|al)|pharmaceuticals?|infant|loans?|insurance)\b", re.I)
@@ -47,11 +55,20 @@ _STORE_GUARD_TOKENS = {"age", "restriction", "restrictions", "region", "regions"
 _STORE_GUARD_TEXT_RE = re.compile(
     r"\b(?:age\s+(?:restriction|limit|verification|gate)|(?:18|21)\s*(?:\+|years?|or older)|"
     r"restricted\s+(?:regions?|countries)|do(?:es)? not ship to)\b", re.I)
+
+_DELIVERY_TIME_RE = re.compile(
+    r"\b\d+\s*(?:[-–]|to|bis|à|a)?\s*(?:\d+\s*)?"
+    r"(?:business\s+days?|working\s+days?|days?|weeks?|hours?|werktage?n?|tage?n?|wochen|"
+    r"jours?|semaines?|d[ií]as?|semanas?)\b"
+    r"|\b(?:same[- ]day|next[- ]day|overnight)\b", re.I)
+
 # Store checks that need Admin store context. Without usable context they are NA, never a defect.
 STORE_CONTEXT_REQUIRED_CHECKS = {
     "fulfillment_context", "policy_semantics", "faq_or_guidance",
     "store_guardrails", "legal_pages", "contact_brand",
 }
+
+NA_UNKNOWN_REASONS = {"no_store_context", "fetch_failed", "incomplete_data"}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -65,7 +82,8 @@ def _words(text: str | None) -> list[str]:
 
 
 def _tokens(text: str | None) -> set[str]:
-    return {t for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if t}
+    """Unicode-aware (accented / non-Latin words are kept)."""
+    return {t for t in re.split(r"[\W_]+", (text or "").lower()) if t}
 
 
 def has_placeholder(text: str | None) -> bool:
@@ -92,17 +110,24 @@ def _verdict(verdict: str, evidence: str, issues=None) -> dict:
     return {"verdict": verdict, "evidence": evidence, "issues": issues or []}
 
 
-def _na(evidence: str) -> dict:
-    return _verdict("na", evidence)
+def _na(evidence: str, reason: str = "not_applicable") -> dict:
+    """reason: not_applicable | no_store_context | fetch_failed | incomplete_data | nothing_to_compare"""
+    return {"verdict": "na", "evidence": evidence, "issues": [], "na_reason": reason}
 
 
 def _graded(evidence_ok: str, issues: list[dict], checked: int, failed: int, *,
             fail_if_core: bool = False) -> dict:
-    """pass when no issues; fail when a core requirement is unmet or everything failed; else partial."""
+    """pass when no issues; fail when a core requirement is unmet or everything failed; else partial.
+    checked=0 disables the 'everything failed' rule (only fail_if_core can produce fail)."""
     if not issues:
         return _verdict("pass", evidence_ok)
     verdict = "fail" if (fail_if_core or (checked and failed >= checked)) else "partial"
     return _verdict(verdict, " ".join(i["description"] for i in issues), issues)
+
+
+def store_context_usable(ctx: dict | None) -> bool:
+    """Single definition of 'usable store context'. Use it everywhere (report_builder too)."""
+    return bool(ctx) and "sections" in ctx
 
 
 def is_default_variant_product(product: dict) -> bool:
@@ -117,9 +142,17 @@ def is_default_variant_product(product: dict) -> bool:
             and (variants[0].get("title") or "").strip().lower() == "default title")
 
 
-def _selected_names(variant: dict) -> set[str]:
-    return {(s.get("name") or "").strip().lower()
-            for s in (variant.get("selectedOptions") or []) if (s.get("name") or "").strip()}
+def _valid_https_url(url: str) -> bool:
+    u = str(url).strip()
+    if re.search(r"\s", u):
+        return False
+    if u.startswith("/"):                     
+        return True
+    try:
+        p = urlparse(u)
+    except ValueError:
+        return False
+    return p.scheme == "https" and bool(p.netloc)
 
 
 # ── PRODUCT: identity / publication ──────────────────────────────────────
@@ -134,7 +167,7 @@ def check_stable_ids_urls(product: dict) -> dict:
         issues.append(_issue("missing_product_url", f"Product {pid} has no handle."))
     elif not re.fullmatch(r"[^\s/?#]+", str(handle)):
         issues.append(_issue("invalid_product_url", f"Handle '{handle}' is not a valid URL slug."))
-    if url and (re.search(r"\s", url) or url.lower().startswith("http://")):
+    if url and not _valid_https_url(url):
         issues.append(_issue("invalid_product_url", f"Product URL '{url}' is not a valid https URL."))
     return _graded(f"Product has id and valid handle '{handle}'.", issues, 3, len(issues),
                    fail_if_core=any(i["issue_type"] == "missing_product_id" for i in issues))
@@ -142,7 +175,7 @@ def check_stable_ids_urls(product: dict) -> dict:
 
 def check_published_to_sales_channel(product: dict) -> dict:
     if "published_channels" not in product:
-        return _na("Sales-channel publication is only known for Admin-API audits.")
+        return _na("Sales-channel publication is only known for Admin-API audits.", "incomplete_data")
     channels = product.get("published_channels") or []
     if product.get("status") not in (None, "ACTIVE"):
         msg = f"Product status is {product.get('status')}, so it is not sellable."
@@ -169,7 +202,8 @@ def check_variant_selection(product: dict) -> dict:
     if is_default_variant_product(product):
         return _na("Single default variant: nothing for an agent to select.")
     if not variants:
-        return _na("No variants were collected for this product (incomplete data); selection cannot be evaluated.")
+        return _na("No variants were collected for this product (incomplete data); selection cannot be evaluated.",
+                   "incomplete_data")
     if not options:
         if len(variants) == 1:
             return _na("Single variant without options: nothing to select.")
@@ -193,28 +227,31 @@ def check_variant_selection(product: dict) -> dict:
 
     expected = set(lowered)
     incomplete = [v for v in variants if set(_selected_name_list(v)) != expected]
+    incomplete_ids = {id(v) for v in incomplete}
     if incomplete:
         issues.append(_issue("incomplete_selected_options",
                              f"{len(incomplete)}/{len(variants)} variants lack a complete set of selected options.",
                              variant_ids=[_vid(v) for v in incomplete]))
 
     dup_in_variant = [v for v in variants
-                      if v not in incomplete and len(_selected_name_list(v)) != len(set(_selected_name_list(v)))]
+                      if id(v) not in incomplete_ids
+                      and len(_selected_name_list(v)) != len(set(_selected_name_list(v)))]
     combos: dict[tuple, list[dict]] = {}
     for v in variants:
-        if v in incomplete:
+        if id(v) in incomplete_ids:
             continue
         key = tuple(sorted(((s.get("name") or "").strip().lower(), (s.get("value") or "").strip().lower())
                            for s in (v.get("selectedOptions") or [])))
         combos.setdefault(key, []).append(v)
     dupes = [v for g in combos.values() if len(g) > 1 for v in g]
-    bad = {id(v): v for v in dupes + dup_in_variant}.values()
+    bad = list({id(v): v for v in dupes + dup_in_variant}.values())
     if bad:
         issues.append(_issue("inconsistent_variant_options",
-                             f"{len(list(bad))} variants repeat an option or share an identical option combination, so an agent cannot pick one SKU.",
+                             f"{len(bad)} variants repeat an option or share an identical option combination "
+                             f"(possible ambiguity; an agent can still select by variant id).",
                              variant_ids=[_vid(v) for v in bad]))
 
-    failed = len(missing) + len(dup_names) + len(incomplete) + len(list(bad))
+    failed = len(missing) + len(dup_names) + len(incomplete) + len(bad)
     return _graded("Options are named and every variant has a unique, complete option combination.",
                    issues, len(options) + len(variants), failed)
 
@@ -225,7 +262,8 @@ def check_variant_hygiene(product: dict) -> dict:
     if is_default_variant_product(product):
         return _na("Single default variant: no variant structure to evaluate.")
     if not variants or not options:
-        return _na("No variants/options were collected (incomplete data); hygiene cannot be evaluated.")
+        return _na("No variants/options were collected (incomplete data); hygiene cannot be evaluated.",
+                   "incomplete_data")
 
     issues = []
     generic_opts = [o for o in options if (o.get("name") or "").strip().lower() in GENERIC_OPTION_NAMES]
@@ -242,7 +280,6 @@ def check_variant_hygiene(product: dict) -> dict:
                              f"{len(generic_vals)} variants use a placeholder option value (e.g. 'Default Title').",
                              variant_ids=[_vid(v) for v in generic_vals]))
 
-    # same option, same value written differently ("Red" vs "red")
     spellings: dict[tuple[str, str], set[str]] = {}
     for v in variants:
         for s in (v.get("selectedOptions") or []):
@@ -261,49 +298,64 @@ def check_variant_hygiene(product: dict) -> dict:
     return _graded("Option names and values are descriptive and consistent.", issues,
                    len(options) + len(variants), failed)
 
+
 def _to_decimal(raw) -> Decimal | None:
     try:
         d = Decimal(str(raw).strip())
     except (InvalidOperation, ValueError):
         return None
-    return d if d.is_finite() else None          
+    return d if d.is_finite() else None
 
 
 def check_pricing_clarity(product: dict) -> dict:
+    """missing / non-numeric / negative = invalid data. Zero can be intentional, so it is a soft signal
+    (never worse than partial)."""
     variants = product.get("variants") or []
     if not variants:
-        return _na("No variants to evaluate.")
-    missing, zero, bad = [], [], []
+        return _na("No variants to evaluate.", "incomplete_data")
+    missing, bad, negative, zero = [], [], [], []
     for v in variants:
         raw = v.get("price")
         if raw in (None, ""):
             missing.append(v)
-        else:
-            d = _to_decimal(raw)
-            if d is None:
-                bad.append(v)
-            elif d <= 0:
-                zero.append(v)
+            continue
+        d = _to_decimal(raw)
+        if d is None:
+            bad.append(v)
+        elif d < 0:
+            negative.append(v)
+        elif d == 0:
+            zero.append(v)
+
     issues = []
     if missing:
         issues.append(_issue("missing_price", f"{len(missing)} variant(s) have no price.",
                              variant_ids=[_vid(v) for v in missing]))
-    if bad:
-        issues.append(_issue("placeholder_price", f"{len(bad)} variant(s) have a non-numeric price.",
-                             variant_ids=[_vid(v) for v in bad]))
+    invalid = bad + negative
+    if invalid:
+        parts = []
+        if bad:
+            parts.append(f"{len(bad)} non-numeric")
+        if negative:
+            parts.append(f"{len(negative)} negative")
+        issues.append(_issue("invalid_price", f"{' and '.join(parts)} price value(s).",
+                             variant_ids=[_vid(v) for v in invalid]))
     if zero:
-        issues.append(_issue("zero_price", f"{len(zero)} variant(s) are priced at 0.",
+        issues.append(_issue("zero_price", f"{len(zero)} variant(s) are priced at 0 (confirm this is intentional).",
                              variant_ids=[_vid(v) for v in zero]))
-    return _graded(f"All {len(variants)} variant(s) have a numeric, non-zero price.",
-                   issues, len(variants), len(missing) + len(bad) + len(zero))
+
+    if not issues:
+        return _verdict("pass", f"All {len(variants)} variant(s) have a numeric, positive price.")
+    hard = len(missing) + len(invalid)
+    verdict = "fail" if hard and hard >= len(variants) else "partial"
+    return _verdict(verdict, " ".join(i["description"] for i in issues), issues)
 
 
 def check_availability_signals(product: dict) -> dict:
-    """Being SOLD OUT is not a defect. Not being able to tell is.
-    (Public products.json has no inventory quantity, so only the boolean is required.)"""
+    """Being SOLD OUT is not a defect. Not being able to tell is."""
     variants = product.get("variants") or []
     if not variants:
-        return _na("No variants to evaluate.")
+        return _na("No variants to evaluate.", "incomplete_data")
     no_signal = [v for v in variants if not isinstance(v.get("available"), bool)]
     issues = []
     if no_signal:
@@ -317,9 +369,16 @@ def check_availability_signals(product: dict) -> dict:
 
 # ── PRODUCT: identifiers ─────────────────────────────────────────────────
 
-def is_valid_gtin(code: str | None) -> bool:
+def _gtin_digits(code: str | None) -> str | None:
+    """Digits of a barcode that is DECLARED in GTIN shape (numeric, 8/12/13/14 digits), else None.
+    Non-numeric or odd-length barcodes may be internal codes and are not judged as GTINs."""
     digits = re.sub(r"[\s-]", "", code or "")
-    if not digits.isdigit() or len(digits) not in (8, 12, 13, 14):
+    return digits if digits.isdigit() and len(digits) in (8, 12, 13, 14) else None
+
+
+def is_valid_gtin(code: str | None) -> bool:
+    digits = _gtin_digits(code)
+    if not digits or set(digits) == {"0"}:
         return False
     nums = [int(c) for c in digits]
     check = nums.pop()
@@ -330,7 +389,7 @@ def is_valid_gtin(code: str | None) -> bool:
 def check_identifiers(product: dict) -> dict:
     variants = product.get("variants") or []
     if not variants:
-        return _na("No variants to evaluate.")
+        return _na("No variants to evaluate.", "incomplete_data")
     issues = []
 
     no_sku = [v for v in variants if not (v.get("sku") or "").strip()]
@@ -341,24 +400,66 @@ def check_identifiers(product: dict) -> dict:
     dup_skus = {s for s in skus if skus.count(s) > 1}
     if dup_skus:
         dv = [v for v in variants if (v.get("sku") or "").strip().lower() in dup_skus]
-        issues.append(_issue("duplicate_sku", f"{len(dv)} variants share a SKU.",
+        issues.append(_issue("duplicate_sku", f"{len(dv)} variants share a SKU (case-insensitive).",
                              variant_ids=[_vid(v) for v in dv]))
 
-    with_code = [v for v in variants if (v.get("barcode") or "").strip()]
-    bad = [v for v in with_code if not is_valid_gtin(v["barcode"])]
+    gtin_like = [v for v in variants if _gtin_digits(v.get("barcode"))]
+    bad = [v for v in gtin_like if not is_valid_gtin(v["barcode"])]
     if bad:
-        issues.append(_issue("invalid_gtin", f"{len(bad)} barcode(s) fail GTIN length/check-digit validation.",
+        issues.append(_issue("invalid_gtin", f"{len(bad)} GTIN-format barcode(s) fail check-digit validation or are all zeros.",
                              variant_ids=[_vid(v) for v in bad]))
     without = [v for v in variants if not (v.get("barcode") or "").strip()]
-    # Only a defect when the merchant clearly uses barcodes elsewhere (mixed present/absent).
-    if without and with_code:
+    if without and gtin_like:
         issues.append(_issue("missing_gtin",
-                             f"{len(without)}/{len(variants)} variant(s) have no barcode while others do.",
+                             f"{len(without)}/{len(variants)} variant(s) have no barcode while others carry a GTIN.",
                              variant_ids=[_vid(v) for v in without]))
 
-    failed = len(no_sku) + len(bad) + (len(without) if with_code else 0)
-    return _graded("All variants have unique SKUs and valid barcodes.", issues, len(variants), failed,
+    failed = len(no_sku) + len(bad) + (len(without) if gtin_like else 0)
+    gtin_note = ("Declared GTINs pass check-digit validation." if gtin_like
+                 else "No GTIN-format barcodes supplied; GTIN validation not performed.")
+    return _graded(f"All variants have unique SKUs. {gtin_note}", issues, len(variants), failed,
                    fail_if_core=len(no_sku) == len(variants))
+
+
+def find_cross_product_duplicate_skus(products: list[dict]) -> dict[str, dict]:
+    """Catalog-level: SKUs (case-insensitive) used by variants of DIFFERENT products.
+    Returns {product_id: {"skus": [...], "variant_ids": [...]}}."""
+    owners: dict[str, list[tuple[str, str | None]]] = {}
+    for p in products:
+        pid = str(p.get("id") or p.get("product_id") or "").strip()
+        if not pid:
+            continue
+        for v in p.get("variants") or []:
+            sku = (v.get("sku") or "").strip().lower()
+            if sku:
+                owners.setdefault(sku, []).append((pid, _vid(v)))
+    result: dict[str, dict] = {}
+    for sku, entries in owners.items():
+        pids = {e[0] for e in entries}
+        if len(pids) < 2:
+            continue
+        for pid in pids:
+            r = result.setdefault(pid, {"skus": [], "variant_ids": []})
+            r["skus"].append(sku)
+            r["variant_ids"] += [vid for p_, vid in entries if p_ == pid]
+    return result
+
+
+def apply_cross_product_duplicate_skus(verdict: str, issues: list[dict], pid: str,
+                                       dup_map: dict[str, dict]) -> tuple[str, list[dict]]:
+    """Fold a cross-product duplicate-SKU finding into a product's identifiers result."""
+    info = dup_map.get(str(pid))
+    if not info:
+        return verdict, issues
+    shown = sorted(set(info["skus"]))[:5]
+    desc = f"Possible duplicate SKU shared with other products: {shown}."
+    issues = [dict(i) for i in issues]
+    existing = next((i for i in issues if i.get("issue_type") == "duplicate_sku"), None)
+    if existing:
+        existing["affected_variant_ids"] = _uniq((existing.get("affected_variant_ids") or []) + info["variant_ids"])
+    else:
+        issues.append(_issue("duplicate_sku", desc, variant_ids=info["variant_ids"]))
+    return ("partial" if verdict == "pass" else verdict), issues
 
 
 # ── PRODUCT: taxonomy, media, guardrails ─────────────────────────────────
@@ -369,19 +470,25 @@ def check_comparable_attributes(product: dict) -> dict:
     cat = product.get("category")
     if has_category_field and not (isinstance(cat, dict) and cat.get("id")):
         issues.append(_issue("missing_taxonomy_category", "No Shopify standard taxonomy category is assigned."))
-    if not (product.get("product_type") or "").strip():
+    ptype = (product.get("product_type") or "").strip()
+    if not ptype:
         issues.append(_issue("missing_product_type", "product_type is empty."))
-    return _graded("Taxonomy category and product type are set.", issues,
+    elif ptype.lower() in GENERIC_PRODUCT_TYPES:
+        issues.append(_issue("generic_product_type",
+                             f"product_type '{ptype}' is too generic to help an agent categorize or compare the product."))
+    return _graded("Taxonomy category and a specific product type are set.", issues,
                    2 if has_category_field else 1, len(issues))
 
 
 def check_media_quality(product: dict) -> dict:
+    """Media COMPLETENESS (presence + alt text); not whether the image is good or loads."""
     if "images" not in product:
-        return _na("Image data not available for this audit source.")
+        return _na("Image data not available for this audit source.", "incomplete_data")
     images = product.get("images") or []
     if not images:
         if "media_truncated" in (product.get("data_warnings") or []):
-            return _na("No image seen in the collected media, but media was truncated; cannot confirm there is none.")
+            return _na("No image seen in the collected media, but media was truncated; cannot confirm there is none.",
+                       "incomplete_data")
         return _verdict("fail", "Product has no images.",
                         [_issue("missing_product_image", "Product has no images.")])
     no_alt = [i for i in images if not (i.get("alt") or "").strip()]
@@ -392,12 +499,13 @@ def check_media_quality(product: dict) -> dict:
 
 
 def _risk_kinds(product: dict) -> set[str]:
-    """Combine ALL evidence (taxonomy + title/type/tags). A non-risky category never hides a risky keyword."""
+    """SUSPECTED risk kinds from taxonomy + title/type/tags. Keyword matching is heuristic."""
     kinds: set[str] = set()
     cat = ((product.get("category") or {}).get("fullName") or "").lower()
-    if any(m in cat for m in AGE_TAXONOMY_MARKERS):
+    segments = {s.strip() for s in cat.split(">") if s.strip()}
+    if segments & AGE_TAXONOMY_SEGMENTS:
         kinds.add("age")
-    if any(m in cat for m in WARNING_TAXONOMY_MARKERS):
+    if segments & WARNING_TAXONOMY_SEGMENTS:
         kinds.add("warning")
     hay = " ".join([str(product.get("product_type") or ""), str(product.get("title") or ""),
                     " ".join(product.get("tags") or [])])
@@ -408,20 +516,18 @@ def _risk_kinds(product: dict) -> set[str]:
     return kinds
 
 
-def _product_is_risky(product: dict) -> bool:
-    return bool(_risk_kinds(product))
-
-
 def _populated(meta) -> bool:
-    return isinstance(meta, dict) and str(meta.get("value") or "").strip() not in ("", "[]", "{}", "null")
+    return isinstance(meta, dict) and str(meta.get("value") or "").strip() not in ("", "[]", "{}", "null", "false")
 
 
 def check_product_guardrails(product: dict) -> dict:
+    """Disclosure SIGNALS only: a populated metafield is not proof of enforcement."""
     kinds = _risk_kinds(product)
     if not kinds:
-        return _na(f"Product '{product.get('title')}' is not in a risky category.")
+        return _na(f"Product '{product.get('title')}' is not in a suspected risky category.")
     if "metafields" not in product:      # public audit: unknown, not a defect
-        return _na("Metafields were not available for this audit source, so guardrails cannot be evaluated.")
+        return _na("Metafields were not available for this audit source, so guardrails cannot be evaluated.",
+                   "incomplete_data")
     populated = {k for k, m in (product.get("metafields") or {}).items() if _populated(m)}
 
     def has(tokens: set[str]) -> bool:
@@ -429,16 +535,18 @@ def check_product_guardrails(product: dict) -> dict:
 
     issues = []
     if "age" in kinds and not has(AGE_GUARD_TOKENS):
-        issues.append(_issue("missing_age_limit", "Age-restricted product has no populated age-limit guardrail metafield."))
+        issues.append(_issue("missing_age_limit",
+                             "Suspected age-restricted product has no populated age-limit guardrail metafield."))
     if "warning" in kinds and not has(WARNING_GUARD_TOKENS):
-        issues.append(_issue("missing_warning", "Product in a health/safety/financial category has no populated warning metafield."))
-    return _graded("Required guardrail metafield(s) are present and populated.", issues, len(kinds), len(issues))
+        issues.append(_issue("missing_warning",
+                             "Suspected health/safety/financial product has no populated warning metafield."))
+    return _graded("Guardrail metafield signal(s) present and populated.", issues, len(kinds), len(issues))
 
 
 # ── STORE ────────────────────────────────────────────────────────────────
 
 def _section_ok(ctx: dict | None, name: str) -> tuple[bool, str]:
-    if not ctx or "sections" not in ctx:
+    if not store_context_usable(ctx):
         return False, "No store context (public audit, failed fetch, or no Admin API)."
     sec = (ctx.get("sections") or {}).get(name)
     if not sec or sec.get("status") != "ok":
@@ -446,34 +554,42 @@ def _section_ok(ctx: dict | None, name: str) -> tuple[bool, str]:
     return True, ""
 
 
-_POLICY_TYPES = {"privacy": "PRIVACY_POLICY", "refund": "REFUND_POLICY",
-                 "shipping": "SHIPPING_POLICY", "terms": "TERMS_OF_SERVICE"}
+def _gate(ctx: dict | None, name: str) -> dict | None:
+    """Returns an NA result (with the right na_reason) when the section is unusable, else None."""
+    ok, why = _section_ok(ctx, name)
+    if ok:
+        return None
+    return _na(why, "no_store_context" if not store_context_usable(ctx) else "fetch_failed")
+
+
+_POLICY_TYPES = {"privacy": ("PRIVACY_POLICY",), "refund": ("REFUND_POLICY",),
+                 "shipping": ("SHIPPING_POLICY",), "terms": ("TERMS_OF_SERVICE", "TERMS_OF_SALE")}
 
 
 def check_legal_pages(ctx: dict | None) -> dict:
-    ok, why = _section_ok(ctx, "policies")
-    if not ok:
-        return _na(why)
+    gate = _gate(ctx, "policies")
+    if gate:
+        return gate
     by_type = {p.get("type"): strip_html(p.get("body")) for p in ctx.get("policies") or []}
     ship_required = (ctx.get("catalog_flags") or {}).get("requires_shipping") is True
     issues, required_count = [], 0
-    for name, ptype in _POLICY_TYPES.items():
+    for name, ptypes in _POLICY_TYPES.items():
         required = name != "shipping" or ship_required     # unknown shipping need is never a defect
-        text = by_type.get(ptype, "")
+        text = max((by_type.get(t, "") for t in ptypes), key=lambda s: len(_words(s)), default="")
         required_count += 1 if required else 0
         if len(_words(text)) < MIN_POLICY_WORDS:
             if required:
                 issues.append(_issue(f"missing_{name}_policy", f"The {name} policy is missing or effectively empty."))
         elif has_placeholder(text):
-            issues.append(_issue(f"placeholder_{name}_policy", f"The {name} policy contains unfilled placeholder text."))
+            issues.append(_issue(f"placeholder_{name}_policy", f"The {name} policy contains suspected unfilled placeholder text."))
     return _graded("All required policies are present with no placeholder text.", issues,
                    required_count, len(issues), fail_if_core=required_count > 0 and len(issues) >= required_count)
 
 
 def check_fulfillment_context(ctx: dict | None) -> dict:
-    ok, why = _section_ok(ctx, "delivery")
-    if not ok:
-        return _na(why)
+    gate = _gate(ctx, "delivery")
+    if gate:
+        return gate
     if (ctx.get("catalog_flags") or {}).get("requires_shipping") is not True:
         return _na("No shippable product confirmed (digital-only or unknown), so fulfillment is not evaluated.")
     methods, countries, rest_of_world = [], set(), False
@@ -489,33 +605,68 @@ def check_fulfillment_context(ctx: dict | None) -> dict:
                 methods += [m for m in ((zn.get("methodDefinitions") or {}).get("nodes") or []) if m.get("active")]
     pickup = [l for l in ctx.get("locations") or [] if l.get("isActive") and l.get("localPickupSettingsV2")]
     ships_to = (ctx.get("shop") or {}).get("shipsToCountries") or []
+    pickup_only = bool(pickup) and not methods
 
     issues = []
-    if not methods and not pickup:
+    no_methods = not methods and not pickup
+    no_region = not pickup_only and not countries and not rest_of_world and not ships_to
+    if no_methods:
         issues.append(_issue("missing_shipping_methods", "No active shipping method or local pickup is configured."))
-    if not countries and not rest_of_world and not ships_to:
+    if no_region:
         issues.append(_issue("missing_region_coverage", "No shipping zone or destination country is configured."))
+
+    thin_pickup = []
+    for l in pickup:
+        s = l.get("localPickupSettingsV2")
+        if isinstance(s, dict) and "instructions" in s and not (s.get("instructions") or "").strip():
+            thin_pickup.append(l.get("name") or l.get("id") or "location")
+    if thin_pickup:
+        issues.append(_issue("missing_pickup_information",
+                             f"Pickup is enabled but has no pickup instructions at: {thin_pickup}."))
+
+    policies_ok, _ = _section_ok(ctx, "policies")
+    if methods and policies_ok:
+        ship_text = next((strip_html(p.get("body")) for p in ctx.get("policies") or []
+                          if p.get("type") == "SHIPPING_POLICY"), "")
+        if len(_words(ship_text)) >= MIN_POLICY_WORDS and not _DELIVERY_TIME_RE.search(ship_text):
+            issues.append(_issue("missing_delivery_time",
+                                 "The shipping policy states no delivery timeframe (e.g. '3-5 business days')."))
+
     return _graded(f"{len(methods)} active method(s), {len(pickup)} pickup location(s), "
-                   f"{len(countries) or 'rest-of-world'} destination(s).", issues, 2, len(issues),
-                   fail_if_core=len(issues) == 2)
+                   f"{len(countries) or 'rest-of-world/other'} destination(s).",
+                   issues, 0, len(issues), fail_if_core=no_methods and no_region)
 
 
-def _site_tokens(ctx: dict) -> set[str]:
+def _walk_menu(items: list[dict]) -> set[str]:
     toks: set[str] = set()
-    for p in ctx.get("pages") or []:
-        toks |= _tokens(p.get("handle")) | _tokens(p.get("title"))
-    for m in ctx.get("menus") or []:
-        for it in (m.get("items") or []):
-            toks |= _tokens(it.get("title")) | _tokens((it.get("url") or "").rsplit("/", 1)[-1])
-            for sub in it.get("items") or []:
-                toks |= _tokens(sub.get("title")) | _tokens((sub.get("url") or "").rsplit("/", 1)[-1])
+    for it in items or []:
+        toks |= _tokens(it.get("title")) | _tokens((it.get("url") or "").rsplit("/", 1)[-1])
+        toks |= _walk_menu(it.get("items") or [])          # any depth
     return toks
 
 
+def _menu_tokens(ctx: dict) -> set[str]:
+    toks: set[str] = set()
+    for m in ctx.get("menus") or []:
+        toks |= _walk_menu(m.get("items") or [])
+    return toks
+
+
+def _page_tokens(ctx: dict) -> set[str]:
+    toks: set[str] = set()
+    for p in ctx.get("pages") or []:
+        toks |= _tokens(p.get("handle")) | _tokens(p.get("title"))
+    return toks
+
+
+def _site_tokens(ctx: dict) -> set[str]:
+    return _page_tokens(ctx) | _menu_tokens(ctx)
+
+
 def check_contact_brand(ctx: dict | None) -> dict:
-    ok, why = _section_ok(ctx, "content")
-    if not ok:
-        return _na(why)
+    gate = _gate(ctx, "content")
+    if gate:
+        return gate
     policies_ok, _ = _section_ok(ctx, "policies")
     profile_ok, _ = _section_ok(ctx, "profile")
     toks = _site_tokens(ctx)
@@ -537,33 +688,48 @@ def check_contact_brand(ctx: dict | None) -> dict:
         (issues if profile_ok else unknown).append(
             _issue("missing_brand_information", "No about page, brand description or shop description found."))
     if not issues and unknown:
-        return _na("Contact/brand could not be fully evaluated because a store-context section failed to load.")
+        return _na("Contact/brand could not be fully evaluated because a store-context section failed to load.",
+                   "fetch_failed")
     return _graded("Public contact and brand information found.", issues, 2 - len(unknown), len(issues))
 
 
 def check_faq_or_guidance(ctx: dict | None) -> dict:
-    ok, why = _section_ok(ctx, "content")
-    if not ok:
-        return _na(why)
-    toks = _site_tokens(ctx)
+    gate = _gate(ctx, "content")
+    if gate:
+        return gate
+    faq_pages = [p for p in ctx.get("pages") or []
+                 if (_tokens(p.get("handle")) | _tokens(p.get("title"))) & FAQ_TOKENS]
+    meta_hit = False
     for d in ((ctx.get("metaobjectDefinitions") or {}).get("edges") or []):
         n = d.get("node") or {}
         if (_tokens(n.get("type")) | _tokens(n.get("name"))) & FAQ_TOKENS and (n.get("metaobjectsCount") or 0) > 0:
-            toks |= FAQ_TOKENS
-    if toks & FAQ_TOKENS:
-        return _verdict("pass", "FAQ/help content found in pages, menus or metaobjects.")
+            meta_hit = True
+    menu_hit = bool(_menu_tokens(ctx) & FAQ_TOKENS)
+
+    body_known = [p for p in faq_pages if "body" in p]
+    if any(len(_words(strip_html(p.get("body")))) >= MIN_FAQ_WORDS for p in body_known):
+        return _verdict("pass", "FAQ/help page with substantive content found.")
+    if body_known:
+        msg = f"FAQ/help page found but its body has fewer than {MIN_FAQ_WORDS} words."
+        return _verdict("partial", msg, [_issue("insufficient_shopping_guidance", msg)])
+    if faq_pages or meta_hit:
+        return _verdict("pass", "FAQ/help page or FAQ metaobject entries found (content depth not verified: bodies not collected).")
+    if menu_hit:
+        msg = "Only a menu entry labelled like FAQ/help was found; no FAQ page or content could be verified."
+        return _verdict("partial", msg, [_issue("insufficient_shopping_guidance", msg)])
     msg = "No FAQ/help page, menu entry or FAQ metaobject entries found."
-    return _verdict("fail", msg, [_issue("missing_faq", msg)])
+    return _verdict("partial", msg, [_issue("missing_faq", msg)])
 
 
 def check_store_guardrails(ctx: dict | None) -> dict:
-    ok, why = _section_ok(ctx, "core")
-    if not ok:
-        return _na(why)
+    """Restriction DISCLOSURE signals (metafield or policy text). Cannot prove checkout enforcement."""
+    gate = _gate(ctx, "core")
+    if gate:
+        return gate
     flags = ctx.get("catalog_flags") or {}
     if not flags.get("has_risky_products"):
-        return _na("No risky products seen in the audited products; absence in a sample is not proof of absence, "
-                   "so store guardrails are not evaluated.")
+        return _na("No suspected risky products seen in the audited products; absence in a sample is not proof "
+                   "of absence, so store guardrails are not evaluated.")
     edges = ((ctx.get("shop") or {}).get("metafields") or {}).get("edges") or []
     keys = [f"{(e.get('node') or {}).get('namespace')}.{(e.get('node') or {}).get('key')}"
             for e in edges if (e.get("node") or {}).get("value")]
@@ -571,18 +737,15 @@ def check_store_guardrails(ctx: dict | None) -> dict:
     text_hit = policies_ok and any(_STORE_GUARD_TEXT_RE.search(strip_html(p.get("body")))
                                    for p in ctx.get("policies") or [])
     if any(_tokens(k) & _STORE_GUARD_TOKENS for k in keys) or text_hit:
-        return _verdict("pass", "Store-level guardrail metafield or policy text present.")
+        return _verdict("pass", "Store-level restriction disclosure signal found (metafield or policy text); "
+                                "enforcement is not verified.")
     if not policies_ok:
-        return _na("Policy text could not be fetched, so store guardrails cannot be fully evaluated.")
-    msg = "Risky products present but no store-level guardrail metafield or policy text found."
+        return _na("Policy text could not be fetched, so store guardrails cannot be fully evaluated.", "fetch_failed")
+    msg = "Suspected risky products present but no store-level restriction metafield or policy text found."
     issue_type = "missing_age_gating" if "age" in (flags.get("risk_kinds") or []) else "missing_manual_approval_rule"
     return _verdict("partial", msg, [_issue(issue_type, msg)])
 
 
-# ── legacy helpers (kept: report_builder imports these) ──────────────────
-_variant_id = _vid
-_option_id = _oid
-_GENERIC_OPTION_NAMES = GENERIC_OPTION_NAMES
 
 
 def _make_verdict(verdict, evidence, issue_type=None, *, variant_ids=None, option_ids=None):
@@ -593,18 +756,12 @@ def _make_verdict(verdict, evidence, issue_type=None, *, variant_ids=None, optio
 
 
 def check_description_presence(product: dict) -> dict | None:
-    """Empty-description case only (report_builder overrides product_understanding/clarity with it)."""
+    """Empty-description case only."""
     text = product.get("description_text")
     if text is None:
         text = strip_html(product.get("description"))
     if not (text or "").strip():
         return _make_verdict("fail", "Product description is empty.", "insufficient_product_description")
-    return None
-
-
-def check_product_type_presence(product: dict) -> dict | None:
-    if not (product.get("product_type") or "").strip():
-        return _make_verdict("partial", "product_type field is empty.", "missing_product_type")
     return None
 
 
@@ -620,7 +777,10 @@ PRODUCT_DETERMINISTIC_CHECKS = {
     "identifiers": check_identifiers,
     "media_quality": check_media_quality,
     "product_guardrails": check_product_guardrails,
+    "comparable_attributes": check_comparable_attributes,   
 }
+
+PRODUCT_CHECKS_MERGED_WITH_LLM = {"comparable_attributes"}
 
 STORE_DETERMINISTIC_CHECKS = {
     "legal_pages": check_legal_pages,
@@ -630,12 +790,11 @@ STORE_DETERMINISTIC_CHECKS = {
     "store_guardrails": check_store_guardrails,
 }
 
-
 _TRUNCATION_RULES = {
     "variants_truncated": ({"variant_selection", "pricing_clarity", "availability_signals",
                             "identifiers", "variant_hygiene"}, {"pass": "na", "fail": "partial"}),
     "media_truncated": ({"media_quality"}, {"pass": "na"}),
-    "metafields_truncated": ({"product_guardrails"}, {"fail": "na"}),
+    "metafields_truncated": ({"product_guardrails"}, {"fail": "na", "partial": "na"}),
 }
 
 
@@ -646,7 +805,7 @@ def _guard_truncation(check_id: str, result: dict, product: dict) -> dict:
             action = remap.get(result.get("verdict"))
             if action == "na":
                 return _na(f"Incomplete data ({warning}): only part of this product's data was collected, "
-                           f"so this conclusion cannot be confirmed.")
+                           f"so this conclusion cannot be confirmed.", "incomplete_data")
             if action:
                 return {**result, "verdict": action,
                         "evidence": f"{result.get('evidence', '')} (Based on partial data: {warning}.)"}
@@ -659,14 +818,68 @@ def run_product_deterministic_checks(product: dict) -> dict[str, dict]:
 
 
 def run_store_deterministic_checks(ctx: dict | None) -> dict[str, dict]:
-    usable = bool(ctx) and "sections" in ctx
+    usable = store_context_usable(ctx)
     results = {cid: fn(ctx if usable else None) for cid, fn in STORE_DETERMINISTIC_CHECKS.items()}
     if not usable:
         # Public audit / failed context fetch: every context-dependent check (including the
         # LLM-judged policy_semantics) is NA so missing evidence is never scored as a defect.
         for cid in STORE_CONTEXT_REQUIRED_CHECKS:
-            results[cid] = _na(f"'{cid}' cannot be evaluated: store context was not available for this audit.")
+            results[cid] = _na(f"'{cid}' cannot be evaluated: store context was not available for this audit.",
+                               "no_store_context")
     return results
+
+
+# ── merging with LLM verdicts ─────────────────────────────────
+
+_VERDICT_ORDER = {"na": 0, "pass": 1, "partial": 2, "fail": 3}
+
+
+def merge_with_llm(
+    det: dict,
+    llm_verdict: str,
+    llm_issues: list[dict],
+) -> tuple[str, list[dict]]:
+    if det.get("verdict") == "na":
+        return llm_verdict, llm_issues or []
+
+    verdict = max(
+        (det.get("verdict", "na"), llm_verdict),
+        key=lambda v: _VERDICT_ORDER.get(v, 0),
+    )
+
+    merged = []
+    seen = set()
+
+    for issue in (det.get("issues") or []) + (llm_issues or []):
+        issue_type = issue.get("issue_type")
+        if not issue_type:
+            merged.append(issue)
+            continue
+
+        if issue_type in seen:
+            continue
+
+        seen.add(issue_type)
+        merged.append(issue)
+
+    if verdict in ("pass", "na"):
+        merged = []
+
+    return verdict, merged
+
+
+def coverage_summary(results: list[dict]) -> dict[str, Any]:
+    """results: deterministic check result dicts (store + product). Quantifies how much was UNKNOWN,
+    so a store with little collected data cannot look healthy just because unknowns are excluded."""
+    total = len(results)
+    reasons = Counter(r.get("na_reason") for r in results if r.get("verdict") == "na")
+    unknown = sum(n for reason, n in reasons.items() if reason in NA_UNKNOWN_REASONS)
+    return {
+        "total_checks": total,
+        "unknown_checks": unknown,
+        "coverage_ratio": round(1 - unknown / total, 3) if total else 0.0,
+        "na_reasons": dict(reasons),
+    }
 
 
 def compute_catalog_flags(products: list[dict], catalog_complete: bool = False) -> dict[str, Any]:
@@ -702,7 +915,7 @@ _SHOPIFY_UNIT_NAMES = {"MILLIMETERS": "mm", "CENTIMETERS": "cm", "METERS": "m", 
 
 def _unit_of(meta: dict) -> str | None:
     mtype, value = (meta.get("type") or ""), meta.get("value")
-    if mtype in ("dimension", "weight", "volume") or mtype.startswith("list.dimension"):
+    if mtype in ("dimension", "weight", "volume") or mtype.startswith(("list.dimension", "list.weight", "list.volume")):
         try:
             data = json.loads(value)
             data = data[0] if isinstance(data, list) and data else data
@@ -764,8 +977,8 @@ def _comparable_metafields(product: dict) -> dict[str, dict]:
     return out
 
 
-def _cons_na(evidence: str) -> dict[str, Any]:
-    return {"verdict": "na", "evidence": evidence, "issues": [], "affected_product_ids": []}
+def _cons_na(evidence: str, reason: str = "nothing_to_compare") -> dict[str, Any]:
+    return {"verdict": "na", "evidence": evidence, "issues": [], "affected_product_ids": [], "na_reason": reason}
 
 
 def check_catalog_consistency(products: list[dict], measurement_observations: list[dict] | None = None) -> dict:
@@ -812,7 +1025,7 @@ def check_catalog_consistency(products: list[dict], measurement_observations: li
             for name in sorted(set().union(*option_sets.values())):
                 present = {i for i, s in option_sets.items() if name in s}
                 missing = {i for i, s in option_sets.items() if name not in s}
-                if present and missing and len(present) > len(with_options) / 2:
+                if present and missing and len(present) > len(with_options) * CONSISTENCY_MAJORITY:
                     affected |= missing
                     issues.append({
                         "issue_type": "inconsistent_option_structure", "status": "existing",
@@ -821,18 +1034,19 @@ def check_catalog_consistency(products: list[dict], measurement_observations: li
                         "targets": targets_for(missing, include_options=True),
                     })
 
-        # 2. metafield key structure (Admin audits only: public products have no metafields)
-        key_sets = {pid(p): set(_comparable_metafields(p)) for p in group}
-        for key in sorted(set().union(*key_sets.values())):
-            present = {i for i, s in key_sets.items() if key in s}
-            missing = {i for i, s in key_sets.items() if key not in s}
-            if present and missing and len(present) > len(group) / 2:
-                affected |= missing
-                issues.append({
-                    "issue_type": "inconsistent_metafield_structure", "status": "existing",
-                    "description": f"Metafield '{key}' is used by {len(present)}/{len(group)} comparable products but missing from {len(missing)}.",
-                    "field": key, "affected_product_ids": sorted(missing), "targets": targets_for(missing),
-                })
+        # 2. metafield key structure 
+        key_sets = {pid(p): set(_comparable_metafields(p)) for p in group if "metafields" in p}
+        if len(key_sets) >= 2:
+            for key in sorted(set().union(*key_sets.values())):
+                present = {i for i, s in key_sets.items() if key in s}
+                missing = {i for i, s in key_sets.items() if key not in s}
+                if present and missing and len(present) > len(key_sets) * CONSISTENCY_MAJORITY:
+                    affected |= missing
+                    issues.append({
+                        "issue_type": "inconsistent_metafield_structure", "status": "existing",
+                        "description": f"Metafield '{key}' is used by {len(present)}/{len(key_sets)} comparable products but missing from {len(missing)}.",
+                        "field": key, "affected_product_ids": sorted(missing), "targets": targets_for(missing),
+                    })
 
         # 3 + 4. metafield declared types and units
         slim = [{**p, "metafields": _comparable_metafields(p)} for p in group]
@@ -840,7 +1054,7 @@ def check_catalog_consistency(products: list[dict], measurement_observations: li
         issues += fmt_issues
         affected |= fmt_affected
 
-    # 5. LLM measurement observations (optional, kept from the old flow)
+    # 5. LLM measurement observations (optional)
     group_idx = {pid(p): gi for gi, g in enumerate(comparable) for p in g}
     by_group_field: dict[tuple[int, str], list[tuple[str, str]]] = {}
     for ob in (measurement_observations or []):
@@ -863,15 +1077,17 @@ def check_catalog_consistency(products: list[dict], measurement_observations: li
                 "affected_product_ids": sorted(ids), "targets": targets_for(ids),
             })
 
-    total, hit = len(valid), len(affected)
+    total = len({pid(p) for g in comparable for p in g})
+    hit = len(affected)
     if hit == 0:
         verdict = "pass"
     else:
-        verdict = "fail" if hit / total >= 0.9 else "partial"
+        verdict = "fail" if hit / total >= CONSISTENCY_FAIL_RATIO else "partial"
     return {
         "verdict": verdict,
-        "evidence": f"{hit}/{total} product(s) affected by catalog consistency checks "
+        "evidence": f"{hit}/{total} comparable product(s) affected by catalog consistency checks "
                     f"across {len(comparable)} comparable group(s).",
         "issues": issues,
         "affected_product_ids": sorted(affected),
     }
+

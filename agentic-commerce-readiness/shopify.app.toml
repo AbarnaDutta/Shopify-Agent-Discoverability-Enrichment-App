@@ -35,3 +35,8 @@ scopes = "read_inventory,read_metaobjects,read_products,read_themes,write_invent
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
+
+[shop.metafields.app.warning]
+  name = "Store restriction disclosure"
+  type = "multi_line_text_field"
+  access.admin = "merchant_read"

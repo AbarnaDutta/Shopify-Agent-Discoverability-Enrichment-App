@@ -35,9 +35,10 @@ from app.services.deterministic_checks import (
     run_product_deterministic_checks,
     run_store_deterministic_checks,
     check_catalog_consistency,
-    check_description_presence,      
-    check_product_type_presence,
+    check_description_presence,
     STORE_CONTEXT_REQUIRED_CHECKS,
+    PRODUCT_CHECKS_MERGED_WITH_LLM,
+    merge_with_llm,
 )
 
 from app.services.scoring_rubric import (
@@ -2686,10 +2687,34 @@ def assemble_report_from_verdicts(
 
         v, t, i = _extract_verdicts_and_texts(p, llm_product_check_ids(), raw_product)
 
-        deterministic = run_product_deterministic_checks(raw_product) if raw_product else {}
+        deterministic = (
+            run_product_deterministic_checks(raw_product)
+            if raw_product else {}
+        )
+
         for cid, result in deterministic.items():
+            if cid in PRODUCT_CHECKS_MERGED_WITH_LLM:
+                v[cid], i[cid] = merge_with_llm(
+                    result,
+                    v.get(cid, "na"),
+                    i.get(cid, []),
+                )
+                t.setdefault(
+                    cid,
+                    {
+                        "enrichment": "",
+                        "why_it_matters_for_agents": "",
+                        "example": "",
+                    },
+                )
+                continue
+
             v[cid] = result["verdict"]
-            t[cid] = {"enrichment": "", "why_it_matters_for_agents": "", "example": ""}
+            t[cid] = {
+                "enrichment": "",
+                "why_it_matters_for_agents": "",
+                "example": "",
+            }
             i[cid] = result.get("issues", [])
 
         if raw_product:
@@ -2744,17 +2769,6 @@ def assemble_report_from_verdicts(
                         "affected_option_ids": [],
                     }
                 ]
-            empty_type = check_product_type_presence(raw_product)
-
-            if (
-                empty_type is not None
-                and v.get("comparable_attributes") == "pass"
-            ):
-                v["comparable_attributes"] = "partial"
-                i["comparable_attributes"] = (
-                    i.get("comparable_attributes", [])
-                    + empty_type.get("issues", [])
-                )
         print("AFTER override:")
         print("  product_understanding =", v.get("product_understanding"))
         print("  product_clarity       =", v.get("product_clarity"))
