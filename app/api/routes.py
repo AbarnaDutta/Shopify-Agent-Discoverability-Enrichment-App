@@ -15,6 +15,7 @@ from app.services.fix_engine import FixEngine
 from app.core.database import AuditIssue, safe_db
 import datetime as dt
 from typing import Any  
+from app.services.shopify_admin_fetcher import ShopifyAdminAPIError
 
 router = APIRouter()
 
@@ -35,278 +36,133 @@ def _validate_email(email: str) -> None:
 
 def _validate_store_url(store_url: str) -> str:
     try:
-
         return normalize_store_url(store_url)
     except InvalidStoreURLError as error:
-
         print("Store URL validation error for store URL:", store_url)
-
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 
-
-
 @router.get("/")
-
 def home() -> dict[str, str]:
-
     return {"status": "ok", "message": "Shopify enrichment API"}
 
 
-
-
-
 @router.post("/report-requests", response_model=QueueResponse)
-
 def create_report_request(payload: ReportRequestCreate) -> QueueResponse:
-
     print("RAW STORE URL:", repr(payload.store_url))
-
     _validate_email(payload.email)
-
     normalized_url = _validate_store_url(payload.store_url)
-
     print("NORMALIZED URL:", normalized_url)
-
     language = payload.language or "English"
-
     job = job_queue.submit(payload.email, normalized_url, language)
-
     return QueueResponse(job_id=job.job_id, status="queued", message="Report request queued.")
 
 
-
 @router.post("/shopify-app/report-requests", response_model=QueueResponse)
-
 def create_shopify_app_report_request(
-
     payload: ShopifyAppReportRequest,
-
 ) -> QueueResponse:
-
-
-
     _validate_email(payload.email)
-
-
-
     if not payload.shop_domain.strip():
-
         raise HTTPException(status_code=422, detail="Shopify shop domain is required.")
-
-
-
     if not payload.access_token.strip():
-
         raise HTTPException(status_code=422, detail="Shopify access token is required.")
-
-
 
     store_url = f"https://{payload.shop_domain.strip()}"
 
-
-
     job = job_queue.submit(
-
         email=payload.email,
-
         store_url=store_url,
-
         language=payload.language or "English",
-
         source="shopify_app",
-
         shop_domain=payload.shop_domain.strip(),
-
         access_token=payload.access_token.strip(),
-
     )
-
-
 
     return QueueResponse(
-
         job_id=job.job_id,
-
         status="queued",
-
         message="Shopify app report request queued.",
-
     )
-
-
-
 
 
 @router.get("/report-requests/{job_id}", response_model=ReportRequestResponse)
-
 def get_report_request(job_id: str) -> ReportRequestResponse:
-
     job = job_queue.get(job_id)
-
     if job is None:
-
         raise HTTPException(status_code=404, detail="Report request not found.")
-
     return ReportRequestResponse(**job_queue.serialize(job))
 
-
-
 @router.get("/audits/history")
-
 def get_audit_history(
-
     shop_domain: str,
-
     page: int = 1,
-
     page_size: int = 5,
-
 ) -> dict:
-
-
-
     if page < 1:
-
         raise HTTPException(status_code=422, detail="Page must be 1 or greater.")
-
-
-
     if page_size < 1:
-
         raise HTTPException(status_code=422, detail="Page size must be greater than 0.")
 
-
-
     return audit_repo.list_audits(
-
         shop_domain=shop_domain.strip(),
-
         page=page,
-
         page_size=page_size,
-
     )
 
-
-
 @router.get("/audits/latest")
-
 def get_latest_audit(shop_domain: str) -> dict:
-
     if not shop_domain.strip():
-
         raise HTTPException(status_code=422, detail="Shop domain is required.")
-
-
-
     audit = audit_repo.get_latest_audit(shop_domain.strip())
-
-
-
     if audit is None:
-
         raise HTTPException(status_code=404, detail="No audit found for this Shopify store.")
-
-
-
     return audit
 
-
-
 @router.get("/audits/{audit_id}/products")
-
 def get_audit_products(audit_id: str) -> dict:
-
     products = audit_repo.get_audit_products(audit_id)
-
-
-
     return {
-
         "audit_id": audit_id,
-
         "products": products,
-
         "total": len(products),
-
     }
-
-
 
 @router.get("/products")
-
 def get_all_products(shop_domain: str) -> dict:
-
     if not shop_domain.strip():
-
         raise HTTPException(status_code=422, detail="Shop domain is required.")
-
-
-
     result = audit_repo.get_all_unique_products(shop_domain.strip())
-
-
-
     return {
-
         "shop_domain": shop_domain.strip(),
-
         "products": result["products"],
-
         "total": len(result["products"]),
-
         "audit_count": result["audit_count"],
-
     }
-
 
 
 @router.get("/products/detail")
-
 def get_product(
-
     product_id: str,
-
     shop_domain: str,
-
 ) -> dict:
-
     if not shop_domain.strip():
-
         raise HTTPException(status_code=422, detail="Shop domain is required.")
 
-
-
     if not product_id.strip():
-
         raise HTTPException(status_code=422, detail="Product ID is required.")
 
-
-
     product = audit_repo.get_unique_product(
-
         shop_domain=shop_domain.strip(),
-
         product_id=product_id.strip(),
-
     )
-
-
-
     if product is None:
-
         raise HTTPException(status_code=404, detail="Product has not been audited for this Shopify store.")
 
-
-
     return {
-
         "shop_domain": shop_domain.strip(),
-
         "product": product,
-
     }
 
 
@@ -407,106 +263,228 @@ class StoreFixRequest(BaseModel):
     changes: list[dict[str, Any]] = Field(min_length=1)
 
 
-@router.post("/store/fix")
-def store_fix(body: StoreFixRequest):
-    fix_engine = FixEngine()
-    try:
-        result = fix_engine.execute_store(**body.model_dump())
-    except ValueError as exc:
-        return JSONResponse(status_code=400, content={"success": False, "detail": str(exc)})
-    except Exception:
-        return JSONResponse(status_code=500, content={"success": False, "detail": "Store fix failed unexpectedly."})
+import logging
 
-    status = 200 if result.get("success") else 207 if result.get("partial_success") else 422
-    return JSONResponse(status_code=status, content=result)
+logger = logging.getLogger(__name__)
+@router.post("/store/fix")
+def store_fix(body: StoreFixRequest) -> JSONResponse:
+    
+    shop_domain=body.shop_domain.strip(),
+    issue_id=body.issue_id.strip(),
+    check_id=body.check_id.strip(),
+    issue_type=body.issue_type.strip(),
+    if not shop_domain:
+         return JSONResponse(
+            status_code=422,
+            content={"success": False, "detail": "shop_domain is required."},
+        )
+    if not issue_id:
+        return JSONResponse(
+            status_code=422,
+            content={"success": False, "detail": "issue_id is required for store-wide fixes."},
+        )
+    if not check_id or not issue_type:
+        return JSONResponse(
+            status_code=422,
+            content={"success": False, "detail": "check_id and issue_type are required."},
+        )
+        # log request----------------
+    logger.info(
+        "Store fix started: shop=%s issue_id=%s check_id=%s issue_type=%s",
+        shop_domain,
+        issue_id,
+        check_id,
+        issue_type,
+    )
+    
+    try:
+        from app.core.database import Store
+
+        with safe_db("validate_store_fix") as db:
+            if db is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"success": False, "detail": "Database is unavailable; no changes were applied."},
+                )
+            store = (
+                db.query(Store)
+                .filter(Store.shop_domain == shop_domain)
+                .one_or_none()
+            )
+            if store is None:
+                return JSONResponse(
+                    status_code=404,
+                    content={"success": False, "detail": "Shopify store was not found."},)
+            issue = (
+                db.query(AuditIssue)
+                .filter(
+                    AuditIssue.id == issue_id,
+                    AuditIssue.store_id == store.id,
+                    AuditIssue.scope == "store",
+                )
+                .one_or_none()
+            )
+            if issue is None:
+                return JSONResponse(
+                    status_code=404,
+                    content={"success": False, "detail": "Store-wide audit issue was not found for this store."},
+                )
+            if issue.check_id != check_id or issue.issue_type != issue_type:
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "success": False,
+                        "detail": "check_id and issue_type must match the selected store-wide audit issue.",
+                    },
+                )
+    except Exception:
+        logger.exception(
+            "Store fix validation failed: shop=%s issue_id=%s",
+            shop_domain,
+            issue_id,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "detail": "Could not validate the store-wide audit issue."},
+        )
+
+    try:
+        fix_engine = FixEngine()
+        logger.info(
+            "Executing store fix: shop=%s check_id=%s issue_type=%s",
+            shop_domain,
+            check_id,
+            issue_type,
+        )
+        result = fix_engine.execute_store(
+            shop_domain=shop_domain,
+            access_token=body.access_token,
+            check_id=check_id,
+            issue_type=issue_type,
+            changes=body.changes,
+        )
+        logger.info(
+            "Store fix execution completed: shop=%s success=%s partial_success=%s",
+            shop_domain,
+            result.get("success"),
+            result.get("partial_success"),
+        )
+
+        if result.get("success"):
+            try:
+             with safe_db("record_store_fix") as db:
+                if db is not None:
+                    issue = (
+                        db.query(AuditIssue)
+                        .filter(
+                            AuditIssue.id == issue_id,
+                            AuditIssue.scope == "store",
+                        )
+                        .one_or_none()
+                    )
+                    if issue is not None:
+                        issue.fix_status = "applied"
+                        issue.fixed_at = dt.datetime.now(dt.timezone.utc)
+                        db.commit()
+            except Exception:
+                # Shopify fix may already have succeeded.
+                # Log DB tracking failure separately.
+                logger.exception(
+                    "Shopify store fix succeeded, but audit status update failed: issue_id=%s",
+                    issue_id,
+                )
+                
+        result["issue_id"] = issue_id
+        result["scope"] = "store"
+        
+        status_code = (
+            200 if result.get("success")
+            else 207 if result.get("partial_success")
+            else 422
+        )
+        
+        return JSONResponse(
+            status_code=status_code,
+            content=result,
+        )
+
+
+    except(ValueError, ShopifyAdminAPIError) as exc:
+        logger.exception(
+            "Store fix validation/execution error: issue_id=%s",
+            issue_id,
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "success": False,
+                "issue_id": issue_id,
+                "detail": str(exc),
+            },
+        )
+
+    except Exception:
+        logger.exception(
+            "Store-wide fix failed unexpectedly: shop=%s issue_id=%s check_id=%s issue_type=%s",
+            shop_domain,
+            issue_id,
+            check_id,
+            issue_type,
+        )
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "issue_id": issue_id,
+                "detail": "Store fix failed unexpectedly.",
+            },
+        )
 
 
 
 class VariantOptionsFixRequest(BaseModel):
-
     shop_domain: str
-
     product_id: str
-
     issue_id: str
-
     check_id: str
-
     issue_type: str
-
     access_token: str
-
     variant_option_values: dict[str, dict[str, str]] | None = None
 
 
-
-
-
 @router.post("/products/fix-variant-options")
-
 def fix_variant_options_endpoint(payload: VariantOptionsFixRequest) -> dict:
-
     fix_engine = FixEngine()
-
     try:
-
         product_set_input = fix_engine.build_variant_options_input(
-
             shop_domain=payload.shop_domain.strip(),
-
             access_token=payload.access_token,
-
             product_id=payload.product_id,
-
             variant_option_values=payload.variant_option_values,
-
         )
-
         result = fix_engine.execute(
-
             check_id=payload.check_id,
-
             issue_type=payload.issue_type,
-
             product_id=payload.product_id,
-
             shop_domain=payload.shop_domain.strip(),
-
             access_token=payload.access_token,
-
             product_set_input=product_set_input,
-
             synchronous=True,
-
         )
-
         with safe_db("record_fix") as db:
-
             if db is not None:
-
                 issue = (
-
                     db.query(AuditIssue)
-
                     .filter(AuditIssue.id == payload.issue_id, AuditIssue.product_id == payload.product_id)
-
                     .one_or_none()
-
                 )
-
                 if issue is not None:
-
                     issue.fix_status = "applied"
-
                     issue.fixed_at = dt.datetime.now(dt.timezone.utc)
-
                     db.commit()
-
     except ValueError as error:
-
         raise HTTPException(status_code=422, detail=str(error)) from error
-
-
 
     return result
 
