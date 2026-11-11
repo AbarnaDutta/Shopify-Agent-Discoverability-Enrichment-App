@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from app.services.issue_registry import get_issue_definition
 
 from app.api.schemas import QueueResponse, ReportRequestCreate, ReportRequestResponse
+
 from fastapi.responses import JSONResponse   
 from pydantic import BaseModel, Field
 from app.services.jobs import job_queue
@@ -18,6 +19,7 @@ from pydantic import BaseModel
 from app.services.audit_repository import audit_repo
 
 from app.services.fix_engine import FixEngine
+from app.services.shopify_admin_fetcher import ShopifyAdminAPIError
 
 from app.core.database import AuditIssue, safe_db
 
@@ -368,6 +370,14 @@ class FixIssueRequest(BaseModel):
 
     title: str | None = None
 
+    image_url: str | None = None
+
+    alt_text: str | None = None
+
+    product: dict | None = None
+    
+    image_alts: dict[str, str] | None = None
+
     option_id: str | None = None
 
     new_name: str | None = None
@@ -491,6 +501,13 @@ def store_fix(body: StoreFixRequest):
             status_code=400,
             content={"success": False, "detail": str(exc)},
         )
+
+    except ShopifyAdminAPIError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"success": False, "detail": str(exc)},
+        )
+
     except Exception:
         return JSONResponse(
             status_code=500,

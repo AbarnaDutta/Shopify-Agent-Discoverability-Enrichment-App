@@ -18,10 +18,12 @@ import { useFetcher } from "react-router";
 
 const API_BASE = "https://geo.properoapps.in/api";
 
+// fix_action 
 const FIX_ACTION_PANEL = {
   update_product_handle: "handle",
   set_metafield: "metafields",
   set_product_type: "product_type",
+  update_product_type: "product_type",
   update_product_description: "description",
   update_product_title: "title",
   rename_product_option: "rename_option",
@@ -29,12 +31,16 @@ const FIX_ACTION_PANEL = {
   set_gtin: "gtin",
   set_mpn: "mpn",
   fix_variant_options: "variant_options",
+  set_variant_price: "price",
+  set_product_image: "image",
+  set_product_image_alt: "image_alt",
 };
 
 const FIX_ACTION_LABEL = {
   update_product_handle: "Product URL",
   set_metafield: "Attributes",
   set_product_type: "Product Type",
+  update_product_type: "Product Type",
   update_product_description: "Description",
   update_product_title: "Title",
   rename_product_option: "Option Name",
@@ -42,6 +48,9 @@ const FIX_ACTION_LABEL = {
   set_gtin: "GTIN",
   set_mpn: "MPN",
   fix_variant_options: "Options & Variants",
+  set_variant_price: "Price",
+  set_product_image: "Product Image",
+  set_product_image_alt: "Image Alt Text",
 };
 
 function getFixablePanels(issues) {
@@ -164,6 +173,27 @@ function useApplyFix({ issue, productId, onDone }) {
   return { submit, status, message };
 }
 
+
+function EmptyPanel({ children }) {
+  return (
+    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <p className="text-xs text-[var(--app-muted)]">{children}</p>
+    </div>
+  );
+}
+
+function StatusMessage({ status, message, className = "mt-1" }) {
+  if (!message) return null;
+  return (
+    <p className={`${className} text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
+      {message}
+    </p>
+  );
+}
+
+const INPUT_CLS =
+  "rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60";
+
 /* ---------- fix panels ---------- */
 
 function HandleFixPanel({ issue, productId }) {
@@ -182,7 +212,7 @@ function HandleFixPanel({ issue, productId }) {
         onChange={(e) => setHandle(e.target.value)}
         disabled={disabled}
         placeholder="product-handle-slug"
-        className="mt-2 w-full rounded-md border border-[var(--app-border)] px-2.5 py-1.5 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+        className={`mt-2 w-full font-mono ${INPUT_CLS}`}
       />
       <button
         type="button"
@@ -192,11 +222,7 @@ function HandleFixPanel({ issue, productId }) {
       >
         {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Approve & Apply"}
       </button>
-      {message && (
-        <p className={`mt-1 text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
-          {message}
-        </p>
-      )}
+      <StatusMessage status={status} message={message} />
     </div>
   );
 }
@@ -496,11 +522,7 @@ function MetafieldsFixPanel({ issue, productId }) {
         </div>
       )}
 
-      {message && (
-        <p className={`text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
-          {message}
-        </p>
-      )}
+      <StatusMessage status={status} message={message} className="" />
     </div>
   );
 }
@@ -523,9 +545,7 @@ function SimpleTextFixPanel({ issue, productId, field, label, placeholder, multi
         onChange={(e) => setValue(e.target.value)}
         disabled={disabled}
         placeholder={placeholder || `Enter ${label.toLowerCase()}`}
-        className={`mt-2 w-full rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60 ${
-          multiline ? "resize-y py-2" : ""
-        }`}
+        className={`mt-2 w-full ${INPUT_CLS} ${multiline ? "resize-y py-2" : ""}`}
       />
       <button
         type="button"
@@ -535,11 +555,7 @@ function SimpleTextFixPanel({ issue, productId, field, label, placeholder, multi
       >
         {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Apply Fix"}
       </button>
-      {message && (
-        <p className={`mt-1 text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
-          {message}
-        </p>
-      )}
+      <StatusMessage status={status} message={message} />
     </div>
   );
 }
@@ -548,11 +564,7 @@ function RenameOptionFixPanel({ issue, productId }) {
   const options = issue.affected_options || [];
 
   if (options.length === 0) {
-    return (
-      <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
-        <p className="text-xs text-[var(--app-muted)]">No specific option identified for this issue.</p>
-      </div>
-    );
+    return <EmptyPanel>No specific option identified for this issue.</EmptyPanel>;
   }
 
   return (
@@ -583,7 +595,7 @@ function RenameOneOption({ option, issue, productId }) {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           disabled={disabled}
-          className="min-w-0 flex-1 rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+          className={`min-w-0 flex-1 ${INPUT_CLS}`}
         />
         <button
           type="button"
@@ -594,11 +606,7 @@ function RenameOneOption({ option, issue, productId }) {
           {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Rename"}
         </button>
       </div>
-      {message && (
-        <p className={`mt-1 text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
-          {message}
-        </p>
-      )}
+      <StatusMessage status={status} message={message} />
     </div>
   );
 }
@@ -612,11 +620,7 @@ function SkuFixPanel({ issue, productId }) {
   const disabled = status === "submitting" || status === "done";
 
   if (variants.length === 0) {
-    return (
-      <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
-        <p className="text-xs text-[var(--app-muted)]">No specific variant identified for this issue.</p>
-      </div>
-    );
+    return <EmptyPanel>No specific variant identified for this issue.</EmptyPanel>;
   }
 
   const ready = variants.filter((v) => values[v.id]?.trim());
@@ -651,11 +655,171 @@ function SkuFixPanel({ issue, productId }) {
       >
         {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : `Apply to ${ready.length} variant(s)`}
       </button>
-      {message && (
-        <p className={`text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
-          {message}
-        </p>
-      )}
+      <StatusMessage status={status} message={message} className="" />
+    </div>
+  );
+}
+
+function PriceFixPanel({ issue, productId }) {
+  const variants = issue.affected_variants || [];
+  const [values, setValues] = useState(() =>
+    Object.fromEntries(
+      variants.map((v) => [v.id, Number(v.price) > 0 ? String(v.price) : ""])
+    )
+  );
+  const { submit, status, message } = useApplyFix({ issue, productId });
+  const disabled = status === "submitting" || status === "done";
+
+  if (variants.length === 0) {
+    return <EmptyPanel>No specific variant identified for this issue.</EmptyPanel>;
+  }
+
+  const isValid = (v) => {
+    const raw = (values[v.id] || "").trim();
+    const n = Number(raw);
+    return raw !== "" && Number.isFinite(n) && n > 0;
+  };
+  const ready = variants.filter(isValid);
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
+        Variant price
+      </label>
+
+      {variants.map((v) => (
+        <div key={v.id} className="flex items-center gap-2">
+          {v.image_url && <img src={v.image_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />}
+          <span className="min-w-0 flex-1 truncate text-xs text-[var(--app-muted)]">
+            {v.title || v.selected_options?.map((o) => o.value).join(" / ") || "Variant"}
+            {v.sku && <span className="font-mono"> · {v.sku}</span>}
+          </span>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={values[v.id] || ""}
+            onChange={(e) => setValues((prev) => ({ ...prev, [v.id]: e.target.value }))}
+            disabled={disabled}
+            placeholder="0.00"
+            className="w-28 shrink-0 rounded-md border border-[var(--app-border)] px-2 py-1 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+          />
+        </div>
+      ))}
+
+      <button
+        type="button"
+        onClick={() =>
+          ready.length > 0 &&
+          submit({ variants: ready.map((v) => ({ id: v.id, price: values[v.id].trim() })) })
+        }
+        disabled={disabled || ready.length === 0}
+        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : `Apply to ${ready.length} variant(s)`}
+      </button>
+      <StatusMessage status={status} message={message} className="" />
+    </div>
+  );
+}
+
+function ImageFixPanel({ issue, productId }) {
+  const [imageUrl, setImageUrl] = useState("");
+  const [altText, setAltText] = useState("");
+  const { submit, status, message } = useApplyFix({ issue, productId });
+  const disabled = status === "submitting" || status === "done";
+
+  const urlOk = /^https:\/\/\S+$/i.test(imageUrl.trim());
+  const ready = urlOk && altText.trim();
+
+  return (
+    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
+        Image URL (https)
+      </label>
+      <input
+        type="url"
+        value={imageUrl}
+        onChange={(e) => setImageUrl(e.target.value)}
+        disabled={disabled}
+        placeholder="https://example.com/product.jpg"
+        className={`mt-2 w-full font-mono ${INPUT_CLS}`}
+      />
+      <label className="mt-3 block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
+        Alt text
+      </label>
+      <input
+        type="text"
+        value={altText}
+        onChange={(e) => setAltText(e.target.value)}
+        disabled={disabled}
+        placeholder="Describe what the image shows"
+        className={`mt-2 w-full ${INPUT_CLS}`}
+      />
+      <button
+        type="button"
+        onClick={() => ready && submit({ image_url: imageUrl.trim(), alt_text: altText.trim() })}
+        disabled={disabled || !ready}
+        className="mt-2 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "submitting" ? "Uploading..." : status === "done" ? "Submitted" : "Add Image"}
+      </button>
+      <StatusMessage status={status} message={message} />
+    </div>
+  );
+}
+
+
+function ImageAltFixPanel({ issue, productId }) {
+  const images = issue.affected_images || [];
+  const missing = images.filter((img) => !(img.alt || "").trim());
+  const [values, setValues] = useState({});
+  const { submit, status, message } = useApplyFix({ issue, productId });
+  const disabled = status === "submitting" || status === "done";
+
+  if (images.length === 0) {
+    return <EmptyPanel>No images were returned for this issue. Re-run the audit and try again.</EmptyPanel>;
+  }
+
+  const ready = missing.length > 0 && missing.every((img) => (values[img.id] || "").trim());
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
+        Image alt text
+      </label>
+
+      {missing.map((img) => (
+        <div key={img.id} className="flex items-center gap-2">
+          {img.url && <img src={img.url} alt="" className="h-12 w-12 shrink-0 rounded object-cover" />}
+          <input
+            type="text"
+            value={values[img.id] || ""}
+            onChange={(e) => setValues((prev) => ({ ...prev, [img.id]: e.target.value }))}
+            disabled={disabled}
+            placeholder="Describe this image"
+            className={`min-w-0 flex-1 ${INPUT_CLS}`}
+          />
+        </div>
+      ))}
+
+      <button
+        type="button"
+        onClick={() =>
+          ready &&
+          submit({
+            product: { id: productId, images },
+            image_alts: Object.fromEntries(
+              missing.map((img) => [img.id, values[img.id].trim()])
+            ),
+          })
+        }
+        disabled={disabled || !ready}
+        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Apply Fix"}
+      </button>
+      <StatusMessage status={status} message={message} className="" />
     </div>
   );
 }
@@ -664,11 +828,7 @@ function VariantFieldFixPanel({ issue, productId, field, label, placeholder }) {
   const variants = issue.affected_variants || [];
 
   if (variants.length === 0) {
-    return (
-      <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
-        <p className="text-xs text-[var(--app-muted)]">No specific variant identified for this issue.</p>
-      </div>
-    );
+    return <EmptyPanel>No specific variant identified for this issue.</EmptyPanel>;
   }
 
   return (
@@ -713,7 +873,7 @@ function VariantFieldRow({ variant, field, label, placeholder, issue, productId 
           onChange={(e) => setValue(e.target.value)}
           disabled={disabled}
           placeholder={placeholder}
-          className="min-w-0 flex-1 rounded-md border border-[var(--app-border)] px-2.5 py-1.5 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+          className={`min-w-0 flex-1 font-mono ${INPUT_CLS}`}
         />
         <button
           type="button"
@@ -724,11 +884,7 @@ function VariantFieldRow({ variant, field, label, placeholder, issue, productId 
           {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : `Save ${label}`}
         </button>
       </div>
-      {message && (
-        <p className={`mt-1 text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
-          {message}
-        </p>
-      )}
+      <StatusMessage status={status} message={message} />
     </div>
   );
 }
@@ -854,12 +1010,9 @@ function VariantOptionsFixPanel({ issue, productId }) {
 
   if (!isSolvable) {
     return (
-      <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
-        <p className="text-xs text-[var(--app-muted)]">
-          This issue needs the product's variant structure rebuilt in Shopify
-          admin directly.
-        </p>
-      </div>
+      <EmptyPanel>
+        This issue needs the product's variant structure rebuilt in Shopify admin directly.
+      </EmptyPanel>
     );
   }
 
@@ -982,13 +1135,7 @@ function VariantOptionsFixPanel({ issue, productId }) {
                   <input
                     type="text"
                     value={values[variant.id]?.[name] || ""}
-                    onChange={(e) =>
-                      setCell(
-                        variant.id,
-                        name,
-                        e.target.value
-                      )
-                    }
+                    onChange={(e) => setCell(variant.id, name, e.target.value)}
                     disabled={disabled}
                     className="mt-0.5 w-full rounded-md border border-[var(--app-border)] px-2 py-1 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
                   />
@@ -1012,17 +1159,115 @@ function VariantOptionsFixPanel({ issue, productId }) {
             : "Apply Fix"}
       </button>
 
-      {message && (
-        <p
-          className={`text-xs ${
-            status === "error"
-              ? "text-red-600"
-              : "text-[var(--app-green)]"
-          }`}
+      <StatusMessage status={status} message={message} className="" />
+    </div>
+  );
+}
+
+
+function DefaultTitleFixPanel({ fixIssue, productId }) {
+  const [rows, setRows] = useState([{ name: "", values: "" }]);
+  const [defaultPrice, setDefaultPrice] = useState("");
+  const { submit, status, message } = useApplyFix({ issue: fixIssue, productId });
+  const disabled = status === "submitting" || status === "done";
+
+  const parsed = rows.map((r) => ({
+    name: r.name.trim(),
+    values: [...new Set(r.values.split(",").map((v) => v.trim()).filter(Boolean))],
+  }));
+  const valid = parsed.filter((r) => r.name && r.values.length > 0);
+  const combos = valid.reduce((n, r) => n * r.values.length, 1);
+  const tooMany = combos > 100;
+  const ready = valid.length > 0 && valid.length === rows.length && !tooMany;
+
+  const updateRow = (i, field, value) =>
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
+      <p className="text-[11px] text-[var(--app-muted)]">
+        Define the options and comma-separated values. A variant is created for every combination.
+      </p>
+
+      {rows.map((row, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={row.name}
+            onChange={(e) => updateRow(i, "name", e.target.value)}
+            disabled={disabled}
+            placeholder="Option name (e.g. Size)"
+            className={`w-40 ${INPUT_CLS}`}
+          />
+          <input
+            type="text"
+            value={row.values}
+            onChange={(e) => updateRow(i, "values", e.target.value)}
+            disabled={disabled}
+            placeholder="Small, Medium, Large"
+            className={`min-w-0 flex-1 ${INPUT_CLS}`}
+          />
+          {rows.length > 1 && !disabled && (
+            <button
+              type="button"
+              onClick={() => setRows((prev) => prev.filter((_, idx) => idx !== i))}
+              aria-label="Remove option"
+              className="px-1 text-xs font-bold text-red-500 hover:text-red-700"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      ))}
+
+      {!disabled && rows.length < 3 && (
+        <button
+          type="button"
+          onClick={() => setRows((prev) => [...prev, { name: "", values: "" }])}
+          className="rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs font-semibold text-[var(--app-text)] hover:bg-[var(--app-bg)]"
         >
-          {message}
+          + Add Option
+        </button>
+      )}
+
+      <div>
+        <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
+          Default price (optional)
+        </label>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          value={defaultPrice}
+          onChange={(e) => setDefaultPrice(e.target.value)}
+          disabled={disabled}
+          placeholder="Uses current price if empty"
+          className={`mt-1 w-48 ${INPUT_CLS}`}
+        />
+      </div>
+
+      {valid.length > 0 && (
+        <p className={`text-[11px] ${tooMany ? "text-red-600" : "text-[var(--app-muted)]"}`}>
+          {tooMany ? `${combos} variants exceeds the 100-variant limit.` : `Will create ${combos} variant(s).`}
         </p>
       )}
+
+      <button
+        type="button"
+        onClick={() =>
+          ready &&
+          submit({
+            __endpoint: "/products/fix-variant-matrix",
+            options: valid,
+            ...(defaultPrice.trim() && { default_price: defaultPrice.trim() }),
+          })
+        }
+        disabled={disabled || !ready}
+        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Create Variants"}
+      </button>
+      <StatusMessage status={status} message={message} className="" />
     </div>
   );
 }
@@ -1059,6 +1304,12 @@ function FixPanel({ fixIssue, productId }) {
       return <RenameOptionFixPanel issue={fixIssue} productId={productId} />;
     case "sku":
       return <SkuFixPanel issue={fixIssue} productId={productId} />;
+    case "price":
+      return <PriceFixPanel issue={fixIssue} productId={productId} />;
+    case "image":
+      return <ImageFixPanel issue={fixIssue} productId={productId} />;
+    case "image_alt":
+      return <ImageAltFixPanel issue={fixIssue} productId={productId} />;
     case "gtin":
       return (
         <VariantFieldFixPanel

@@ -22,7 +22,8 @@ _PRODUCT_GID_RE = re.compile(r"gid://shopify/Product/[0-9]+")
 _SHOP_GID_RE = re.compile(r"gid://shopify/Shop/[0-9]+")
 _PAGE_GID_RE = re.compile(r"gid://shopify/Page/[0-9]+")
 
-POLICY_TYPES = {"REFUND_POLICY", "SHIPPING_POLICY", "CONTACT_INFORMATION"}
+POLICY_TYPES = {"REFUND_POLICY", "SHIPPING_POLICY", "CONTACT_INFORMATION",
+                "PRIVACY_POLICY", "TERMS_OF_SERVICE"}
 
 
 # ---------------------------------------------------------------------
