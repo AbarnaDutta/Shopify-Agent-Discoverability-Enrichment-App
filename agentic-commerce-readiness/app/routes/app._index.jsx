@@ -1,4 +1,5 @@
 // app/routes/app._index.jsx
+import PropTypes from "prop-types";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useFetcher, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -198,30 +199,6 @@ function capitalize(value) {
   );
 }
 
-function scoreBand(value) {
-  if (value >= 70) return "strong";
-  if (value >= 40) return "fair";
-  return "weak";
-}
-
-function bandLabel(value) {
-  if (value >= 70) return LABELS.bandReady;
-  if (value >= 40) return LABELS.bandNeedsWork;
-  return LABELS.bandNotReady;
-}
-
-function bandTextClass(band) {
-  if (band === "strong") return "text-[#16a34a]";
-  if (band === "fair") return "text-[#d97706]";
-  return "text-[#dc2626]";
-}
-
-function bandBarClass(band) {
-  if (band === "strong") return "bg-[#16a34a]";
-  if (band === "fair") return "bg-[#d97706]";
-  return "bg-[#dc2626]";
-}
-
 function getScoreStatus(value) {
   if (value >= 70) return "READY";
   if (value >= 40) return "NEEDS IMPROVEMENT";
@@ -363,6 +340,12 @@ function ErrorCard({
   );
 }
 
+ErrorCard.propTypes = {
+  message: PropTypes.string.isRequired,
+  errorType: PropTypes.string,
+  onRetry: PropTypes.func.isRequired,
+};
+
 // ── Audit progress ────────────────────────────────────────────────────
 
 function StepRow({
@@ -425,6 +408,14 @@ function StepRow({
   );
 }
 
+StepRow.propTypes = {
+  num: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  label: PropTypes.string.isRequired,
+  sub: PropTypes.string.isRequired,
+  state: PropTypes.oneOf(["pending", "active", "done"]),
+  isLast: PropTypes.bool,
+};
+
 // ── Score cards ───────────────────────────────────────────────────────
 
 function OverviewScoreCard({
@@ -479,6 +470,12 @@ function OverviewScoreCard({
     </div>
   );
 }
+
+OverviewScoreCard.propTypes = {
+  label: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  description: PropTypes.string.isRequired,
+};
 
 // ── Overall readiness ─────────────────────────────────────────────────
 
@@ -596,6 +593,19 @@ function OverallReadiness({
   );
 }
 
+OverallReadiness.propTypes = {
+  report: PropTypes.shape({
+    readiness_scores: PropTypes.shape({
+      overall: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    }),
+  }).isRequired,
+  issueCounts: PropTypes.shape({
+    high: PropTypes.number,
+    medium: PropTypes.number,
+    low: PropTypes.number,
+  }).isRequired,
+};
+
 // ── Priority Issues ────────────────────────────────────────────────────
 
 function SeverityBadge({ priority }) {
@@ -625,6 +635,10 @@ function SeverityBadge({ priority }) {
     </span>
   );
 }
+
+SeverityBadge.propTypes = {
+  priority: PropTypes.oneOf(["high", "medium", "low"]).isRequired,
+};
 
 function PriorityIssues({
   report,
@@ -793,6 +807,21 @@ function PriorityIssues({
   );
 }
 
+PriorityIssues.propTypes = {
+  report: PropTypes.shape({
+    store_level_recommendations: PropTypes.arrayOf(
+      PropTypes.shape({
+        priority: PropTypes.string,
+        title: PropTypes.string,
+        enrichment: PropTypes.string,
+        why_it_matters_for_agents: PropTypes.string,
+        example: PropTypes.string,
+      })
+    ),
+  }).isRequired,
+  onViewAll: PropTypes.func.isRequired,
+};
+
 // ── Store Health Summary ───────────────────────────────────────────────
 
 function StoreHealthSummary({
@@ -879,6 +908,21 @@ function StoreHealthSummary({
   );
 }
 
+StoreHealthSummary.propTypes = {
+  report: PropTypes.shape({
+    issues_resolved: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    resolved_issues: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    health_summary: PropTypes.shape({
+      issues_resolved: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    }),
+  }),
+  products: PropTypes.arrayOf(
+    PropTypes.shape({
+      missing_enrichments: PropTypes.array,
+    })
+  ).isRequired,
+};
+
 // ── Page ──────────────────────────────────────────────────────────────
 
 const INITIAL_STEPS = {
@@ -887,6 +931,10 @@ const INITIAL_STEPS = {
   ai: "pending",
   report: "pending",
 };
+
+function auditJobStorageKey(shopDomain) {
+  return `acr:active-audit:${shopDomain}`;
+}
 
 export default function Index({
   loaderData,
@@ -902,6 +950,9 @@ export default function Index({
   const [isRunning, setIsRunning] =
     useState(false);
 
+  const [isResumed, setIsResumed] =
+    useState(false);
+
   const [showSteps, setShowSteps] =
     useState(false);
 
@@ -911,9 +962,6 @@ export default function Index({
   const [aiSub, setAiSub] = useState(
     "This takes 30–120 seconds depending on catalog size — please don't close this tab"
   );
-
-  const [status, setStatus] =
-    useState(null);
 
   const [report, setReport] =
     useState(null);
@@ -932,6 +980,15 @@ export default function Index({
 
   const pollCountRef =
     useRef(0);
+
+  const activeJobIdRef =
+    useRef(null);
+
+  const auditStartedAtRef =
+    useRef(null);
+
+  const pollJobRef =
+    useRef(null);
 
   function resetSteps() {
     setSteps(INITIAL_STEPS);
@@ -972,6 +1029,18 @@ export default function Index({
         await response.json();
 
       if (data.status === "completed") {
+        activeJobIdRef.current = null;
+        try {
+          localStorage.removeItem(
+            auditJobStorageKey(shopDomain)
+          );
+        } catch (error) {
+          console.warn(
+            "Could not clear the saved audit job:",
+            error
+          );
+        }
+
         if (pollTimerRef.current) {
           clearInterval(
             pollTimerRef.current
@@ -995,13 +1064,9 @@ export default function Index({
           report: "done",
         });
 
-        setStatus({
-          type: "success",
-          text: "Report ready! A PDF copy has also been sent to your email.",
-        });
-
         setShowSteps(false);
         setIsRunning(false);
+        setIsResumed(false);
 
         try {
           const latestResponse =
@@ -1055,6 +1120,18 @@ export default function Index({
       }
 
       if (data.status === "failed") {
+        activeJobIdRef.current = null;
+        try {
+          localStorage.removeItem(
+            auditJobStorageKey(shopDomain)
+          );
+        } catch (error) {
+          console.warn(
+            "Could not clear the saved audit job:",
+            error
+          );
+        }
+
         if (pollTimerRef.current) {
           clearInterval(
             pollTimerRef.current
@@ -1073,8 +1150,8 @@ export default function Index({
 
         resetSteps();
         setShowSteps(false);
-        setStatus(null);
         setIsRunning(false);
+        setIsResumed(false);
 
         setErrorInfo({
           message:
@@ -1103,7 +1180,12 @@ export default function Index({
         }));
 
         if (!elapsedTimerRef.current) {
-          let elapsed = 0;
+          let elapsed = auditStartedAtRef.current
+            ? Math.floor(
+                (Date.now() - auditStartedAtRef.current) /
+                  1000
+              )
+            : 0;
 
           elapsedTimerRef.current =
             setInterval(() => {
@@ -1123,8 +1205,8 @@ export default function Index({
           ...current,
           submit: "done",
           fetch: "done",
-          ai: "active",
-          report: "pending",
+          ai: "done",
+          report: "active",
         }));
       }
     } catch (error) {
@@ -1134,6 +1216,8 @@ export default function Index({
       );
     }
   }
+
+  pollJobRef.current = pollJob;
 
   function handleRunAudit() {
     if (pollTimerRef.current) {
@@ -1145,9 +1229,10 @@ export default function Index({
     }
 
     setErrorInfo(null);
-    setStatus(null);
     setReport(null);
     setIsRunning(true);
+    setIsResumed(false);
+    auditStartedAtRef.current = Date.now();
 
     resetSteps();
     setShowSteps(true);
@@ -1183,7 +1268,7 @@ export default function Index({
     const jobId =
       fetcher.data?.job?.job_id;
 
-    if (!jobId) {
+    if (typeof jobId !== "string" || !jobId) {
       setIsRunning(false);
       setShowSteps(false);
 
@@ -1194,6 +1279,22 @@ export default function Index({
       });
 
       return;
+    }
+
+    activeJobIdRef.current = jobId;
+    try {
+      localStorage.setItem(
+        auditJobStorageKey(shopDomain),
+        JSON.stringify({
+          jobId,
+          startedAt: auditStartedAtRef.current,
+        })
+      );
+    } catch (error) {
+      console.warn(
+        "Could not save the active audit job:",
+        error
+      );
     }
 
     setSteps((current) => ({
@@ -1210,12 +1311,67 @@ export default function Index({
 
     pollTimerRef.current =
       setInterval(
-        () => pollJob(jobId),
+        () => pollJobRef.current(jobId),
         5500
       );
 
-    pollJob(jobId);
-  }, [fetcher.data]);
+    pollJobRef.current(jobId);
+  }, [fetcher.data, shopDomain]);
+
+  useEffect(() => {
+    if (!shopDomain) return;
+
+    let savedJob;
+    try {
+      const savedValue = localStorage.getItem(
+        auditJobStorageKey(shopDomain)
+      );
+      savedJob = savedValue
+        ? JSON.parse(savedValue)
+        : null;
+    } catch (error) {
+      console.warn(
+        "Could not restore the saved audit job:",
+        error
+      );
+      return;
+    }
+
+    if (
+      typeof savedJob?.jobId !== "string" ||
+      !savedJob.jobId
+    ) {
+      return;
+    }
+
+    activeJobIdRef.current = savedJob.jobId;
+    auditStartedAtRef.current =
+      typeof savedJob.startedAt === "number"
+        ? savedJob.startedAt
+        : Date.now();
+    pollCountRef.current = Math.floor(
+      (Date.now() - auditStartedAtRef.current) / 5500
+    );
+    setIsRunning(true);
+    setIsResumed(true);
+    setShowSteps(true);
+    setSteps({
+      submit: "done",
+      fetch: "done",
+      ai: "done",
+      report: "active",
+    });
+
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+    }
+
+    pollTimerRef.current = setInterval(
+      () => pollJobRef.current(savedJob.jobId),
+      5500
+    );
+    pollJobRef.current(savedJob.jobId);
+  }, [shopDomain]);
 
   useEffect(() => {
     return () => {
@@ -1305,13 +1461,10 @@ export default function Index({
     );
 
   const cleanDomain = (
-    storeUrl || `https://${shopDomain}`
-  )
-    .replace(
-      /https?:\/\/(www\.)?/,
-      ""
-    )
-    .split("/")[0];
+  storeUrl || `https://${shopDomain}`
+)
+  .replace(/^https?:\/\/(www\.)?/i, "")
+  .split("/")[0];
 
   const now =
     new Date().toLocaleDateString(
@@ -1360,6 +1513,16 @@ export default function Index({
           {showSteps && (
             <div className="border-t border-[#E1E3E5] px-8 py-7">
               <div className="mx-auto max-w-[900px]">
+                {isResumed && (
+                  <p
+                    className="mb-4 rounded-lg bg-[#f6f6f7] px-4 py-3 text-sm text-[#5F6F85]"
+                    role="status"
+                  >
+                    Your audit is still in progress. Please wait while we
+                    generate your report.
+                  </p>
+                )}
+
                 <div className="flex flex-col text-left">
                   <StepRow
                     num="1"
@@ -1492,7 +1655,7 @@ export default function Index({
             <div className="rounded-2xl border border-[#E1E3E5] bg-white px-8 py-16 text-center shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
 
               <h2 className="text-xl font-bold text-[#202223]">
-                Run your first audit
+                Run your audit
               </h2>
 
               <p className="mx-auto mt-2 max-w-[520px] text-sm leading-relaxed text-[#6D7175]">
@@ -1509,3 +1672,4 @@ export default function Index({
     </div>
   );
 }
+
