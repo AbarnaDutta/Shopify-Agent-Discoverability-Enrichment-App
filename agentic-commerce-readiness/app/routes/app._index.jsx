@@ -47,7 +47,7 @@ const ERROR_HINTS = {
 };
 
 // ── Server ────────────────────────────────────────────────────────────
-
+// here we define that the dashboard identifies the current shopify stor dynamically
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
@@ -1218,7 +1218,7 @@ export default function Index({
   }
 
   pollJobRef.current = pollJob;
-
+// start a new audit state and also displays the audit progess interface
   function handleRunAudit() {
     if (pollTimerRef.current) {
       clearInterval(
