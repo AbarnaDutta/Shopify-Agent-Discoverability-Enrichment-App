@@ -1,7 +1,6 @@
 # app/services/fix_engine.py
 from __future__ import annotations
 
-import itertools
 import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
@@ -12,18 +11,45 @@ from app.services.issue_registry import get_issue_definition
 from app.services.shopify_admin_fetcher import (
     ShopifyAdminAPIError,
     _graphql_request,
-    fetch_product_variant_state,
 )
 
 API_VERSION = "2026-07"
+MAX_BULK = 250
 
 _SHOP_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.myshopify\.com")
 _PRODUCT_GID_RE = re.compile(r"gid://shopify/Product/[0-9]+")
 _SHOP_GID_RE = re.compile(r"gid://shopify/Shop/[0-9]+")
 _PAGE_GID_RE = re.compile(r"gid://shopify/Page/[0-9]+")
+_OPTION_GID_RE = re.compile(r"gid://shopify/ProductOption/[0-9]+")
+_DIGITS_RE = re.compile(r"[0-9]+")
 
-POLICY_TYPES = {"REFUND_POLICY", "SHIPPING_POLICY", "CONTACT_INFORMATION",
-                "PRIVACY_POLICY", "TERMS_OF_SERVICE"}
+POLICY_TYPES = {
+    "REFUND_POLICY",
+    "SHIPPING_POLICY",
+    "CONTACT_INFORMATION",
+    "PRIVACY_POLICY",
+    "TERMS_OF_SERVICE",
+}
+
+STORE_CHANGE_FIELDS: dict[str, set[str]] = {
+    "update_fulfillment_information": {
+        "delivery_profile_id", "delivery_profile_update", "pickup_settings",
+        "shipping_policy_body", "merchant_approved",
+    },
+    "update_policy": {"policy_type", "body", "merchant_approved"},
+    "update_store_contact": {"body", "merchant_approved"},
+    "update_brand_information": {"page_id", "body", "title", "publish", "merchant_approved"},
+    "configure_store_guardrail": {"warning_text", "shop_id", "merchant_approved"},
+    "create_faq": {"title", "body", "publish", "merchant_approved"},
+}
+
+
+NORMALIZE_ACTIONS = {
+    "normalize_option_structure",
+    "normalize_metafield_structure",
+    "normalize_attribute_formats",
+    "normalize_attribute_units",
+}
 
 
 # ---------------------------------------------------------------------
@@ -51,9 +77,14 @@ def _gql(
     response = _graphql_request(
         shop_domain, access_token, API_VERSION, query, variables or {}
     )
+    if not isinstance(response, dict):
+        raise ShopifyAdminAPIError("Malformed response from Shopify.")
     if response.get("errors"):
         raise ShopifyAdminAPIError(f"Shopify GraphQL error: {response['errors']}")
-    return response.get("data") or {}
+    data = response.get("data")
+    if not isinstance(data, dict):
+        raise ShopifyAdminAPIError("Shopify returned no data.")
+    return data
 
 
 def _mutate(
@@ -85,6 +116,52 @@ def _require(value: Any, message: str) -> str:
     return value
 
 
+def _require_text(value: Any, message: str) -> str:
+    """Strict: must already be a nonblank string."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(message)
+    return value.strip()
+
+
+def _require_product_gid(value: Any) -> str:
+    value = str(value or "").strip()
+    if not _PRODUCT_GID_RE.fullmatch(value):
+        raise ValueError("A valid Shopify Product GID is required.")
+    return value
+
+
+def _dict_list(value: Any, name: str, *, max_items: int = MAX_BULK) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{name} must be a non-empty list.")
+    if len(value) > max_items:
+        raise ValueError(f"{name} may contain at most {max_items} items.")
+    if not all(isinstance(item, dict) for item in value):
+        raise ValueError(f"Every item in {name} must be an object.")
+    return value
+
+
+def _parse_price(raw: Any, label: str) -> Decimal:
+    if raw is None or isinstance(raw, bool):
+        raise ValueError(f"A price is required for {label}.")
+    try:
+        price = Decimal(str(raw).strip())
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"Invalid price for {label}.") from None
+    if not price.is_finite() or price < 0:
+        raise ValueError(f"Price must be finite and nonnegative for {label}.")
+    return price
+
+
+def _is_valid_gtin(value: str) -> bool:
+    """GTIN-8/12/13/14 with GS1 check digit."""
+    if not _DIGITS_RE.fullmatch(value) or len(value) not in (8, 12, 13, 14):
+        return False
+    digits = [int(c) for c in value]
+    check = digits.pop()
+    total = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(reversed(digits)))
+    return (10 - total % 10) % 10 == check
+
+
 PRODUCT_UPDATE = """
 mutation ProductUpdate($product: ProductUpdateInput!) {
   productUpdate(product: $product) {
@@ -108,8 +185,24 @@ mutation VariantsBulkUpdate(
   $productId: ID!,
   $variants: [ProductVariantsBulkInput!]!
 ) {
-  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+  productVariantsBulkUpdate(
+    productId: $productId, variants: $variants, allowPartialUpdates: false
+  ) {
     productVariants { id barcode price inventoryItem { id sku } }
+    userErrors { field message code }
+  }
+}
+"""
+
+VARIANT_OPTIONS_UPDATE = """
+mutation UpdateVariantOptions(
+  $productId: ID!,
+  $variants: [ProductVariantsBulkInput!]!
+) {
+  productVariantsBulkUpdate(
+    productId: $productId, variants: $variants, allowPartialUpdates: false
+  ) {
+    productVariants { id selectedOptions { name value } }
     userErrors { field message code }
   }
 }
@@ -120,6 +213,59 @@ mutation UpdatePolicy($policy: ShopPolicyInput!) {
   shopPolicyUpdate(shopPolicy: $policy) {
     shopPolicy { id type body url }
     userErrors { field message code }
+  }
+}
+"""
+
+PRODUCT_VARIANT_STATE = """
+query ProductVariantState($id: ID!, $cursor: String) {
+  product(id: $id) {
+    id
+    title
+    options { id name position values }
+    variants(first: 100, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id title sku price selectedOptions { name value } }
+    }
+  }
+}
+"""
+
+PRODUCT_MEDIA = """
+query ProductMedia($id: ID!) {
+  product(id: $id) {
+    id
+    media(first: 250) {
+      pageInfo { hasNextPage }
+      nodes { id alt mediaContentType }
+    }
+  }
+}
+"""
+
+FILE_UPDATE = """
+mutation SetImageAlts($files: [FileUpdateInput!]!) {
+  fileUpdate(files: $files) {
+    files { id alt fileStatus }
+    userErrors { field message }
+  }
+}
+"""
+
+DELIVERY_PROFILE_UPDATE = """
+mutation UpdateFulfillmentProfile($id: ID!, $profile: DeliveryProfileInput!) {
+  deliveryProfileUpdate(id: $id, profile: $profile) {
+    profile { id name }
+    userErrors { field message }
+  }
+}
+"""
+
+LOCAL_PICKUP_ENABLE = """
+mutation UpdatePickup($settings: DeliveryLocationLocalPickupEnableInput!) {
+  locationLocalPickupEnable(localPickupSettings: $settings) {
+    localPickupSettings { instructions pickupTime }
+    userErrors { field message }
   }
 }
 """
@@ -145,6 +291,8 @@ class FixEngine:
             "set_product_image": self.set_product_image,
             "set_product_image_alt": self.set_product_image_alt,
             "set_variant_price": self.set_variant_price,
+            "review_product_claim": self.review_product_claim,
+            "set_guardrail_metafield": self.set_guardrail_metafield,
         }
 
         self._store_handlers: dict[str, Callable[..., dict[str, Any]]] = {
@@ -160,30 +308,18 @@ class FixEngine:
             "normalize_attribute_units": lambda changes, **kw: self.normalize_attribute_units(
                 products=changes, **kw
             ),
-            "update_fulfillment_information": lambda changes, **kw: self._apply_each(
-                self.update_fulfillment_information,
-                "update_fulfillment_information",
-                changes,
-                **kw,
+            "update_fulfillment_information": self._each(
+                self.update_fulfillment_information, "update_fulfillment_information"
             ),
-            "update_policy": lambda changes, **kw: self._apply_each(
-                self.update_policy, "update_policy", changes, **kw
+            "update_policy": self._each(self.update_policy, "update_policy"),
+            "update_store_contact": self._each(self.update_store_contact, "update_store_contact"),
+            "update_brand_information": self._each(
+                self.update_brand_information, "update_brand_information"
             ),
-            "update_store_contact": lambda changes, **kw: self._apply_each(
-                self.update_store_contact, "update_store_contact", changes, **kw
+            "configure_store_guardrail": self._each(
+                self.configure_store_guardrail, "configure_store_guardrail"
             ),
-            "update_brand_information": lambda changes, **kw: self._apply_each(
-                self.update_brand_information,
-                "update_brand_information",
-                changes,
-                **kw,
-            ),
-            "configure_store_guardrail": lambda changes, **kw: self._apply_each(
-                self.configure_store_guardrail,
-                "configure_store_guardrail",
-                changes,
-                **kw,
-            ),
+            "create_faq": self._each(self.create_faq, "create_faq"),
         }
 
     # =================================================================
@@ -198,7 +334,8 @@ class FixEngine:
         changes: list[dict[str, Any]],
         shop_domain: str,
         access_token: str,
-        **_: Any,
+        issue_id: str | None = None,
+        merchant_approved: bool | None = None,
     ) -> dict[str, Any]:
         definition = get_issue_definition(check_id, issue_type)
         if definition is None:
@@ -213,18 +350,26 @@ class FixEngine:
         if handler is None:
             raise ValueError(f"No store-wide handler registered for fix_action '{fix_action}'.")
 
-        if not isinstance(changes, list) or not changes:
-            raise ValueError("changes must be a non-empty list.")
-        if not all(isinstance(c, dict) for c in changes):
-            raise ValueError("Every change must be an object.")
-        if len(changes) > 250:
-            raise ValueError("Too many changes in one request (max 250).")
+        changes = _dict_list(changes, "changes")
+
+        needs_top_level_approval = (
+            definition.get("fix_mode") == "approval" or fix_action in NORMALIZE_ACTIONS
+        )
+        if needs_top_level_approval and merchant_approved is not True:
+            raise ValueError("Merchant approval is required.")
+
+        if merchant_approved is True and fix_action in STORE_CHANGE_FIELDS:
+            changes = [
+                {**change, "merchant_approved": change.get("merchant_approved", True)}
+                for change in changes
+            ]
 
         result = handler(
             changes=changes, shop_domain=shop_domain, access_token=access_token
         )
         return {
             **result,
+            "issue_id": issue_id,
             "check_id": check_id,
             "issue_type": issue_type,
             "fix_action": fix_action,
@@ -256,45 +401,82 @@ class FixEngine:
         if handler is None:
             raise ValueError(f"No handler registered for fix_action '{fix_action}'.")
 
-        if fix_action == "set_metafield":
-            attributes = kwargs.get("attributes")
-            if not attributes:
-                raise ValueError("At least one metafield attribute is required.")
-            if not isinstance(attributes, list):
-                raise ValueError("Metafield attributes must be a list.")
-
-        if fix_action in {"generate_sku", "update_sku"}:
-            variants = kwargs.get("variants")
-            if not variants:
-                raise ValueError("At least one variant is required to set SKUs.")
-            if not isinstance(variants, list):
-                raise ValueError("Variants must be provided as a list.")
+        if fix_mode == "approval" and kwargs.get("merchant_approved") is not True:
+            raise ValueError("Merchant approval is required.")
 
         return handler(product_id=product_id, **kwargs)
+
+    def validate_registered_actions(self) -> list[str]:
+        """Registry shape errors plus supported actions that have no handler."""
+        from app.services.issue_registry import ISSUE_TYPES, validate_issue_registry
+
+        errors = validate_issue_registry()
+        for check_id, issues in ISSUE_TYPES.items():
+            for issue_type, definition in issues.items():
+                if definition.get("fix_mode") == "unsupported":
+                    continue
+                handlers = (
+                    self._store_handlers
+                    if definition.get("scope") == "store"
+                    else self._handlers
+                )
+                action = definition.get("fix_action")
+                if action not in handlers:
+                    errors.append(f"{check_id}/{issue_type}: missing handler for {action!r}")
+        return errors
+
+    def _each(self, fn: Callable[..., dict[str, Any]], action: str) -> Callable[..., dict[str, Any]]:
+        allowed = STORE_CHANGE_FIELDS[action]
+        return lambda changes, **kw: self._apply_each(
+            fn, action, changes, allowed_fields=allowed, **kw
+        )
 
     def _apply_each(
         self,
         fn: Callable[..., dict[str, Any]],
         action: str,
         changes: list[dict[str, Any]],
+        *,
+        allowed_fields: set[str],
         **kw: Any,
     ) -> dict[str, Any]:
-        """Run a single-item store handler once per change (not atomic)."""
+        """Validate every change up front, then execute each independently (not atomic)."""
+        for index, change in enumerate(changes):
+            unknown = set(change) - allowed_fields
+            if unknown:
+                raise ValueError(
+                    f"Change {index + 1} has unsupported field(s): {sorted(unknown)}."
+                )
+            if change.get("merchant_approved") is not True:
+                raise ValueError(f"Change {index + 1}: merchant approval is required.")
+
         results: list[dict[str, Any]] = []
         for index, change in enumerate(changes):
             try:
-                results.append(fn(**{**change, **kw}))
+                results.append({
+                    "index": index,
+                    "success": True,
+                    "result": fn(**{**change, **kw}),
+                })
             except (ValueError, ShopifyAdminAPIError) as error:
-                raise ShopifyAdminAPIError(
-                    f"{action}: change {index + 1} failed: {error}. "
-                    f"{len(results)} earlier change(s) were saved and not rolled back."
-                ) from error
+                results.append({"index": index, "success": False, "error": str(error)})
+
+        successful = sum(1 for item in results if item["success"])
+        failed = len(results) - successful
         return {
-            "success": True,
+            "success": failed == 0,
+            "partial_success": successful > 0 and failed > 0,
             "fix_action": action,
+            "total": len(changes),
+            "successful": successful,
+            "failed": failed,
             "results": results,
-            "verification_required": True,
-            "message": "Saved. Refetch store context and rerun the check.",
+            "verification_required": successful > 0,
+            "message": (
+                "All changes saved."
+                if failed == 0
+                else f"{successful} change(s) saved; {failed} failed. Refetch Shopify data before retrying."
+            ),
         }
 
     # =================================================================
@@ -354,10 +536,8 @@ class FixEngine:
     def update_product_type(
         self, *, product_id: str, product_type: str, shop_domain: str, access_token: str, **_: Any
     ) -> dict[str, Any]:
-        product_id = str(product_id or "").strip()
+        product_id = _require_product_gid(product_id)
         product_type = _require(product_type, "Product type is required.")
-        if not _PRODUCT_GID_RE.fullmatch(product_id):
-            raise ValueError("A valid Shopify Product GID is required.")
         result = _mutate(
             shop_domain, access_token, PRODUCT_UPDATE,
             {"product": {"id": product_id, "productType": product_type}},
@@ -395,6 +575,44 @@ class FixEngine:
             "message": "Product description updated successfully.",
         }
 
+    def review_product_claim(
+        self,
+        *,
+        product_id: str,
+        description_html: str,
+        shop_domain: str,
+        access_token: str,
+        merchant_approved: bool = False,
+        **_: Any,
+    ) -> dict[str, Any]:
+        """Save a complete, merchant-reviewed replacement description.
+
+        Does not validate substantiation, certify compliance, or remove the
+        claim from other surfaces (ads, feeds, theme content, metafields).
+        """
+        if merchant_approved is not True:
+            raise ValueError(
+                "Merchant review and approval of the complete replacement description are required."
+            )
+        description_html = _require_text(
+            description_html, "Provide the complete reviewed replacement description."
+        )
+        result = self.update_product_description(
+            product_id=product_id,
+            description_html=description_html,
+            shop_domain=shop_domain,
+            access_token=access_token,
+        )
+        return {
+            **result,
+            "fix_action": "review_product_claim",
+            "verification_required": True,
+            "message": (
+                "Reviewed description saved. This does not certify the claim or remove "
+                "it from other surfaces. Rerun the audit to confirm."
+            ),
+        }
+
     def update_product_title(
         self, *, product_id: str, title: str, shop_domain: str, access_token: str, **_: Any
     ) -> dict[str, Any]:
@@ -417,7 +635,7 @@ class FixEngine:
         }
 
     # =================================================================
-    # Product-level: metafields
+    # Product-level: metafields / guardrails
     # =================================================================
 
     def set_metafield(
@@ -431,25 +649,27 @@ class FixEngine:
     ) -> dict[str, Any]:
         """Set product metafields (default namespace 'details')."""
         product_id = _require(product_id, "Product ID is required.")
-        if not attributes:
-            raise ValueError("At least one metafield attribute is required.")
-        if len(attributes) > 25:
-            raise ValueError("Shopify allows at most 25 metafields per request.")
+        attributes = _dict_list(attributes, "attributes", max_items=25)
 
         metafields = []
+        seen: set[tuple[str, str]] = set()
         for attribute in attributes:
-            key = _require(attribute.get("key"), "Metafield key is required.")
-            mtype = _require(attribute.get("type"), f"Metafield type is required for '{key}'.")
+            key = _require_text(attribute.get("key"), "Metafield key is required.")
+            mtype = _require_text(attribute.get("type"), f"Metafield type is required for '{key}'.")
             value = attribute.get("value")
-            if value is None or not str(value).strip():
+            if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"Metafield value is required for '{key}'.")
+            namespace = str(attribute.get("namespace") or "details").strip()
+            if (namespace, key) in seen:
+                raise ValueError(f"Duplicate metafield '{namespace}.{key}' in request.")
+            seen.add((namespace, key))
             metafields.append(
                 {
                     "ownerId": product_id,
-                    "namespace": str(attribute.get("namespace") or "details").strip(),
+                    "namespace": namespace,
                     "key": key,
                     "type": mtype,
-                    "value": str(value).strip(),
+                    "value": value.strip(),
                 }
             )
 
@@ -458,8 +678,8 @@ class FixEngine:
             {"metafields": metafields}, "metafieldsSet", "Shopify metafield update",
         )
         updated = result.get("metafields") or []
-        if not updated:
-            raise ShopifyAdminAPIError("Shopify did not return the updated metafields.")
+        if len(updated) != len(metafields):
+            raise ShopifyAdminAPIError("Shopify did not return all updated metafields.")
         return {
             "success": True,
             "product_id": product_id,
@@ -468,10 +688,68 @@ class FixEngine:
             "message": "Product metafields updated successfully.",
         }
 
+    def set_guardrail_metafield(
+        self,
+        *,
+        product_id: str,
+        shop_domain: str,
+        access_token: str,
+        minimum_age: int | None = None,
+        warning_text: str | None = None,
+        merchant_approved: bool = False,
+        **_: Any,
+    ) -> dict[str, Any]:
+        """Save guardrail metadata (guardrails.minimum_age / guardrails.warning).
+
+        This is disclosure metadata only. It does not enforce age restrictions;
+        the collector must read the same namespace and keys.
+        """
+        if merchant_approved is not True:
+            raise ValueError("Merchant approval is required.")
+        product_id = _require_product_gid(product_id)
+
+        attributes: list[dict[str, str]] = []
+        if minimum_age is not None:
+            if (
+                isinstance(minimum_age, bool)
+                or not isinstance(minimum_age, int)
+                or not 0 <= minimum_age <= 120
+            ):
+                raise ValueError("minimum_age must be a whole number between 0 and 120.")
+            attributes.append({
+                "namespace": "guardrails",
+                "key": "minimum_age",
+                "type": "number_integer",
+                "value": str(minimum_age),
+            })
+        if warning_text is not None:
+            attributes.append({
+                "namespace": "guardrails",
+                "key": "warning",
+                "type": "multi_line_text_field",
+                "value": _require_text(warning_text, "warning_text must not be blank."),
+            })
+        if not attributes:
+            raise ValueError("Provide minimum_age and/or warning_text.")
+
+        result = self.set_metafield(
+            product_id=product_id, attributes=attributes,
+            shop_domain=shop_domain, access_token=access_token,
+        )
+        return {
+            **result,
+            "fix_action": "set_guardrail_metafield",
+            "verification_required": True,
+            "message": (
+                "Guardrail metadata saved. This is disclosure only; it does not "
+                "enforce age restrictions or display a warning."
+            ),
+        }
+
     def set_mpn(
         self, *, product_id: str = "", variant_id: str, mpn: str, shop_domain: str, access_token: str, **_: Any
     ) -> dict[str, Any]:
-        """Set MPN for a variant (metafield identifiers.mpn)."""
+        """Set MPN for a variant (custom metafield identifiers.mpn)."""
         variant_id = _require(variant_id, "Variant ID is required.")
         mpn = _require(mpn, "MPN is required.")
         result = _mutate(
@@ -498,7 +776,10 @@ class FixEngine:
             "variant_id": variant_id,
             "fix_action": "set_mpn",
             "metafields": updated,
-            "message": "Variant MPN updated successfully.",
+            "message": (
+                "Variant MPN saved as a custom metafield (identifiers.mpn). "
+                "It is not sent to sales channels or feeds unless mapped."
+            ),
         }
 
     # =================================================================
@@ -556,13 +837,12 @@ class FixEngine:
             "verification_required": True,
             "message": (
                 "Store disclosure saved. This is evidence only; it does not display "
-                "a warning or enforce restrictions. Refetch shop.guardrailDisclosure "
-                "and rerun the guardrail check."
+                "a warning or enforce restrictions."
             ),
         }
 
     # =================================================================
-    # Store-level: policies, contact, brand/About page
+    # Store-level: policies, contact, brand/About page, FAQ
     # =================================================================
 
     def update_policy(
@@ -582,15 +862,12 @@ class FixEngine:
             raise ValueError("policy_type must be a string.")
         policy_type = policy_type.strip().upper()
         if policy_type not in POLICY_TYPES:
-            raise ValueError(
-                "policy_type must be REFUND_POLICY, SHIPPING_POLICY or CONTACT_INFORMATION."
-            )
-        if not isinstance(body, str) or not body.strip():
-            raise ValueError("Provide the complete approved policy body.")
+            raise ValueError(f"policy_type must be one of: {', '.join(sorted(POLICY_TYPES))}.")
+        body = _require_text(body, "Provide the complete approved policy body.")
 
         result = _mutate(
             shop_domain, access_token, SHOP_POLICY_UPDATE,
-            {"policy": {"type": policy_type, "body": body.strip()}},
+            {"policy": {"type": policy_type, "body": body}},
             "shopPolicyUpdate", "Policy update",
         )
         policy = result.get("shopPolicy")
@@ -635,19 +912,23 @@ class FixEngine:
         publish: bool = False,
         **_: Any,
     ) -> dict[str, Any]:
-        """Replace the body of a merchant-selected About page (needs write_content)."""
+        """Replace the body of a merchant-selected About page (needs write_content).
+
+        Cannot create a missing page; use create_faq-style creation separately if needed.
+        """
         if merchant_approved is not True:
             raise ValueError("Merchant approval is required.")
         page_id = str(page_id or "").strip()
         if not _PAGE_GID_RE.fullmatch(page_id):
             raise ValueError("An existing Shopify Page GID is required.")
-        if not isinstance(body, str) or not body.strip():
-            raise ValueError("Provide the complete approved page body.")
+        body = _require_text(body, "Provide the complete approved page body.")
+        if not isinstance(publish, bool):
+            raise ValueError("publish must be a boolean.")
 
-        page_input: dict[str, Any] = {"body": body.strip()}
+        page_input: dict[str, Any] = {"body": body}
         if title is not None:
-            page_input["title"] = _require(title, "title must not be blank.")
-        if publish is True:
+            page_input["title"] = _require_text(title, "title must not be blank.")
+        if publish:
             page_input["isPublished"] = True
 
         result = _mutate(
@@ -672,8 +953,59 @@ class FixEngine:
             "page": page,
             "verification_required": True,
             "message": (
-                "About page saved. Refetch published pages (the collector must include "
-                "their title/body) and rerun the check before reporting resolved."
+                "About page saved. Refetch published pages and rerun the check "
+                "before reporting resolved."
+            ),
+        }
+
+    def create_faq(
+        self,
+        *,
+        shop_domain: str,
+        access_token: str,
+        title: str,
+        body: str,
+        merchant_approved: bool = False,
+        publish: bool = False,
+        **_: Any,
+    ) -> dict[str, Any]:
+        """Create a page containing the complete approved FAQ HTML (draft unless publish=True).
+
+        Creates a NEW page on every call. After a timeout, check existing pages
+        before retrying to avoid duplicates. Does not add a navigation link.
+        """
+        if merchant_approved is not True:
+            raise ValueError("Merchant approval is required.")
+        title = _require_text(title, "A nonblank FAQ page title is required.")
+        body = _require_text(body, "The complete approved FAQ body is required.")
+        if not isinstance(publish, bool):
+            raise ValueError("publish must be a boolean.")
+
+        result = _mutate(
+            shop_domain, access_token,
+            """
+            mutation CreateFaq($page: PageCreateInput!) {
+              pageCreate(page: $page) {
+                page { id title handle isPublished }
+                userErrors { field message }
+              }
+            }
+            """,
+            {"page": {"title": title, "body": body, "isPublished": publish}},
+            "pageCreate", "FAQ page creation",
+        )
+        page = result.get("page")
+        if not page:
+            raise ShopifyAdminAPIError("Shopify did not return the created page.")
+        return {
+            "success": True,
+            "fix_action": "create_faq",
+            "page": page,
+            "verification_required": True,
+            "message": (
+                "FAQ page created as a published page."
+                if publish
+                else "FAQ page created as a draft. Publish it and add a navigation link in Shopify admin."
             ),
         }
 
@@ -691,9 +1023,7 @@ class FixEngine:
         access_token: str,
         **_: Any,
     ) -> dict[str, Any]:
-        product_id = str(product_id or "").strip()
-        if not _PRODUCT_GID_RE.fullmatch(product_id):
-            raise ValueError("A Shopify Product GID is required.")
+        product_id = _require_product_gid(product_id)
         image_url = (image_url or "").strip()
         parsed = urlparse(image_url)
         if parsed.scheme != "https" or not parsed.netloc:
@@ -734,49 +1064,51 @@ class FixEngine:
     def set_product_image_alt(
         self,
         *,
-        product: dict[str, Any],
+        product_id: str,
         image_alts: dict[str, str],
         shop_domain: str,
         access_token: str,
         **_: Any,
     ) -> dict[str, Any]:
-        if not product.get("id"):
-            raise ValueError("Product ID is required.")
-        if "images" not in product:
-            raise ValueError("Image data is unavailable; refetch the product.")
-        images = product.get("images") or []
-        if not images:
+        """Set alt text for images missing it. Media ownership is verified against Shopify."""
+        product_id = _require_product_gid(product_id)
+        if not isinstance(image_alts, dict) or not image_alts:
+            raise ValueError("image_alts must be a non-empty object of image ID to alt text.")
+
+        data = _gql(shop_domain, access_token, PRODUCT_MEDIA, {"id": product_id})
+        product = data.get("product")
+        if not product:
+            raise ShopifyAdminAPIError("Product not found.")
+        media = product.get("media") or {}
+        if (media.get("pageInfo") or {}).get("hasNextPage"):
+            raise ShopifyAdminAPIError("Product has too many media items to update safely.")
+
+        owned = {
+            m["id"]: m
+            for m in media.get("nodes") or []
+            if m.get("mediaContentType") == "IMAGE" and m.get("id")
+        }
+        if not owned:
             raise ValueError("Product has no images. Add an image first.")
+        unknown = [k for k in image_alts if k not in owned]
+        if unknown:
+            raise ValueError(f"Image(s) do not belong to this product: {unknown}.")
 
         files: list[dict[str, str]] = []
-        seen_ids: set[str] = set()
-        for image in images:
+        for image_id, image in owned.items():
             if (image.get("alt") or "").strip():
-                continue  
-            image_id = image.get("id")
-            if not image_id or not image_id.startswith("gid://shopify/MediaImage/"):
-                raise ValueError("An image is missing its MediaImage ID; refetch the product.")
-            alt = (image_alts or {}).get(image_id)
+                continue
+            alt = image_alts.get(image_id)
             if not isinstance(alt, str) or not alt.strip():
                 raise ValueError(f"Provide descriptive alt text for image '{image_id}'.")
-            if image_id not in seen_ids:
-                files.append({"id": image_id, "alt": alt.strip()})
-                seen_ids.add(image_id)
+            files.append({"id": image_id, "alt": alt.strip()})
 
-        mutation = """
-        mutation SetImageAlts($files: [FileUpdateInput!]!) {
-          fileUpdate(files: $files) {
-            files { id alt fileStatus }
-            userErrors { field message }
-          }
-        }
-        """
         updated_files: list[dict[str, Any]] = []
         for start in range(0, len(files), 25):
             batch = files[start:start + 25]
             try:
                 result = _mutate(
-                    shop_domain, access_token, mutation, {"files": batch},
+                    shop_domain, access_token, FILE_UPDATE, {"files": batch},
                     "fileUpdate", "Image alt update",
                 )
             except ShopifyAdminAPIError as error:
@@ -790,14 +1122,15 @@ class FixEngine:
 
         return {
             "success": True,
-            "product_id": product["id"],
+            "product_id": product_id,
             "fix_action": "set_product_image_alt",
             "files": updated_files,
             "verification_required": True,
             "message": (
-                "Missing image alt text updated."
+                "Image alt text updated. Alt text is stored on the file, so any other "
+                "product using the same image is affected too."
                 if files
-                else "All collected images already have alt text."
+                else "All images already have alt text."
             ),
         }
 
@@ -852,15 +1185,14 @@ class FixEngine:
         access_token: str,
     ) -> dict[str, Any]:
         product_id = _require(product_id, "Product ID is required.")
-        if not variants:
-            raise ValueError("At least one variant is required to set SKU.")
+        variants = _dict_list(variants, "variants")
 
         formatted: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
         seen_skus: set[str] = set()
         for v in variants:
-            variant_id = _require(v.get("id"), "Variant ID is required for each variant.")
-            sku = _require(v.get("sku"), f"SKU is required for variant '{variant_id}'.")
+            variant_id = _require_text(v.get("id"), "Variant ID is required for each variant.")
+            sku = _require_text(v.get("sku"), f"SKU is required for variant '{variant_id}'.")
             if variant_id in seen_ids:
                 raise ValueError(f"Duplicate variant ID: '{variant_id}'.")
             if sku.lower() in seen_skus:
@@ -875,8 +1207,12 @@ class FixEngine:
             "productVariantsBulkUpdate", "Variant update",
         )
         updated = result.get("productVariants") or []
-        if not updated:
-            raise ShopifyAdminAPIError("Shopify did not return the updated variants.")
+        saved = {v.get("id"): ((v.get("inventoryItem") or {}).get("sku") or "") for v in updated}
+        for item in formatted:
+            if saved.get(item["id"]) != item["inventoryItem"]["sku"]:
+                raise ShopifyAdminAPIError(
+                    f"SKU for variant '{item['id']}' did not persist. Refetch before retrying."
+                )
         return {
             "success": True,
             "product_id": product_id,
@@ -923,26 +1259,15 @@ class FixEngine:
         self, *, product_id: str, variants: list[dict[str, Any]], shop_domain: str, access_token: str, **_: Any
     ) -> dict[str, Any]:
         product_id = _require(product_id, "Product ID is required.")
-        if not variants:
-            raise ValueError("At least one variant is required.")
-        if len(variants) > 250:
-            raise ValueError("Provide at most 250 variants per request.")
+        variants = _dict_list(variants, "variants")
 
         formatted = []
         seen_ids: set[str] = set()
         for variant in variants:
-            variant_id = _require(variant.get("id"), "Variant ID is required for each variant.")
+            variant_id = _require_text(variant.get("id"), "Variant ID is required for each variant.")
             if variant_id in seen_ids:
                 raise ValueError(f"Duplicate variant ID: '{variant_id}'.")
-            raw_price = variant.get("price")
-            if raw_price is None or isinstance(raw_price, bool):
-                raise ValueError(f"A price is required for '{variant_id}'.")
-            try:
-                price = Decimal(str(raw_price).strip())
-            except (InvalidOperation, ValueError):
-                raise ValueError(f"Invalid price for variant '{variant_id}'.") from None
-            if not price.is_finite() or price < 0:
-                raise ValueError(f"Price must be finite and nonnegative for '{variant_id}'.")
+            price = _parse_price(variant.get("price"), f"'{variant_id}'")
             seen_ids.add(variant_id)
             formatted.append({"id": variant_id, "price": format(price, "f")})
 
@@ -962,8 +1287,16 @@ class FixEngine:
             "productVariantsBulkUpdate", "Price update",
         )
         updated = result.get("productVariants") or []
-        if not updated:
-            raise ShopifyAdminAPIError("Shopify did not return the updated variants.")
+        saved = {v.get("id"): v.get("price") for v in updated}
+        for item in formatted:
+            try:
+                ok = Decimal(str(saved.get(item["id"]))) == Decimal(item["price"])
+            except (InvalidOperation, ValueError):
+                ok = False
+            if not ok:
+                raise ShopifyAdminAPIError(
+                    f"Price for variant '{item['id']}' did not persist. Refetch before retrying."
+                )
         return {
             "success": True,
             "product_id": product_id,
@@ -972,147 +1305,76 @@ class FixEngine:
             "message": "Variant prices updated successfully.",
         }
 
-    def build_variant_options_input(
-        self,
-        *,
-        shop_domain: str,
-        access_token: str,
-        product_id: str,
-        variant_option_values: dict[str, dict[str, str]] | None = None,
+    # -----------------------------------------------------------------
+    # Variant option values (targeted updates; never productSet)
+    # -----------------------------------------------------------------
+
+    def _fetch_variant_state(
+        self, *, shop_domain: str, access_token: str, product_id: str
     ) -> dict[str, Any]:
-        if not product_id:
-            raise ValueError("Product ID is required.")
-        variant_option_values = variant_option_values or {}
-        if not variant_option_values:
-            raise ValueError("At least one variant's option values are required.")
+        """Load product options and EVERY variant (fully paginated)."""
+        product_id = _require_product_gid(product_id)
+        product: dict[str, Any] | None = None
+        variants: list[dict[str, Any]] = []
+        cursor: str | None = None
 
-        product = fetch_product_variant_state(
-            shop_domain=shop_domain,
-            access_token=access_token,
-            api_version=API_VERSION,
-            product_id=product_id,
+        for _page in range(30):  
+            data = _gql(
+                shop_domain, access_token, PRODUCT_VARIANT_STATE,
+                {"id": product_id, "cursor": cursor},
+            )
+            node = data.get("product")
+            if not node:
+                raise ShopifyAdminAPIError("Product not found.")
+            product = product or node
+            page = node.get("variants") or {}
+            variants.extend(page.get("nodes") or [])
+            info = page.get("pageInfo") or {}
+            if not info.get("hasNextPage"):
+                break
+            cursor = info.get("endCursor")
+        else:
+            raise ShopifyAdminAPIError("Product has too many variants to load safely.")
+
+        return {
+            "id": product["id"],
+            "title": product.get("title"),
+            "options": product.get("options") or [],
+            "variants": variants,
+        }
+
+    def get_variant_options_state(
+        self, *, shop_domain: str, access_token: str, product_id: str
+    ) -> dict[str, Any]:
+        """Read-only state for the options editor (all variants, with option IDs)."""
+        state = self._fetch_variant_state(
+            shop_domain=shop_domain, access_token=access_token, product_id=product_id
         )
-
-        requested_by_option: dict[str, list[str]] = {}
-        for requested in variant_option_values.values():
-            for option_name, new_value in (requested or {}).items():
-                if not option_name or new_value is None:
-                    continue
-                value_str = str(new_value).strip()
-                if value_str and value_str not in requested_by_option.setdefault(option_name, []):
-                    requested_by_option[option_name].append(value_str)
-
-        product_options: list[dict[str, Any]] = []
-        for option in product.get("options") or []:
-            option_name = option.get("name")
-            if not option_name:
-                continue
-            ordered: list[str] = []
-            for v in option.get("values") or []:
-                v = str(v).strip() if v else ""
-                if v and v not in ordered:
-                    ordered.append(v)
-            for v in requested_by_option.get(option_name, []):
-                if v not in ordered:
-                    ordered.append(v)
-            if not ordered:
-                continue
-            product_options.append(
+        return {
+            "product_id": state["id"],
+            "title": state["title"],
+            "options": [o.get("name") for o in state["options"]],
+            "options_detail": [
+                {"id": o.get("id"), "name": o.get("name"), "values": o.get("values") or []}
+                for o in state["options"]
+            ],
+            "variants": [
                 {
-                    "id": option.get("id"),
-                    "name": option_name,
-                    "position": option.get("position"),
-                    "values": [{"name": v} for v in ordered],
+                    "id": v.get("id"),
+                    "title": v.get("title"),
+                    "sku": v.get("sku"),
+                    "selected_options": [
+                        {
+                            "name": s.get("name"),
+                            "value": s.get("value"),
+                            "suggested_value": self.suggest_normalized_option_value(s.get("value")),
+                        }
+                        for s in v.get("selectedOptions") or []
+                    ],
                 }
-            )
-        if not product_options:
-            raise ValueError("Product has no valid options.")
-
-        variants_input: list[dict[str, Any]] = []
-        for edge in (product.get("variants") or {}).get("edges", []):
-            variant = edge.get("node") or {}
-            variant_id = variant.get("id")
-            if not variant_id:
-                continue
-            requested = variant_option_values.get(variant_id, {}) or {}
-            option_values: list[dict[str, str]] = []
-            for selected in variant.get("selectedOptions") or []:
-                option_name = selected.get("name")
-                if not option_name:
-                    continue
-                new_value = requested.get(option_name, selected.get("value"))
-                if new_value is None or not str(new_value).strip():
-                    raise ValueError(
-                        f"Missing option value for variant '{variant_id}', option '{option_name}'."
-                    )
-                option_values.append({"optionName": option_name, "name": str(new_value).strip()})
-            if not option_values:
-                raise ValueError(f"Variant '{variant_id}' has no option values.")
-            variants_input.append({"id": variant_id, "optionValues": option_values})
-
-        if not variants_input:
-            raise ValueError("Product has no valid variants.")
-
-        return {"id": product_id, "productOptions": product_options, "variants": variants_input}
-
-    def build_variant_matrix_input(
-        self,
-        *,
-        shop_domain: str,
-        access_token: str,
-        product_id: str,
-        options: list[dict[str, Any]],
-        default_price: str | None = None,
-    ) -> dict[str, Any]:
-        if not options:
-            raise ValueError("At least one option with values is required.")
-        for option in options:
-            if not option.get("name") or not str(option.get("name")).strip():
-                raise ValueError("Every option needs a name.")
-            if not option.get("values"):
-                raise ValueError(f"Option '{option.get('name')}' needs at least one value.")
-
-        combo_count = 1
-        for option in options:
-            combo_count *= len(option["values"])
-        if combo_count > 100:
-            raise ValueError(
-                f"This would create {combo_count} variants, which exceeds the "
-                "100-variant safety limit for this tool."
-            )
-
-        product = fetch_product_variant_state(
-            shop_domain=shop_domain,
-            access_token=access_token,
-            api_version=API_VERSION,
-            product_id=product_id,
-        )
-        existing = (product.get("variants") or {}).get("edges", [])
-        current_price = existing[0].get("node", {}).get("price") if existing else None
-        price = str(default_price or current_price or "0.00")
-
-        options_input = [
-            {
-                "name": option["name"].strip(),
-                "position": index + 1,
-                "values": [{"name": v} for v in option["values"]],
-            }
-            for index, option in enumerate(options)
-        ]
-        option_names = [option["name"].strip() for option in options]
-        value_lists = [option["values"] for option in options]
-        title = product.get("title") or ""
-
-        variants_input = []
-        for combo in itertools.product(*value_lists):
-            selected = [{"optionName": n, "name": v} for n, v in zip(option_names, combo)]
-            sku = self.suggest_sku(
-                product_title=title,
-                selected_options=[{"value": v} for v in combo],
-            )["suggested_sku"]
-            variants_input.append({"optionValues": selected, "price": price, "sku": sku})
-
-        return {"title": title, "options": options_input, "variants": variants_input}
+                for v in state["variants"]
+            ],
+        }
 
     @staticmethod
     def suggest_normalized_option_value(value: str) -> str:
@@ -1123,44 +1385,114 @@ class FixEngine:
         self,
         *,
         product_id: str,
-        product_set_input: dict[str, Any],
+        variant_option_values: dict[str, dict[str, str]],
         shop_domain: str,
         access_token: str,
-        synchronous: bool = True,
+        merchant_approved: bool = False,
         **_: Any,
     ) -> dict[str, Any]:
-        """Normalize options/variants via productSet. Product ID is forced from product_id."""
-        product_id = _require(product_id, "Product ID is required.")
-        if not isinstance(product_set_input, dict):
-            raise ValueError("product_set_input must be a dict.")
+        """Change option values on EXISTING variants via targeted bulk updates.
 
-        result = _mutate(
-            shop_domain, access_token,
-            """
-            mutation FixVariantOptions($input: ProductSetInput!, $synchronous: Boolean!) {
-              productSet(input: $input, synchronous: $synchronous) {
-                product {
-                  id
-                  options { id name }
-                  variants(first: 100) { nodes { id title } }
-                }
-                userErrors { field message }
-              }
-            }
-            """,
-            {"input": {**product_set_input, "id": product_id}, "synchronous": synchronous},
-            "productSet", "Shopify productSet (variant options)",
+        Replaces the old productSet flow, which could delete any variant missing
+        from the submitted list. Here every variant keeps its identity, requested
+        IDs/option names are validated, and duplicate combinations are rejected
+        before anything is written.
+        """
+        if merchant_approved is not True:
+            raise ValueError("Merchant approval is required.")
+        product_id = _require_product_gid(product_id)
+        if not isinstance(variant_option_values, dict) or not variant_option_values:
+            raise ValueError("variant_option_values must be a non-empty object.")
+        if len(variant_option_values) > MAX_BULK:
+            raise ValueError(f"At most {MAX_BULK} variants can be updated per request.")
+
+        state = self._fetch_variant_state(
+            shop_domain=shop_domain, access_token=access_token, product_id=product_id
         )
-        product = result.get("product")
-        if not product:
-            raise ShopifyAdminAPIError("Shopify did not return the updated product.")
+        option_names = [o.get("name") for o in state["options"] if o.get("name")]
+        if not option_names:
+            raise ValueError("Product has no options.")
+        by_id = {v["id"]: v for v in state["variants"] if v.get("id")}
+
+        requested_clean: dict[str, dict[str, str]] = {}
+        for variant_id, requested in variant_option_values.items():
+            if variant_id not in by_id:
+                raise ValueError(f"Variant '{variant_id}' does not belong to this product.")
+            if not isinstance(requested, dict) or not requested:
+                raise ValueError(f"Provide option values for variant '{variant_id}'.")
+            clean: dict[str, str] = {}
+            for name, value in requested.items():
+                if name not in option_names:
+                    raise ValueError(f"Unknown option '{name}' for this product.")
+                clean[name] = _require_text(
+                    value, f"Option '{name}' for variant '{variant_id}' must not be blank."
+                )
+            requested_clean[variant_id] = clean
+
+
+        target: dict[str, dict[str, str]] = {}
+        for variant_id, variant in by_id.items():
+            current = {
+                s["name"]: s["value"] for s in variant.get("selectedOptions") or [] if s.get("name")
+            }
+            wanted = {**current, **requested_clean.get(variant_id, {})}
+            missing = [n for n in option_names if not str(wanted.get(n) or "").strip()]
+            if missing:
+                raise ValueError(f"Variant '{variant_id}' is missing value(s) for: {missing}.")
+            target[variant_id] = wanted
+
+        seen: dict[tuple[str, ...], str] = {}
+        for variant_id, wanted in target.items():
+            combo = tuple(wanted[n].casefold() for n in option_names)
+            if combo in seen:
+                raise ValueError(
+                    f"These changes would give variants '{seen[combo]}' and '{variant_id}' "
+                    "identical option values."
+                )
+            seen[combo] = variant_id
+
+        changed = [
+            variant_id
+            for variant_id in requested_clean
+            if target[variant_id]
+            != {s["name"]: s["value"] for s in by_id[variant_id].get("selectedOptions") or []}
+        ]
+        if not changed:
+            raise ValueError("No option values changed.")
+
+        formatted = [
+            {
+                "id": variant_id,
+                "optionValues": [
+                    {"optionName": n, "name": target[variant_id][n]} for n in option_names
+                ],
+            }
+            for variant_id in changed
+        ]
+        result = _mutate(
+            shop_domain, access_token, VARIANT_OPTIONS_UPDATE,
+            {"productId": product_id, "variants": formatted},
+            "productVariantsBulkUpdate", "Variant option update",
+        )
+
+        saved = {
+            v.get("id"): {s["name"]: s["value"] for s in v.get("selectedOptions") or []}
+            for v in result.get("productVariants") or []
+        }
+        for variant_id in changed:
+            if saved.get(variant_id) != target[variant_id]:
+                raise ShopifyAdminAPIError(
+                    f"Option values for variant '{variant_id}' did not persist. Refetch before retrying."
+                )
+
         return {
             "success": True,
-            "product_id": product.get("id"),
-            "options": product.get("options"),
-            "variants": product.get("variants"),
+            "product_id": product_id,
+            "updated_variants": len(changed),
+            "variants": result.get("productVariants"),
             "fix_action": "fix_variant_options",
-            "message": "Product options and variants normalized successfully.",
+            "verification_required": True,
+            "message": f"Updated option values on {len(changed)} variant(s).",
         }
 
     def set_gtin(
@@ -1177,6 +1509,10 @@ class FixEngine:
         product_id = _require(product_id, "Product ID is required.")
         variant_id = _require(variant_id, "Variant ID is required.")
         gtin = _require(gtin, "GTIN is required.")
+        if not _is_valid_gtin(gtin):
+            raise ValueError(
+                "GTIN must be 8, 12, 13 or 14 digits with a valid check digit."
+            )
 
         result = _mutate(
             shop_domain, access_token, VARIANTS_BULK_UPDATE,
@@ -1200,7 +1536,7 @@ class FixEngine:
             "variant_id": variant_id,
             "fix_action": "set_gtin",
             "barcode": saved,
-            "message": "Variant GTIN updated successfully.",
+            "message": "Variant barcode (GTIN) updated successfully.",
         }
 
     # =================================================================
@@ -1212,6 +1548,7 @@ class FixEngine:
         *,
         shop_domain: str,
         access_token: str,
+        merchant_approved: bool = False,
         delivery_profile_id: str | None = None,
         delivery_profile_update: dict[str, Any] | None = None,
         pickup_settings: list[dict[str, Any]] | None = None,
@@ -1220,92 +1557,93 @@ class FixEngine:
     ) -> dict[str, Any]:
         """
         Merchant-approved fulfillment updates (delivery profile, pickup, shipping policy).
-        Shipping-policy update replaces the whole policy body. Not atomic.
+        The shipping-policy update replaces the whole policy body. Not atomic.
         """
+        if merchant_approved is not True:
+            raise ValueError("Merchant approval is required.")
         _clean_shop(shop_domain, access_token)
 
         if (delivery_profile_id is None) != (delivery_profile_update is None):
             raise ValueError("Provide both delivery_profile_id and delivery_profile_update.")
         if delivery_profile_update is not None:
-            if not str(delivery_profile_id or "").strip():
-                raise ValueError("Delivery profile ID is required.")
-            if not delivery_profile_update:
-                raise ValueError("Delivery profile update cannot be empty.")
+            if not isinstance(delivery_profile_update, dict) or not delivery_profile_update:
+                raise ValueError("delivery_profile_update must be a non-empty object.")
+            delivery_profile_id = _require_text(delivery_profile_id, "Delivery profile ID is required.")
 
-        for settings in pickup_settings or []:
-            if not settings.get("locationId"):
-                raise ValueError("Pickup locationId is required.")
-            if not settings.get("pickupTime"):
-                raise ValueError("Pickup pickupTime is required.")
-            instructions = settings.get("instructions")
-            if not isinstance(instructions, str) or not instructions.strip():
-                raise ValueError("Nonblank pickup instructions are required for each location.")
+        clean_pickups: list[dict[str, str]] = []
+        if pickup_settings is not None:
+            for settings in _dict_list(pickup_settings, "pickup_settings", max_items=50):
+                clean_pickups.append({
+                    "locationId": _require_text(settings.get("locationId"), "Pickup locationId is required."),
+                    "pickupTime": _require_text(settings.get("pickupTime"), "Pickup pickupTime is required."),
+                    "instructions": _require_text(
+                        settings.get("instructions"),
+                        "Nonblank pickup instructions are required for each location.",
+                    ),
+                })
 
         if shipping_policy_body is not None:
-            if not isinstance(shipping_policy_body, str) or not shipping_policy_body.strip():
-                raise ValueError("Shipping policy body must not be blank.")
+            shipping_policy_body = _require_text(
+                shipping_policy_body, "Shipping policy body must not be blank."
+            )
 
-        if delivery_profile_update is None and not pickup_settings and shipping_policy_body is None:
+        if delivery_profile_update is None and not clean_pickups and shipping_policy_body is None:
             raise ValueError("Provide at least one fulfillment update.")
 
         completed: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
 
-        def run(mutation: str, variables: dict[str, Any], operation: str) -> None:
+        def step(operation: str, call: Callable[[], Any]) -> None:
             try:
-                result = _mutate(
-                    shop_domain, access_token, mutation, variables, operation, operation
-                )
-            except ShopifyAdminAPIError as error:
-                prior = [c["operation"] for c in completed]
-                raise ShopifyAdminAPIError(
-                    f"{error}. Previously completed operations: {prior}. "
-                    "Refetch settings before retrying; changes are not rolled back."
-                ) from error
-            completed.append({"operation": operation, "result": result})
+                completed.append({"operation": operation, "success": True, "result": call()})
+            except (ValueError, ShopifyAdminAPIError) as error:
+                failures.append({"operation": operation, "success": False, "error": str(error)})
 
         if delivery_profile_update is not None:
-            run(
-                """
-                mutation UpdateFulfillmentProfile($id: ID!, $profile: DeliveryProfileInput!) {
-                  deliveryProfileUpdate(id: $id, profile: $profile) {
-                    profile { id name }
-                    userErrors { field message }
-                  }
-                }
-                """,
-                {"id": delivery_profile_id.strip(), "profile": delivery_profile_update},
+            step(
                 "deliveryProfileUpdate",
+                lambda: _mutate(
+                    shop_domain, access_token, DELIVERY_PROFILE_UPDATE,
+                    {"id": delivery_profile_id, "profile": delivery_profile_update},
+                    "deliveryProfileUpdate", "deliveryProfileUpdate",
+                ),
             )
 
-        for settings in pickup_settings or []:
-            run(
-                """
-                mutation UpdatePickup($settings: DeliveryLocationLocalPickupEnableInput!) {
-                  locationLocalPickupEnable(localPickupSettings: $settings) {
-                    localPickupSettings { instructions pickupTime }
-                    userErrors { field message }
-                  }
-                }
-                """,
-                {"settings": {**settings, "instructions": settings["instructions"].strip()}},
+        for settings in clean_pickups:
+            step(
                 "locationLocalPickupEnable",
+                lambda s=settings: _mutate(
+                    shop_domain, access_token, LOCAL_PICKUP_ENABLE, {"settings": s},
+                    "locationLocalPickupEnable", "locationLocalPickupEnable",
+                ),
             )
 
         if shipping_policy_body is not None:
-            run(
-                SHOP_POLICY_UPDATE,
-                {"policy": {"type": "SHIPPING_POLICY", "body": shipping_policy_body.strip()}},
+            step(
                 "shopPolicyUpdate",
+                lambda: self.update_policy(
+                    shop_domain=shop_domain,
+                    access_token=access_token,
+                    policy_type="SHIPPING_POLICY",
+                    body=shipping_policy_body,
+                    merchant_approved=True,
+                ),
             )
 
+        successful, failed = len(completed), len(failures)
         return {
-            "success": True,
+            "success": failed == 0,
+            "partial_success": successful > 0 and failed > 0,
             "fix_action": "update_fulfillment_information",
-            "updates": completed,
-            "verification_required": True,
+            "total": successful + failed,
+            "successful": successful,
+            "failed": failed,
+            "updates": completed + failures,
+            "verification_required": successful > 0,
             "message": (
-                "Fulfillment updates saved. Refetch store context, restore "
-                "catalog_flags, and rerun check_fulfillment_context."
+                "Fulfillment updates saved."
+                if failed == 0
+                else f"{successful} fulfillment operation(s) saved; {failed} failed. Refetch before retrying."
             ),
         }
 
@@ -1324,29 +1662,59 @@ class FixEngine:
         if not jobs:
             raise ValueError("At least one update is required.")
 
-        completed = []
+        completed: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
         for index, job in enumerate(jobs):
             try:
-                completed.append(
-                    _mutate(
-                        shop_domain, access_token, job["query"], job["variables"],
-                        job["operation"], job["operation"],
-                    )
+                result = _mutate(
+                    shop_domain, access_token, job["query"], job["variables"],
+                    job["operation"], job["operation"],
                 )
-            except ShopifyAdminAPIError as error:
-                raise ShopifyAdminAPIError(
-                    f"{action}: update {index + 1} failed: {error}. "
-                    f"{len(completed)} earlier updates completed and were not "
-                    "rolled back. Refetch before retrying."
-                ) from error
+                completed.append({
+                    "index": index, "operation": job["operation"],
+                    "success": True, "result": result,
+                })
+            except (ValueError, ShopifyAdminAPIError) as error:
+                failures.append({
+                    "index": index, "operation": job.get("operation"),
+                    "success": False, "error": str(error),
+                })
 
+        successful, failed = len(completed), len(failures)
         return {
-            "success": True,
+            "success": failed == 0,
+            "partial_success": successful > 0 and failed > 0,
             "fix_action": action,
-            "updates": completed,
-            "verification_required": True,
-            "message": "Updates saved. Refetch products and rerun consistency checks.",
+            "total": len(jobs),
+            "successful": successful,
+            "failed": failed,
+            "results": completed + failures,
+            "verification_required": successful > 0,
+            "message": (
+                "All normalization updates saved."
+                if failed == 0
+                else f"{successful} update(s) saved; {failed} failed. Refetch Shopify data before retrying."
+            ),
         }
+
+    @staticmethod
+    def _validated_products(products: Any, key: str) -> list[tuple[str, list[dict[str, Any]]]]:
+        """Validate every product/nested payload before the first write."""
+        products = _dict_list(products, "changes")
+        out: list[tuple[str, list[dict[str, Any]]]] = []
+        for product in products:
+            product_id = str(product.get("product_id") or "").strip()
+            if not _PRODUCT_GID_RE.fullmatch(product_id):
+                raise ValueError("Every change needs a valid Shopify Product GID in product_id.")
+            items = product.get(key)
+            if (
+                not isinstance(items, list)
+                or not items
+                or not all(isinstance(i, dict) for i in items)
+            ):
+                raise ValueError(f"'{key}' must be a non-empty list of objects for '{product_id}'.")
+            out.append((product_id, items))
+        return out
 
     def normalize_option_structure(
         self, *, products: list[dict[str, Any]], shop_domain: str, access_token: str, **_: Any
@@ -1361,27 +1729,23 @@ class FixEngine:
         }
         """
         jobs = []
-        seen = set()
-        for product in products:
-            product_id = str(product.get("product_id") or "").strip()
-            if not product_id:
-                raise ValueError("product_id is required.")
-            for option in product.get("options") or []:
+        seen: set[tuple[str, str]] = set()
+        for product_id, options in self._validated_products(products, "options"):
+            for option in options:
                 option_id = str(option.get("id") or "").strip()
-                name = str(option.get("name") or "").strip()
-                if not option_id or not name:
-                    raise ValueError("Each option needs its existing ID and new name.")
+                name = option.get("name")
+                if not _OPTION_GID_RE.fullmatch(option_id):
+                    raise ValueError("Each option needs its existing ProductOption GID.")
+                name = _require_text(name, "Each option needs a new name.")
                 identity = (product_id, option_id)
                 if identity in seen:
                     raise ValueError(f"Duplicate option update: {identity}.")
                 seen.add(identity)
-                jobs.append(
-                    {
-                        "query": mutation,
-                        "operation": "productOptionUpdate",
-                        "variables": {"productId": product_id, "option": {"id": option_id, "name": name}},
-                    }
-                )
+                jobs.append({
+                    "query": mutation,
+                    "operation": "productOptionUpdate",
+                    "variables": {"productId": product_id, "option": {"id": option_id, "name": name}},
+                })
         return self._run_normalization(
             jobs=jobs, action="normalize_option_structure",
             shop_domain=shop_domain, access_token=access_token,
@@ -1397,18 +1761,12 @@ class FixEngine:
     ) -> dict[str, Any]:
         """Write explicit canonical metafield values without changing namespaces."""
         inputs = []
-        seen = set()
-        for product in products:
-            product_id = str(product.get("product_id") or "").strip()
-            if not product_id:
-                raise ValueError("product_id is required.")
-            for metafield in product.get("metafields") or []:
+        seen: set[tuple[str, str, str]] = set()
+        for product_id, metafields in self._validated_products(products, "metafields"):
+            for metafield in metafields:
                 entry: dict[str, Any] = {"ownerId": product_id}
                 for field in ("namespace", "key", "type"):
-                    value = metafield.get(field)
-                    if not isinstance(value, str) or not value.strip():
-                        raise ValueError(f"Metafield {field} is required.")
-                    entry[field] = value.strip()
+                    entry[field] = _require_text(metafield.get(field), f"Metafield {field} is required.")
                 value = metafield.get("value")
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError("Metafield value must be a nonblank serialized string.")

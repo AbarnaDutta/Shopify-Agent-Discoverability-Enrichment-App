@@ -39,6 +39,12 @@ migrations = [
     ALTER TABLE report_requests
     ADD COLUMN IF NOT EXISTS error_type VARCHAR(64);
     """,
+    
+    # store recommendation check ID
+    """
+    ALTER TABLE audit_store_recommendations
+    ADD COLUMN IF NOT EXISTS check_id VARCHAR(128);
+    """,
 
     # store recommendation affected products
     """

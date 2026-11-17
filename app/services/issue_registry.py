@@ -13,8 +13,8 @@ ISSUE_TYPES = {
     },
 
     "variant_selection": {
-        "missing_option_name":         {"scope": "product", "fix_mode": "approval", "fix_action": "rename_product_option"},
-        "incomplete_selected_options": {"scope": "variant", "fix_mode": "approval", "fix_action": "fix_variant_options"},
+        "missing_option_name":          {"scope": "product", "fix_mode": "approval", "fix_action": "rename_product_option"},
+        "incomplete_selected_options":  {"scope": "variant", "fix_mode": "user_input", "fix_action": "fix_variant_options"},
         "inconsistent_variant_options": {"scope": "product", "fix_mode": "approval", "fix_action": "fix_variant_options"},
     },
 
@@ -47,9 +47,9 @@ ISSUE_TYPES = {
     "product_understanding": {
         "missing_product_title":            {"scope": "product", "fix_mode": "approval", "fix_action": "update_product_title"},
         "insufficient_product_description": {"scope": "product", "fix_mode": "approval", "fix_action": "update_product_description"},
-        "missing_target_audience":          {"scope": "product", "fix_mode": "approval", "fix_action": "update_product_description"},
-        "missing_included_items":           {"scope": "product", "fix_mode": "approval", "fix_action": "update_product_description"},
-        "missing_excluded_items":           {"scope": "product", "fix_mode": "approval", "fix_action": "update_product_description"},
+        "missing_target_audience":          {"scope": "product", "fix_mode": "user_input", "fix_action": "update_product_description"},
+        "missing_included_items":           {"scope": "product", "fix_mode": "user_input", "fix_action": "update_product_description"},
+        "missing_excluded_items":           {"scope": "product", "fix_mode": "user_input", "fix_action": "update_product_description"},
     },
 
     "comparable_attributes": {
@@ -62,11 +62,11 @@ ISSUE_TYPES = {
     },
 
     "policy_semantics": {
-        "placeholder_in_policy":   {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
-        "missing_policy_deadline": {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
+        "placeholder_in_policy":    {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
+        "missing_policy_deadline":  {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
         "missing_policy_exception": {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
-        "missing_policy_region":   {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
-        "ambiguous_policy_rule":   {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
+        "missing_policy_region":    {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
+        "ambiguous_policy_rule":    {"scope": "store", "fix_mode": "user_input", "fix_action": "update_policy"},
     },
 
     "faq_or_guidance": {
@@ -75,10 +75,10 @@ ISSUE_TYPES = {
     },
 
     "product_clarity": {
-        "unclear_product_usage":            {"scope": "product", "fix_mode": "approval", "fix_action": "update_product_description"},
-        "unclear_included_items":           {"scope": "product", "fix_mode": "approval", "fix_action": "update_product_description"},
-        "unclarified_medical_claim":        {"scope": "product", "fix_mode": "approval", "fix_action": "review_product_claim"},
-        "unclarified_financial_claim":      {"scope": "product", "fix_mode": "approval", "fix_action": "review_product_claim"},
+        "unclear_product_usage":            {"scope": "product", "fix_mode": "user_input", "fix_action": "update_product_description"},
+        "unclear_included_items":           {"scope": "product", "fix_mode": "user_input", "fix_action": "update_product_description"},
+        "unclarified_medical_claim":        {"scope": "product", "fix_mode": "user_input", "fix_action": "review_product_claim"},
+        "unclarified_financial_claim":      {"scope": "product", "fix_mode": "user_input", "fix_action": "review_product_claim"},
         "insufficient_product_description": {"scope": "product", "fix_mode": "approval", "fix_action": "update_product_description"},
     },
 
@@ -87,10 +87,10 @@ ISSUE_TYPES = {
     # ============================================================
 
     "identifiers": {
-        "missing_sku":  {"scope": "variant", "fix_mode": "approval", "fix_action": "generate_sku"},
-        "missing_gtin": {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_gtin"},
-        "invalid_gtin": {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_gtin"},
-        "duplicate_sku": {"scope": "variant", "fix_mode": "user_input", "fix_action": "generate_sku"},
+        "missing_sku":   {"scope": "variant", "fix_mode": "approval", "fix_action": "generate_sku"},
+        "missing_gtin":  {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_gtin"},
+        "invalid_gtin":  {"scope": "variant", "fix_mode": "user_input", "fix_action": "set_gtin"},
+        "duplicate_sku": {"scope": "variant", "fix_mode": "user_input", "fix_action": "update_sku"},
     },
 
     "rich_attributes": {
@@ -99,9 +99,9 @@ ISSUE_TYPES = {
     },
 
     "variant_hygiene": {
-        "generic_option_name":               {"scope": "product", "fix_mode": "approval", "fix_action": "rename_product_option"},
-        "generic_option_value":              {"scope": "variant", "fix_mode": "approval", "fix_action": "fix_variant_options"},
-        "inconsistent_option_values":        {"scope": "product", "fix_mode": "approval", "fix_action": "fix_variant_options"},
+        "generic_option_name":        {"scope": "product", "fix_mode": "approval", "fix_action": "rename_product_option"},
+        "generic_option_value":       {"scope": "variant", "fix_mode": "user_input", "fix_action": "fix_variant_options"},
+        "inconsistent_option_values": {"scope": "product", "fix_mode": "approval", "fix_action": "fix_variant_options"},
     },
 
     "media_quality": {
@@ -110,10 +110,10 @@ ISSUE_TYPES = {
     },
 
     "consistency": {
-        "inconsistent_option_structure":   {"scope": "store", "fix_mode": "approval", "fix_action": "normalize_option_structure"},
-        "inconsistent_metafield_structure": {"scope": "store", "fix_mode": "approval", "fix_action": "normalize_metafield_structure"},
-        "inconsistent_attribute_format":   {"scope": "store", "fix_mode": "user_input", "fix_action": "normalize_attribute_formats"},
-        "inconsistent_attribute_units":    {"scope": "store", "fix_mode": "user_input", "fix_action": "normalize_attribute_units"},
+        "inconsistent_option_structure":    {"scope": "store", "fix_mode": "approval", "fix_action": "normalize_option_structure"},
+        "inconsistent_metafield_structure": {"scope": "store", "fix_mode": "user_input", "fix_action": "normalize_metafield_structure"},
+        "inconsistent_attribute_format":    {"scope": "store", "fix_mode": "user_input", "fix_action": "normalize_attribute_formats"},
+        "inconsistent_attribute_units":     {"scope": "store", "fix_mode": "user_input", "fix_action": "normalize_attribute_units"},
     },
 
     # ============================================================
@@ -126,8 +126,8 @@ ISSUE_TYPES = {
     },
 
     "store_guardrails": {
-        "missing_age_gating":          {"scope": "store", "fix_mode": "user_input", "fix_action": "configure_store_guardrail"},
-        "missing_manual_approval_rule": {"scope": "store", "fix_mode": "user_input", "fix_action": "configure_store_guardrail"},
+        "missing_age_gating":           {"scope": "store", "fix_mode": "unsupported", "fix_action": None},
+        "missing_manual_approval_rule": {"scope": "store", "fix_mode": "unsupported", "fix_action": None},
     },
 
     "legal_pages": {
@@ -175,7 +175,10 @@ def get_supported_issue_types(check_id: str) -> list[str]:
 
 
 def validate_issue_registry() -> list[str]:
-    """Return registry configuration errors without mutating the registry."""
+    """Return registry configuration errors without mutating the registry.
+
+    Handler existence is checked by FixEngine.validate_registered_actions().
+    """
     errors: list[str] = []
     valid_scopes = {"product", "variant", "store"}
     valid_modes = {"automatic", "approval", "user_input", "unsupported"}

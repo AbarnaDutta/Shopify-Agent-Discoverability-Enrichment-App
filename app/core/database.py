@@ -126,6 +126,7 @@ class AuditStoreRecommendation(Base):
 
     id                        = Column(String(36), primary_key=True)
     audit_id                  = Column(String(36), ForeignKey("audits.id", ondelete="CASCADE"), nullable=False, index=True)
+    check_id                  = Column(String(128), nullable=True, index=True)
     enrichment                = Column(Text,       nullable=True)
     priority                  = Column(String(16), nullable=True)
     why_it_matters_for_agents = Column(Text,       nullable=True)

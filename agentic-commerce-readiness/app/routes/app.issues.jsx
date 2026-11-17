@@ -11,14 +11,23 @@ import {
   Wrench,
   X,
   LoaderCircle,
-  CheckCircle2,
-  AlertTriangle,
 } from "lucide-react";
 import { authenticate } from "../shopify.server";
+import {
+  FIELD_CLS,
+  ApprovalCheck,
+  FixStatusBadge,
+  MetafieldRowEditor,
+  buildMetaEntry,
+  emptyMetaRow,
+  errorText,
+  failureMessages,
+  findDuplicateMetafield,
+  isLocked,
+  isMetaRowValid,
+} from "../components/fix-shared";
 
 const API_BASE = "https://geo.properoapps.in/api";
-
-
 
 export async function action({ request }) {
   const { session } = await authenticate.admin(request);
@@ -30,10 +39,8 @@ export async function action({ request }) {
   }
 
   const payload = await request.json();
-  const endpoint = payload.__endpoint || "/store/fix";
-  delete payload.__endpoint;
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const response = await fetch(`${API_BASE}/store/fix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -72,34 +79,8 @@ function prettyLabel(value) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-const STORE_CHECK_LABELS = {
-  fulfillment_context: "Shipping & Fulfillment",
-  faq_or_guidance: "FAQ & Help Content",
-  legal_pages: "Legal Pages",
-  store_guardrails: "Store Guardrails",
-  contact_brand: "Contact & Brand Information",
-  consistency: "Catalog Consistency",
-};
-
-function resolveStoreCheckId(recommendation, storeIssues) {
-  const direct = recommendation?.check_id || recommendation?.fix_payload?.check_id;
-  if (direct) return direct;
-
-  const label = String(recommendation?.enrichment || "").trim().toLowerCase();
-  const matches = new Set(
-    storeIssues
-      .filter((issue) => {
-        const issueLabel =
-          STORE_CHECK_LABELS[issue.check_id] || prettyLabel(issue.check_id);
-        return issueLabel.toLowerCase() === label;
-      })
-      .map((issue) => issue.check_id)
-      .filter(Boolean)
-  );
-  if (matches.size === 1) return [...matches][0];
-
-  const all = new Set(storeIssues.map((issue) => issue.check_id).filter(Boolean));
-  return all.size === 1 ? [...all][0] : "";
+function resolveStoreCheckId(recommendation) {
+  return recommendation?.check_id || recommendation?.fix_payload?.check_id || "";
 }
 
 const STORE_FIX_PANEL = {
@@ -108,6 +89,7 @@ const STORE_FIX_PANEL = {
   update_brand_information: "brand",
   configure_store_guardrail: "guardrail",
   update_fulfillment_information: "fulfillment",
+  create_faq: "faq",
   normalize_option_structure: "norm_options",
   normalize_metafield_structure: "norm_metafields",
   normalize_attribute_formats: "norm_metafields",
@@ -115,15 +97,16 @@ const STORE_FIX_PANEL = {
 };
 
 const STORE_FIX_LABEL = {
-  update_policy: "Store Policies",
-  update_store_contact: "Contact Information",
-  update_brand_information: "About / Brand Page",
-  configure_store_guardrail: "Store Disclosure",
-  update_fulfillment_information: "Shipping & Fulfillment",
-  normalize_option_structure: "Option Names",
-  normalize_metafield_structure: "Missing Attributes",
-  normalize_attribute_formats: "Attribute Formats",
-  normalize_attribute_units: "Attribute Units",
+  update_policy: "Store policies",
+  update_store_contact: "Contact information",
+  update_brand_information: "About / brand page",
+  configure_store_guardrail: "Store disclosure",
+  update_fulfillment_information: "Shipping & fulfillment",
+  create_faq: "FAQ page",
+  normalize_option_structure: "Option names",
+  normalize_metafield_structure: "Missing attributes",
+  normalize_attribute_formats: "Attribute formats",
+  normalize_attribute_units: "Attribute units",
 };
 
 const CONSISTENCY_ACTIONS = {
@@ -132,7 +115,6 @@ const CONSISTENCY_ACTIONS = {
   inconsistent_attribute_format: "normalize_attribute_formats",
   inconsistent_attribute_units: "normalize_attribute_units",
 };
-
 
 function inferStoreFixAction(issue) {
   if (issue?.fix_action) return issue.fix_action;
@@ -144,6 +126,8 @@ function inferStoreFixAction(issue) {
       return "update_policy";
     case "store_guardrails":
       return "configure_store_guardrail";
+    case "faq_or_guidance":
+      return "create_faq";
     case "contact_brand":
       return issue.issue_type === "missing_brand_information"
         ? "update_brand_information"
@@ -156,22 +140,30 @@ function inferStoreFixAction(issue) {
 }
 
 function getStoreFixablePanels(issues) {
-  const byAction = new Map();
-  for (const issue of issues || []) {
-    const action = inferStoreFixAction(issue);
-    const panel = STORE_FIX_PANEL[action];
-    if (!panel) continue;
-    if (!byAction.has(action)) {
-      byAction.set(action, { ...issue, fix_action: action, panel, issues: [] });
-    }
-    byAction.get(action).issues.push(issue);
-  }
-  return [...byAction.values()];
+  return (issues || [])
+    .map((issue) => {
+      if (issue?.fix_mode === "unsupported") return null;
+
+      const action = inferStoreFixAction(issue);
+      const panel = STORE_FIX_PANEL[action];
+
+      if (!issue.id || !issue.check_id || !issue.issue_type || !panel) {
+        return null;
+      }
+
+      return { ...issue, fix_action: action, panel };
+    })
+    .filter(Boolean);
 }
 
+const escapeHtml = (value) =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 
-const INPUT_CLS =
-  "w-full rounded-md border border-[#E1E3E5] bg-white px-3 py-2 text-xs text-[#202223] outline-none focus:border-[#D97706] disabled:opacity-60";
+
 
 function FieldLabel({ children }) {
   return (
@@ -189,40 +181,74 @@ function PanelShell({ children }) {
   );
 }
 
-function ApprovalCheck({ checked, onChange, disabled, children }) {
+function Notice({ tone = "warn", children }) {
+  const styles =
+    tone === "error"
+      ? "bg-[#FFF0EF] text-[#D72C0D]"
+      : tone === "info"
+        ? "bg-[#F1F2F3] text-[#6D7175]"
+        : "bg-[#FFF5E5] text-[#8A6116]";
   return (
-    <label className="flex items-start gap-2 text-[11px] leading-relaxed text-[#202223]">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        disabled={disabled}
-        className="mt-0.5"
-      />
-      <span>{children}</span>
-    </label>
+    <p className={`rounded-md p-2 text-[11px] leading-relaxed ${styles}`}>{children}</p>
   );
 }
 
-function ApplyBar({ status, message, ready, onApply, label = "Apply Fix" }) {
-  const disabled = status === "submitting" || status === "done";
+function ApplyBar({
+  status,
+  message,
+  errors = [],
+  verify = false,
+  ready,
+  onApply,
+  label = "Save changes",
+}) {
+  const locked = isLocked(status);
+  const buttonText =
+    status === "submitting"
+      ? "Saving..."
+      : status === "done"
+        ? "Saved"
+        : status === "partial"
+          ? "Partly saved"
+          : label;
+
+  const messageColor =
+    status === "error"
+      ? "text-[#D72C0D]"
+      : status === "partial"
+        ? "text-[#8A6116]"
+        : "text-[#065F46]";
+
   return (
     <div>
       <button
         type="button"
         onClick={onApply}
-        disabled={disabled || !ready}
+        disabled={locked || !ready}
         className="rounded-md bg-[#111111] px-3 py-1.5 text-xs font-bold text-white transition-opacity hover:bg-[#333333] disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : label}
+        {buttonText}
       </button>
-      {message && (
-        <p
-          className={`mt-1.5 text-xs ${
-            status === "error" ? "text-[#D72C0D]" : "text-[#065F46]"
-          }`}
-        >
-          {message}
+
+      {message && <p className={`mt-1.5 text-xs ${messageColor}`}>{message}</p>}
+
+      {errors.length > 0 && (
+        <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[11px] text-[#D72C0D]">
+          {errors.map((error, index) => (
+            <li key={index}>{error}</li>
+          ))}
+        </ul>
+      )}
+
+      {verify && (status === "done" || status === "partial") && (
+        <p className="mt-1.5 text-[11px] text-[#6D7175]">
+          Re-run the audit from the Dashboard to confirm this is resolved.
+        </p>
+      )}
+
+      {status === "partial" && (
+        <p className="mt-1 text-[11px] text-[#6D7175]">
+          Saved changes are not rolled back. Review them in Shopify admin before trying again.
         </p>
       )}
     </div>
@@ -257,19 +283,22 @@ SeverityBadge.propTypes = { priority: PropTypes.string };
 
 function useStoreFix(fixIssue) {
   const fetcher = useFetcher();
-  const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("");
+  const [state, setState] = useState({
+    status: "idle",
+    message: "",
+    errors: [],
+    verify: false,
+  });
 
   const submit = (changes) => {
-    setStatus("submitting");
-    setMessage("");
+    setState({ status: "submitting", message: "", errors: [], verify: false });
     fetcher.submit(
       {
-        __endpoint: "/store/fix",
         issue_id: fixIssue.id,
         check_id: fixIssue.check_id,
         issue_type: fixIssue.issue_type,
         changes,
+        merchant_approved: true,
       },
       {
         method: "post",
@@ -282,19 +311,38 @@ function useStoreFix(fixIssue) {
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data) return;
     const data = fetcher.data;
+    const errors = failureMessages(data);
+
     if (data.success) {
-      setStatus("done");
-      setMessage(data.message || "Fix applied.");
+      setState({
+        status: "done",
+        message: data.message || "Changes saved.",
+        errors: [],
+        verify: data.verification_required !== false,
+      });
+    } else if (data.partial_success) {
+      setState({
+        status: "partial",
+        message: data.message || "Some changes were saved and some failed.",
+        errors,
+        verify: true,
+      });
     } else {
-      setStatus("error");
-      setMessage(data.detail || data.message || "Failed to apply fix.");
+      setState({
+        status: "error",
+        message: errorText(data, "Failed to save changes."),
+        errors,
+        verify: false,
+      });
     }
   }, [fetcher.state, fetcher.data]);
 
-  return { submit, status, message };
+  return { submit, ...state };
 }
 
-
+/* -------------------------------------------------------------------------- */
+/* Policies (update_policy)                                                   */
+/* -------------------------------------------------------------------------- */
 
 const POLICY_OPTIONS = [
   { value: "REFUND_POLICY", label: "Refund policy" },
@@ -313,31 +361,32 @@ function inferPolicyType(issueType) {
 }
 
 function PolicyFixPanel({ fixIssue }) {
-  const { submit, status, message } = useStoreFix(fixIssue);
-  const [rows, setRows] = useState(() => {
-    const types = [
-      ...new Set((fixIssue.issues || []).map((i) => inferPolicyType(i.issue_type))),
-    ];
-    return (types.length ? types : ["REFUND_POLICY"]).map((policy_type) => ({
-      policy_type,
-      body: "",
-    }));
-  });
+  const store = useStoreFix(fixIssue);
+  const [rows, setRows] = useState(() => [
+    { policy_type: inferPolicyType(fixIssue.issue_type), body: "" },
+  ]);
   const [approved, setApproved] = useState(false);
-  const disabled = status === "submitting" || status === "done";
+  const disabled = isLocked(store.status);
 
   const update = (index, patch) =>
     setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
 
   const valid = rows.filter((r) => r.body.trim());
-  const ready = approved && valid.length > 0;
+  const types = valid.map((r) => r.policy_type);
+  const hasDuplicateTypes = new Set(types).size !== types.length;
+  const ready = approved && valid.length > 0 && !hasDuplicateTypes;
+
+  const nextUnusedType = () =>
+    POLICY_OPTIONS.find((o) => !rows.some((r) => r.policy_type === o.value))?.value ||
+    "REFUND_POLICY";
 
   return (
     <PanelShell>
-      <p className="rounded-md bg-[#FFF5E5] p-2 text-[11px] leading-relaxed text-[#8A6116]">
+      <Notice>
         Saving replaces the <strong>entire</strong> existing policy with the text below. Paste the
-        complete policy, not just the missing part.
-      </p>
+        complete policy, not just the missing part. Write the real terms of your business; this
+        text is not reviewed for legal compliance.
+      </Notice>
 
       {rows.map((row, index) => (
         <div key={index} className="space-y-2 rounded-md border border-[#E1E3E5] bg-[#FAFAFA] p-3">
@@ -346,6 +395,7 @@ function PolicyFixPanel({ fixIssue }) {
               value={row.policy_type}
               onChange={(e) => update(index, { policy_type: e.target.value })}
               disabled={disabled}
+              aria-label="Policy type"
               className="rounded-md border border-[#E1E3E5] bg-white px-2 py-1.5 text-xs outline-none focus:border-[#D97706] disabled:opacity-60"
             >
               {POLICY_OPTIONS.map((o) => (
@@ -371,32 +421,39 @@ function PolicyFixPanel({ fixIssue }) {
             onChange={(e) => update(index, { body: e.target.value })}
             disabled={disabled}
             placeholder="Complete policy text..."
-            className={`${INPUT_CLS} resize-y`}
+            className={`${FIELD_CLS} resize-y`}
           />
         </div>
       ))}
 
-      {!disabled && (
+      {hasDuplicateTypes && (
+        <p className="text-[11px] text-[#D72C0D]">
+          Each policy type can only be saved once per request. Remove the duplicate.
+        </p>
+      )}
+
+      {!disabled && rows.length < POLICY_OPTIONS.length && (
         <button
           type="button"
-          onClick={() => setRows((prev) => [...prev, { policy_type: "REFUND_POLICY", body: "" }])}
+          onClick={() => setRows((prev) => [...prev, { policy_type: nextUnusedType(), body: "" }])}
           className="rounded-md border border-[#E1E3E5] px-2.5 py-1.5 text-xs font-semibold hover:bg-[#F8F9FA]"
         >
-          + Add Policy
+          + Add policy
         </button>
       )}
 
       <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
-        I approve this text to be published on my store.
+        I approve replacing the selected polic{valid.length === 1 ? "y" : "ies"} with this text on my
+        store.
       </ApprovalCheck>
 
       <ApplyBar
-        status={status}
-        message={message}
+        {...store}
         ready={ready}
+        label="Approve and save"
         onApply={() =>
           ready &&
-          submit(
+          store.submit(
             valid.map((r) => ({
               policy_type: r.policy_type,
               body: r.body.trim(),
@@ -409,13 +466,15 @@ function PolicyFixPanel({ fixIssue }) {
   );
 }
 
-
+/* -------------------------------------------------------------------------- */
+/* Contact (update_store_contact)                                             */
+/* -------------------------------------------------------------------------- */
 
 function ContactFixPanel({ fixIssue }) {
-  const { submit, status, message } = useStoreFix(fixIssue);
+  const store = useStoreFix(fixIssue);
   const [body, setBody] = useState("");
   const [approved, setApproved] = useState(false);
-  const disabled = status === "submitting" || status === "done";
+  const disabled = isLocked(store.status);
   const ready = approved && body.trim();
 
   return (
@@ -427,37 +486,41 @@ function ContactFixPanel({ fixIssue }) {
           value={body}
           onChange={(e) => setBody(e.target.value)}
           disabled={disabled}
-          placeholder={"Email: support@example.com\nPhone: +1 555 000 0000\nAddress: ..."}
-          className={`${INPUT_CLS} resize-y`}
+          placeholder={"Update your store's contact information..."}
+          className={`${FIELD_CLS} resize-y`}
         />
         <p className="mt-1 text-[10px] text-[#6D7175]">
-          Replaces your store's contact information policy.
+          Replaces your store's contact information policy. Include only details you want shown
+          publicly.
         </p>
       </div>
       <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
-        I approve this text to be published on my store.
+        I approve publishing this contact information on my store.
       </ApprovalCheck>
       <ApplyBar
-        status={status}
-        message={message}
+        {...store}
         ready={ready}
-        onApply={() => ready && submit([{ body: body.trim(), merchant_approved: true }])}
+        label="Approve and save"
+        onApply={() => ready && store.submit([{ body: body.trim(), merchant_approved: true }])}
       />
     </PanelShell>
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* About / brand page (update_brand_information)                              */
+/* -------------------------------------------------------------------------- */
 
 const PAGE_GID_RE = /^gid:\/\/shopify\/Page\/\d+$/;
 
 function BrandFixPanel({ fixIssue }) {
-  const { submit, status, message } = useStoreFix(fixIssue);
+  const store = useStoreFix(fixIssue);
   const [pageId, setPageId] = useState(fixIssue.page_id || "");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [publish, setPublish] = useState(false);
   const [approved, setApproved] = useState(false);
-  const disabled = status === "submitting" || status === "done";
+  const disabled = isLocked(store.status);
 
   const pageOk = PAGE_GID_RE.test(pageId.trim());
   const ready = approved && pageOk && body.trim();
@@ -471,12 +534,12 @@ function BrandFixPanel({ fixIssue }) {
           value={pageId}
           onChange={(e) => setPageId(e.target.value)}
           disabled={disabled}
-          placeholder="gid://shopify/Page/123456789"
-          className={`${INPUT_CLS} font-mono`}
+          placeholder="Enter the page ID"
+          className={`${FIELD_CLS} font-mono`}
         />
         <p className={`mt-1 text-[10px] ${pageId && !pageOk ? "text-[#D72C0D]" : "text-[#6D7175]"}`}>
-          An existing Shopify page is required. Create an empty About page in Shopify admin first if
-          you don't have one.
+          This updates an existing page and can't create one. If you don't have an About page yet,
+          create an empty one in Shopify admin first.
         </p>
       </div>
       <div>
@@ -487,7 +550,7 @@ function BrandFixPanel({ fixIssue }) {
           onChange={(e) => setTitle(e.target.value)}
           disabled={disabled}
           placeholder="About us"
-          className={INPUT_CLS}
+          className={FIELD_CLS}
         />
       </div>
       <div>
@@ -498,7 +561,7 @@ function BrandFixPanel({ fixIssue }) {
           onChange={(e) => setBody(e.target.value)}
           disabled={disabled}
           placeholder="Who you are, what you sell, and what makes your brand different..."
-          className={`${INPUT_CLS} resize-y`}
+          className={`${FIELD_CLS} resize-y`}
         />
         <p className="mt-1 text-[10px] text-[#6D7175]">Replaces the page's entire current content.</p>
       </div>
@@ -506,15 +569,15 @@ function BrandFixPanel({ fixIssue }) {
         Publish the page if it is currently hidden.
       </ApprovalCheck>
       <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
-        I approve this content to be saved on my store.
+        I approve replacing this page's content with the text above.
       </ApprovalCheck>
       <ApplyBar
-        status={status}
-        message={message}
+        {...store}
         ready={ready}
+        label="Approve and save"
         onApply={() =>
           ready &&
-          submit([
+          store.submit([
             {
               page_id: pageId.trim(),
               body: body.trim(),
@@ -530,48 +593,49 @@ function BrandFixPanel({ fixIssue }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Guardrail panel (configure_store_guardrail)                                */
+/* Store disclosure (configure_store_guardrail)                               */
 /* -------------------------------------------------------------------------- */
 
 function GuardrailFixPanel({ fixIssue }) {
-  const { submit, status, message } = useStoreFix(fixIssue);
+  const store = useStoreFix(fixIssue);
   const [text, setText] = useState("");
   const [approved, setApproved] = useState(false);
-  const disabled = status === "submitting" || status === "done";
+  const disabled = isLocked(store.status);
   const ready = approved && text.trim();
 
   return (
     <PanelShell>
+      <Notice>
+        This saves a disclosure for AI shopping agents to read. It does <strong>not</strong> show a
+        warning on your storefront and does not block under-age purchases. Age verification needs
+        a separate tool.
+      </Notice>
       <div>
-        <FieldLabel>Store disclosure / warning text</FieldLabel>
+        <FieldLabel>Disclosure text</FieldLabel>
         <textarea
           rows={5}
           value={text}
           onChange={(e) => setText(e.target.value)}
           disabled={disabled}
-          placeholder="e.g. Products on this store are for adults 18+. Age verification is required at delivery."
-          className={`${INPUT_CLS} resize-y`}
+          placeholder="Enter disclosure text here..."
+          className={`${FIELD_CLS} resize-y`}
         />
-        <p className="mt-1 text-[10px] text-[#6D7175]">
-          Saved as store-level evidence for AI agents. It does not display a warning on your storefront
-          or enforce age restrictions.
-        </p>
       </div>
       <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
         I approve this disclosure text.
       </ApprovalCheck>
       <ApplyBar
-        status={status}
-        message={message}
+        {...store}
         ready={ready}
-        onApply={() => ready && submit([{ warning_text: text.trim(), merchant_approved: true }])}
+        label="Approve and save"
+        onApply={() => ready && store.submit([{ warning_text: text.trim(), merchant_approved: true }])}
       />
     </PanelShell>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/* Fulfillment panel (update_fulfillment_information)                         */
+/* Fulfillment (update_fulfillment_information)                               */
 /* -------------------------------------------------------------------------- */
 
 const PICKUP_TIMES = [
@@ -593,14 +657,14 @@ function parseJsonObject(text) {
 }
 
 function FulfillmentFixPanel({ fixIssue }) {
-  const { submit, status, message } = useStoreFix(fixIssue);
+  const store = useStoreFix(fixIssue);
   const [shippingBody, setShippingBody] = useState("");
   const [pickups, setPickups] = useState([]);
   const [showProfile, setShowProfile] = useState(false);
   const [profileId, setProfileId] = useState("");
   const [profileJson, setProfileJson] = useState("");
   const [approved, setApproved] = useState(false);
-  const disabled = status === "submitting" || status === "done";
+  const disabled = isLocked(store.status);
 
   const updatePickup = (index, patch) =>
     setPickups((prev) => prev.map((p, i) => (i === index ? { ...p, ...patch } : p)));
@@ -614,7 +678,7 @@ function FulfillmentFixPanel({ fixIssue }) {
   const profileObject = profileUsed ? parseJsonObject(profileJson) : null;
   const profileOk = !profileUsed || (profileId.trim() && profileObject);
 
-  const change = {};
+  const change = { merchant_approved: true };
   if (shippingBody.trim()) change.shipping_policy_body = shippingBody.trim();
   const readyPickups = pickups.filter(pickupComplete);
   if (readyPickups.length) {
@@ -629,14 +693,16 @@ function FulfillmentFixPanel({ fixIssue }) {
     change.delivery_profile_update = profileObject;
   }
 
-  const ready = approved && Object.keys(change).length > 0 && !pickupIncomplete && profileOk;
+  const hasUpdate = Object.keys(change).length > 1;
+  const ready = approved && hasUpdate && !pickupIncomplete && profileOk;
 
   return (
     <PanelShell>
-      <p className="rounded-md bg-[#FFF5E5] p-2 text-[11px] leading-relaxed text-[#8A6116]">
+      <Notice>
         Fill in any of the sections below. Updates are applied in order and are not rolled back if a
-        later one fails.
-      </p>
+        later one fails. Policy text describes your shipping but doesn't change your actual
+        shipping rates in Shopify.
+      </Notice>
 
       <div>
         <FieldLabel>Shipping policy (delivery times, methods, regions)</FieldLabel>
@@ -646,7 +712,7 @@ function FulfillmentFixPanel({ fixIssue }) {
           onChange={(e) => setShippingBody(e.target.value)}
           disabled={disabled}
           placeholder="Complete shipping policy. Replaces the existing shipping policy."
-          className={`${INPUT_CLS} resize-y`}
+          className={`${FIELD_CLS} resize-y`}
         />
       </div>
 
@@ -660,13 +726,15 @@ function FulfillmentFixPanel({ fixIssue }) {
                 value={p.locationId}
                 onChange={(e) => updatePickup(index, { locationId: e.target.value })}
                 disabled={disabled}
-                placeholder="gid://shopify/Location/123456789"
-                className={`${INPUT_CLS} font-mono`}
+                placeholder="Enter location ID "
+                aria-label="Location ID"
+                className={`${FIELD_CLS} font-mono`}
               />
               <select
                 value={p.pickupTime}
                 onChange={(e) => updatePickup(index, { pickupTime: e.target.value })}
                 disabled={disabled}
+                aria-label="Pickup ready time"
                 className="rounded-md border border-[#E1E3E5] bg-white px-2 py-2 text-xs outline-none focus:border-[#D97706] disabled:opacity-60"
               >
                 {PICKUP_TIMES.map((t) => (
@@ -691,8 +759,8 @@ function FulfillmentFixPanel({ fixIssue }) {
               value={p.instructions}
               onChange={(e) => updatePickup(index, { instructions: e.target.value })}
               disabled={disabled}
-              placeholder="Pickup instructions (e.g. bring your order confirmation to the front desk)"
-              className={`${INPUT_CLS} resize-y`}
+              placeholder="Update pickup instructions..."
+              className={`${FIELD_CLS} resize-y`}
             />
           </div>
         ))}
@@ -712,7 +780,7 @@ function FulfillmentFixPanel({ fixIssue }) {
             }
             className="rounded-md border border-[#E1E3E5] px-2.5 py-1.5 text-xs font-semibold hover:bg-[#F8F9FA]"
           >
-            + Add Pickup Location
+            + Add pickup location
           </button>
         )}
       </div>
@@ -732,8 +800,9 @@ function FulfillmentFixPanel({ fixIssue }) {
               value={profileId}
               onChange={(e) => setProfileId(e.target.value)}
               disabled={disabled}
-              placeholder="gid://shopify/DeliveryProfile/123456789"
-              className={`${INPUT_CLS} font-mono`}
+              placeholder="Enter profile ID"
+              aria-label="Delivery profile ID"
+              className={`${FIELD_CLS} font-mono`}
             />
             <textarea
               rows={6}
@@ -741,8 +810,9 @@ function FulfillmentFixPanel({ fixIssue }) {
               onChange={(e) => setProfileJson(e.target.value)}
               disabled={disabled}
               spellCheck={false}
-              placeholder={'DeliveryProfileInput as JSON, e.g. {"name": "General profile", ...}'}
-              className={`${INPUT_CLS} resize-y font-mono`}
+              aria-label="Delivery profile update (JSON)"
+              placeholder={'DeliveryProfileInput as JSON'}
+              className={`${FIELD_CLS} resize-y font-mono`}
             />
             {profileUsed && !profileOk && (
               <p className="text-[11px] text-[#D72C0D]">
@@ -758,231 +828,184 @@ function FulfillmentFixPanel({ fixIssue }) {
       </ApprovalCheck>
 
       <ApplyBar
-        status={status}
-        message={message}
+        {...store}
         ready={ready}
-        onApply={() => ready && submit([change])}
+        label="Approve and save"
+        onApply={() => ready && store.submit([change])}
       />
     </PanelShell>
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* FAQ page (create_faq)                                                      */
+/* -------------------------------------------------------------------------- */
 
-const METAFIELD_TYPES = [
-  { value: "single_line_text_field", label: "Text (single line)" },
-  { value: "multi_line_text_field", label: "Text (multi-line)" },
-  { value: "number_integer", label: "Number (integer)" },
-  { value: "number_decimal", label: "Number (decimal)" },
-  { value: "dimension", label: "Dimension" },
-  { value: "list.single_line_text_field", label: "List of text" },
-];
+const emptyFaqRow = () => ({ question: "", answer: "" });
 
-const DIMENSION_UNITS = ["MILLIMETERS", "CENTIMETERS", "METERS", "INCHES", "FEET", "YARDS"];
-
-const emptyMetaRow = () => ({
-  namespace: "details",
-  key: "",
-  type: "single_line_text_field",
-  value: "",
-  unit: "CENTIMETERS",
-  values: [""],
-});
-
-function isMetaRowValid(row) {
-  if (!row.key.trim() || !row.namespace.trim()) return false;
-  if (row.type === "list.single_line_text_field") return row.values.some((v) => v.trim());
-  if (row.type === "dimension") return row.value.trim() !== "" && Number.isFinite(Number(row.value));
-  return row.value.trim() !== "";
+function buildFaqHtml(rows) {
+  return rows
+    .map((row) => {
+      const answer = row.answer
+        .trim()
+        .split(/\n{2,}/)
+        .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
+        .join("");
+      return `<h3>${escapeHtml(row.question.trim())}</h3>${answer}`;
+    })
+    .join("\n");
 }
 
-function buildMetaEntry(row) {
-  let value;
-  if (row.type === "dimension") {
-    value = JSON.stringify({ unit: row.unit, value: Number(row.value) });
-  } else if (row.type === "list.single_line_text_field") {
-    value = JSON.stringify(row.values.map((v) => v.trim()).filter(Boolean));
-  } else {
-    value = row.value.trim();
-  }
-  return {
-    namespace: row.namespace.trim(),
-    key: row.key.trim(),
-    type: row.type,
-    value,
-  };
-}
+function FaqFixPanel({ fixIssue }) {
+  const store = useStoreFix(fixIssue);
+  const [title, setTitle] = useState("Frequently asked questions");
+  const [rows, setRows] = useState([emptyFaqRow()]);
+  const [publish, setPublish] = useState(false);
+  const [approved, setApproved] = useState(false);
+  const disabled = isLocked(store.status);
 
-function MetafieldRowEditor({ row, onChange, onRemove, disabled }) {
-  const setListValue = (i, v) =>
-    onChange({ values: row.values.map((item, idx) => (idx === i ? v : item)) });
+  const update = (index, patch) =>
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+
+  const valid = rows.filter((r) => r.question.trim() && r.answer.trim());
+  const incomplete = rows.some(
+    (r) => (r.question.trim() || r.answer.trim()) && !(r.question.trim() && r.answer.trim())
+  );
+  const ready = approved && title.trim() && valid.length > 0 && !incomplete;
 
   return (
-    <div className="space-y-2 rounded-md border border-[#E1E3E5] bg-[#FAFAFA] p-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <PanelShell>
+      <Notice tone="info">
+        This creates a <strong>new page</strong> each time it is saved. It isn't added to your
+        navigation menu, and it is saved as a hidden draft unless you choose to publish it. Write
+        answers that are true for your store.
+      </Notice>
+
+      <div>
+        <FieldLabel>Page title</FieldLabel>
         <input
           type="text"
-          value={row.namespace}
-          onChange={(e) => onChange({ namespace: e.target.value })}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
           disabled={disabled}
-          placeholder="namespace"
-          className={`${INPUT_CLS} w-28 font-mono`}
+          className={FIELD_CLS}
         />
-        <input
-          type="text"
-          value={row.key}
-          onChange={(e) => onChange({ key: e.target.value })}
-          disabled={disabled}
-          placeholder="Attribute key"
-          className={`${INPUT_CLS} min-w-[120px] flex-1 font-mono`}
-        />
-        <select
-          value={row.type}
-          onChange={(e) => onChange({ type: e.target.value })}
-          disabled={disabled}
-          className="rounded-md border border-[#E1E3E5] bg-white px-2 py-2 text-xs outline-none focus:border-[#D97706] disabled:opacity-60"
-        >
-          {METAFIELD_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-        {onRemove && !disabled && (
-          <button
-            type="button"
-            onClick={onRemove}
-            aria-label="Remove attribute"
-            className="px-1 text-xs font-bold text-[#D72C0D]"
-          >
-            ✕
-          </button>
-        )}
       </div>
 
-      {row.type === "single_line_text_field" && (
-        <input
-          type="text"
-          value={row.value}
-          onChange={(e) => onChange({ value: e.target.value })}
-          disabled={disabled}
-          placeholder="Value"
-          className={INPUT_CLS}
-        />
-      )}
-      {row.type === "multi_line_text_field" && (
-        <textarea
-          rows={3}
-          value={row.value}
-          onChange={(e) => onChange({ value: e.target.value })}
-          disabled={disabled}
-          placeholder="Value"
-          className={`${INPUT_CLS} resize-y`}
-        />
-      )}
-      {(row.type === "number_integer" || row.type === "number_decimal") && (
-        <input
-          type="number"
-          step={row.type === "number_integer" ? "1" : "any"}
-          value={row.value}
-          onChange={(e) => onChange({ value: e.target.value })}
-          disabled={disabled}
-          placeholder={row.type === "number_integer" ? "Whole number" : "Decimal number"}
-          className={INPUT_CLS}
-        />
-      )}
-      {row.type === "dimension" && (
-        <div className="flex gap-2">
-          <input
-            type="number"
-            step="any"
-            value={row.value}
-            onChange={(e) => onChange({ value: e.target.value })}
+      {rows.map((row, index) => (
+        <div key={index} className="space-y-2 rounded-md border border-[#E1E3E5] bg-[#FAFAFA] p-3">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={row.question}
+              onChange={(e) => update(index, { question: e.target.value })}
+              disabled={disabled}
+              placeholder="Question"
+              aria-label="Question"
+              className={FIELD_CLS}
+            />
+            {rows.length > 1 && !disabled && (
+              <button
+                type="button"
+                onClick={() => setRows((prev) => prev.filter((_, i) => i !== index))}
+                aria-label="Remove question"
+                className="px-1 text-xs font-bold text-[#D72C0D]"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <textarea
+            rows={3}
+            value={row.answer}
+            onChange={(e) => update(index, { answer: e.target.value })}
             disabled={disabled}
-            placeholder="Value"
-            className={`${INPUT_CLS} min-w-0 flex-1`}
+            placeholder="Answer"
+            aria-label="Answer"
+            className={`${FIELD_CLS} resize-y`}
           />
-          <select
-            value={row.unit}
-            onChange={(e) => onChange({ unit: e.target.value })}
-            disabled={disabled}
-            className="rounded-md border border-[#E1E3E5] bg-white px-2 py-2 text-xs outline-none focus:border-[#D97706] disabled:opacity-60"
-          >
-            {DIMENSION_UNITS.map((u) => (
-              <option key={u} value={u}>
-                {prettyLabel(u.toLowerCase())}
-              </option>
-            ))}
-          </select>
         </div>
+      ))}
+
+      {incomplete && (
+        <p className="text-[11px] text-[#D72C0D]">Each question needs an answer, and each answer a question.</p>
       )}
-      {row.type === "list.single_line_text_field" && (
-        <div className="space-y-2">
-          {row.values.map((v, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={v}
-                onChange={(e) => setListValue(i, e.target.value)}
-                disabled={disabled}
-                placeholder={`Value ${i + 1}`}
-                className={`${INPUT_CLS} min-w-0 flex-1`}
-              />
-              {row.values.length > 1 && !disabled && (
-                <button
-                  type="button"
-                  onClick={() => onChange({ values: row.values.filter((_, idx) => idx !== i) })}
-                  className="text-xs font-bold text-[#D72C0D]"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
-          {!disabled && (
-            <button
-              type="button"
-              onClick={() => onChange({ values: [...row.values, ""] })}
-              className="text-xs font-semibold text-[#8A6116] hover:underline"
-            >
-              + Add value
-            </button>
-          )}
-        </div>
+
+      {!disabled && rows.length < 20 && (
+        <button
+          type="button"
+          onClick={() => setRows((prev) => [...prev, emptyFaqRow()])}
+          className="rounded-md border border-[#E1E3E5] px-2.5 py-1.5 text-xs font-semibold hover:bg-[#F8F9FA]"
+        >
+          + Add question
+        </button>
       )}
-    </div>
+
+      <ApprovalCheck checked={publish} onChange={setPublish} disabled={disabled}>
+        Publish the page now. Otherwise it is saved as a draft.
+      </ApprovalCheck>
+      <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
+        I approve creating this FAQ page with the questions and answers above.
+      </ApprovalCheck>
+
+      {store.status === "error" && (
+        <p className="text-[11px] text-[#6D7175]">
+          If this failed with a timeout, check your Pages in Shopify admin before trying again so you
+          don't create a duplicate.
+        </p>
+      )}
+
+      <ApplyBar
+        {...store}
+        ready={ready}
+        label="Approve and create page"
+        onApply={() =>
+          ready &&
+          store.submit([
+            {
+              title: title.trim(),
+              body: buildFaqHtml(valid),
+              publish,
+              merchant_approved: true,
+            },
+          ])
+        }
+      />
+    </PanelShell>
   );
 }
 
-
-const emptyOptionRow = () => ({ id: "", name: "" });
+/* -------------------------------------------------------------------------- */
+/* Catalog consistency (normalize_*)                                          */
+/* -------------------------------------------------------------------------- */
 
 const NORMALIZE_HINTS = {
   normalize_option_structure:
-    "Rename each product's options so they use the same names across the catalog.",
+    "Rename each product's options so they use the same names across your catalog. Change only the names you want to update.",
   normalize_metafield_structure:
-    "Add the missing attributes for each product. Use the exact namespace and key used by your other products.",
+    "Add the missing attributes for each product. Use the exact namespace and key your other products use, and enter the real value for each product.",
   normalize_attribute_formats:
     "Enter each value in the canonical format used across your catalog.",
   normalize_attribute_units:
-    "Enter values already converted to the unit you want to standardize on.",
+    "Enter values already converted to the unit you want to standardize on. Nothing is converted for you.",
 };
 
 function NormalizePanel({ fixIssue, mode, products }) {
   const isOptions = mode === "options";
-  const { submit, status, message } = useStoreFix(fixIssue);
-  const disabled = status === "submitting" || status === "done";
+  const store = useStoreFix(fixIssue);
+  const disabled = isLocked(store.status);
 
   const [entries, setEntries] = useState(() =>
     products.map((p) => ({
       product_id: String(p.product_id),
       title: p.title || "",
-      rows:
-        isOptions && Array.isArray(p.options) && p.options.length > 0
-          ? p.options.map((o) => ({ id: o.id || "", name: o.name || "" }))
-          : [isOptions ? emptyOptionRow() : emptyMetaRow()],
+      rows: isOptions
+        ? (Array.isArray(p.options) ? p.options : [])
+            .filter((o) => o?.id)
+            .map((o) => ({ id: o.id, current: o.name || "", name: o.name || "" }))
+        : [emptyMetaRow()],
     }))
   );
-  const [newProductId, setNewProductId] = useState("");
   const [approved, setApproved] = useState(false);
 
   const updateRow = (entryIndex, rowIndex, patch) =>
@@ -996,11 +1019,7 @@ function NormalizePanel({ fixIssue, mode, products }) {
 
   const addRow = (entryIndex) =>
     setEntries((prev) =>
-      prev.map((e, i) =>
-        i === entryIndex
-          ? { ...e, rows: [...e.rows, isOptions ? emptyOptionRow() : emptyMetaRow()] }
-          : e
-      )
+      prev.map((e, i) => (i === entryIndex ? { ...e, rows: [...e.rows, emptyMetaRow()] } : e))
     );
 
   const removeRow = (entryIndex, rowIndex) =>
@@ -1012,21 +1031,14 @@ function NormalizePanel({ fixIssue, mode, products }) {
       )
     );
 
-  const addProduct = () => {
-    const id = newProductId.trim();
-    if (!/^gid:\/\/shopify\/Product\/\d+$/.test(id)) return;
-    if (entries.some((e) => e.product_id === id)) return;
-    setEntries((prev) => [
-      ...prev,
-      { product_id: id, title: "", rows: [isOptions ? emptyOptionRow() : emptyMetaRow()] },
-    ]);
-    setNewProductId("");
-  };
-
   const validRows = (entry) =>
     isOptions
-      ? entry.rows.filter((r) => r.id.trim() && r.name.trim())
+      ? entry.rows.filter((r) => r.name.trim() && r.name.trim() !== r.current.trim())
       : entry.rows.filter(isMetaRowValid);
+
+  const duplicates = entries
+    .map((entry) => (isOptions ? null : findDuplicateMetafield(entry.rows)))
+    .filter(Boolean);
 
   const changes = entries
     .map((entry) => {
@@ -1035,13 +1047,13 @@ function NormalizePanel({ fixIssue, mode, products }) {
       return isOptions
         ? {
             product_id: entry.product_id,
-            options: rows.map((r) => ({ id: r.id.trim(), name: r.name.trim() })),
+            options: rows.map((r) => ({ id: r.id, name: r.name.trim() })),
           }
         : { product_id: entry.product_id, metafields: rows.map(buildMetaEntry) };
     })
     .filter(Boolean);
 
-  const ready = approved && changes.length > 0;
+  const ready = approved && changes.length > 0 && duplicates.length === 0;
 
   return (
     <PanelShell>
@@ -1050,9 +1062,9 @@ function NormalizePanel({ fixIssue, mode, products }) {
       </p>
 
       {entries.length === 0 && (
-        <p className="text-xs text-[#6D7175]">
-          No affected products were listed. Add a product ID below.
-        </p>
+        <Notice tone="info">
+          The audit didn't list which products are affected. Re-run the audit and try again.
+        </Notice>
       )}
 
       {entries.map((entry, entryIndex) => (
@@ -1072,39 +1084,34 @@ function NormalizePanel({ fixIssue, mode, products }) {
             )}
           </div>
 
+          {isOptions && entry.rows.length === 0 && (
+            <p className="text-[11px] text-[#6D7175]">
+              Option details aren't available for this product in the audit. Re-run the audit, or
+              rename the option from the product's page.
+            </p>
+          )}
+
           {entry.rows.map((row, rowIndex) =>
             isOptions ? (
-              <div key={rowIndex} className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={row.id}
-                  onChange={(e) => updateRow(entryIndex, rowIndex, { id: e.target.value })}
-                  disabled={disabled}
-                  placeholder="gid://shopify/ProductOption/…"
-                  className={`${INPUT_CLS} min-w-0 flex-1 font-mono`}
-                />
+              <div key={row.id} className="flex items-center gap-2">
+                <span className="w-1/3 truncate text-xs text-[#6D7175]" title={row.current}>
+                  {row.current || "(unnamed)"}
+                </span>
                 <input
                   type="text"
                   value={row.name}
                   onChange={(e) => updateRow(entryIndex, rowIndex, { name: e.target.value })}
                   disabled={disabled}
+                  aria-label={`New name for option ${row.current}`}
                   placeholder="New option name"
-                  className={`${INPUT_CLS} min-w-0 flex-1`}
+                  className={`${FIELD_CLS} min-w-0 flex-1`}
                 />
-                {entry.rows.length > 1 && !disabled && (
-                  <button
-                    type="button"
-                    onClick={() => removeRow(entryIndex, rowIndex)}
-                    className="px-1 text-xs font-bold text-[#D72C0D]"
-                  >
-                    ✕
-                  </button>
-                )}
               </div>
             ) : (
               <MetafieldRowEditor
                 key={rowIndex}
                 row={row}
+                showNamespace
                 disabled={disabled}
                 onChange={(patch) => updateRow(entryIndex, rowIndex, patch)}
                 onRemove={entry.rows.length > 1 ? () => removeRow(entryIndex, rowIndex) : null}
@@ -1112,47 +1119,34 @@ function NormalizePanel({ fixIssue, mode, products }) {
             )
           )}
 
-          {!disabled && (
+          {!isOptions && !disabled && (
             <button
               type="button"
               onClick={() => addRow(entryIndex)}
               className="text-xs font-semibold text-[#8A6116] hover:underline"
             >
-              {isOptions ? "+ Add option" : "+ Add attribute"}
+              + Add attribute
             </button>
           )}
         </div>
       ))}
 
-      {!disabled && (
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={newProductId}
-            onChange={(e) => setNewProductId(e.target.value)}
-            placeholder="Add another product: gid://shopify/Product/…"
-            className={`${INPUT_CLS} min-w-0 flex-1 font-mono`}
-          />
-          <button
-            type="button"
-            onClick={addProduct}
-            className="shrink-0 rounded-md border border-[#E1E3E5] px-2.5 py-2 text-xs font-semibold hover:bg-[#F8F9FA]"
-          >
-            Add
-          </button>
-        </div>
+      {duplicates.length > 0 && (
+        <p className="text-[11px] text-[#D72C0D]">
+          Duplicate attribute for one product: {duplicates.join(", ")}. Each namespace and key can
+          appear once per product.
+        </p>
       )}
 
       <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
-        I approve these changes to {changes.length} product(s).
+        I approve these changes to {changes.length} product{changes.length === 1 ? "" : "s"}.
       </ApprovalCheck>
 
       <ApplyBar
-        status={status}
-        message={message}
+        {...store}
         ready={ready}
-        label={`Apply to ${changes.length} product(s)`}
-        onApply={() => ready && submit(changes)}
+        label={`Approve and save ${changes.length} product${changes.length === 1 ? "" : "s"}`}
+        onApply={() => ready && store.submit(changes)}
       />
     </PanelShell>
   );
@@ -1174,6 +1168,8 @@ function StoreFixPanel({ fixIssue, products }) {
       return <GuardrailFixPanel fixIssue={fixIssue} />;
     case "fulfillment":
       return <FulfillmentFixPanel fixIssue={fixIssue} />;
+    case "faq":
+      return <FaqFixPanel fixIssue={fixIssue} />;
     case "norm_options":
       return <NormalizePanel fixIssue={fixIssue} mode="options" products={products} />;
     case "norm_metafields":
@@ -1186,6 +1182,13 @@ function StoreFixPanel({ fixIssue, products }) {
 /* -------------------------------------------------------------------------- */
 /* Fix modal                                                                  */
 /* -------------------------------------------------------------------------- */
+
+function modeIntro(panels) {
+  const mode = panels.find((p) => p.fix_mode)?.fix_mode;
+  if (mode === "approval") return "Review the change below, then approve it before it's saved to your store.";
+  if (mode === "user_input") return "We need a few details from you. Fill them in, then approve the change.";
+  return "Review and approve the changes before they are applied to your Shopify store.";
+}
 
 function StoreFixModal({ issue, onClose }) {
   const panels = issue.fixablePanels || [];
@@ -1212,9 +1215,7 @@ function StoreFixModal({ issue, onClose }) {
             <h2 id="store-fix-title" className="text-base font-bold text-[#202223]">
               {issue.enrichment}
             </h2>
-            <p className="mt-1 text-xs text-[#6D7175]">
-              Review and approve the changes before they are applied to your Shopify store.
-            </p>
+            <p className="mt-1 text-xs text-[#6D7175]">{modeIntro(panels)}</p>
           </div>
           <button
             type="button"
@@ -1258,16 +1259,31 @@ function StoreFixModal({ issue, onClose }) {
             )}
           </div>
 
-          {panels.map((fixIssue) => (
-            <div key={fixIssue.fix_action}>
-              {panels.length > 1 && (
-                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-[#6D7175]">
-                  {STORE_FIX_LABEL[fixIssue.fix_action] || "Fix"}
-                </p>
-              )}
-              <StoreFixPanel fixIssue={fixIssue} products={issue.affectedProducts} />
-            </div>
-          ))}
+          {panels.map((fixIssue) => {
+            const issueProducts = Array.isArray(fixIssue.affected_product_ids)
+              ? issue.affectedProducts.filter((product) =>
+                  fixIssue.affected_product_ids.map(String).includes(String(product.product_id))
+                )
+              : issue.affectedProducts;
+
+            return (
+              <div key={fixIssue.id} className="space-y-2 rounded-lg border border-[#E1E3E5] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold text-[#202223]">
+                      {STORE_FIX_LABEL[fixIssue.fix_action] || "Fix"}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[#6D7175]">
+                      {prettyLabel(fixIssue.issue_type)}
+                    </p>
+                  </div>
+                  <FixStatusBadge status={fixIssue.fix_status} />
+                </div>
+
+                <StoreFixPanel fixIssue={fixIssue} products={issueProducts} />
+              </div>
+            );
+          })}
 
           <div className="flex justify-end border-t border-[#E1E3E5] pt-4">
             <button
@@ -1374,10 +1390,13 @@ export default function Issues() {
     );
 
     return storeRecs.map((recommendation, index) => {
-      const checkId = resolveStoreCheckId(recommendation, storeIssues);
+      const checkId = resolveStoreCheckId(recommendation);
+
       const matched = checkId
-        ? storeIssues.filter((issue) => issue.check_id === checkId)
+        ? storeIssues.filter((issue) => String(issue.check_id) === String(checkId))
         : [];
+
+      const fixablePanels = getStoreFixablePanels(matched);
 
       return {
         key: `store-${index}`,
@@ -1386,7 +1405,8 @@ export default function Issues() {
         why_it_matters_for_agents: recommendation.why_it_matters_for_agents || "",
         example: recommendation.example || "",
         affectedProducts: getAffectedProducts(recommendation, products),
-        fixablePanels: getStoreFixablePanels(matched),
+        checkId,
+        fixablePanels,
         hasMatchedIssues: matched.length > 0,
         raw: recommendation,
       };
@@ -1401,8 +1421,7 @@ export default function Issues() {
     const query = search.trim().toLowerCase();
 
     return allIssues.filter((issue) => {
-      const matchesSeverity =
-        severity === "All" || issue.priority === severity.toLowerCase();
+      const matchesSeverity = severity === "All" || issue.priority === severity.toLowerCase();
 
       const matchesSearch =
         !query ||
@@ -1518,6 +1537,9 @@ export default function Issues() {
                   const isExpanded = expandedKey === issue.key;
                   const recommendation = issue.raw || {};
                   const fixable = issue.fixablePanels.length > 0;
+                  const fixStatuses = [
+                    ...new Set(issue.fixablePanels.map((p) => p.fix_status).filter(Boolean)),
+                  ];
 
                   const affectedLabel =
                     issue.affectedProducts.length > 0
@@ -1540,6 +1562,13 @@ export default function Issues() {
                           <div className="font-semibold text-[#202223] transition-colors group-hover:text-[#D97706]">
                             {issue.enrichment}
                           </div>
+                          {fixStatuses.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {fixStatuses.map((s) => (
+                                <FixStatusBadge key={s} status={s} />
+                              ))}
+                            </div>
+                          )}
                         </td>
 
                         <td className="whitespace-nowrap px-5 py-4 align-top">
@@ -1638,7 +1667,7 @@ export default function Issues() {
                                   className="inline-flex items-center gap-2 rounded-md bg-[#111111] px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#333333]"
                                 >
                                   <Wrench className="h-3.5 w-3.5" />
-                                  Fix Issue
+                                  Fix issue
                                 </button>
                               )}
                             </div>

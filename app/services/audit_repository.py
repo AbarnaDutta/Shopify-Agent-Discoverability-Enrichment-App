@@ -156,14 +156,17 @@ class AuditRepository:
                 ))
 
             for r in store_recs:
-                audit.store_recommendations.append(AuditStoreRecommendation(
-                    id=_new_id(),
-                    enrichment=r.get("enrichment"),
-                    priority=r.get("priority"),
-                    why_it_matters_for_agents=r.get("why_it_matters_for_agents"),
-                    example=r.get("example"),
-                    affected_product_ids=r.get("affected_product_ids") or [],
-                ))
+                audit.store_recommendations.append(
+                    AuditStoreRecommendation(
+                        id=_new_id(),
+                        check_id=r.get("check_id"),
+                        enrichment=r.get("enrichment"),
+                        priority=r.get("priority"),
+                        why_it_matters_for_agents=r.get("why_it_matters_for_agents"),
+                        example=r.get("example"),
+                        affected_product_ids=r.get("affected_product_ids") or [],
+                    )
+                )
 
             if agent_discovery:
                 audit.agent_discovery = AuditAgentDiscovery(
@@ -456,6 +459,7 @@ class AuditRepository:
             data["products"] = [self._serialize_product(p) for p in audit.products]
             data["store_level_recommendations"] = [
                 {
+                    "check_id": r.check_id,
                     "enrichment": r.enrichment,
                     "priority": r.priority,
                     "why_it_matters_for_agents": r.why_it_matters_for_agents,

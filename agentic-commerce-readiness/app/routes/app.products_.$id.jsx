@@ -1,5 +1,8 @@
+// app/routes/app.products_.$id.jsx 
+
 import { useEffect, useState } from "react";
 import {
+  useFetcher,
   useNavigate,
   useSearchParams,
   useRouteLoaderData,
@@ -14,51 +17,83 @@ import {
   Wrench,
 } from "lucide-react";
 import { authenticate } from "../shopify.server";
-import { useFetcher } from "react-router";
+import {
+  ApprovalCheck,
+  FixStatusBadge,
+  METAFIELD_TYPES,
+  METAFIELD_TYPE_HELP,
+  MetafieldRowEditor,
+  buildMetaEntry,
+  emptyMetaRow,
+  errorText,
+  findDuplicateMetafield,
+  isLocked,
+  isMetaRowValid,
+  isValidGtin,
+} from "../components/fix-shared";
 
 const API_BASE = "https://geo.properoapps.in/api";
 
-// fix_action 
+
+const ALLOWED_ENDPOINTS = new Set(["/products/fix", "/products/variant-options-state"]);
+
+
+
 const FIX_ACTION_PANEL = {
   update_product_handle: "handle",
   set_metafield: "metafields",
   set_product_type: "product_type",
   update_product_type: "product_type",
   update_product_description: "description",
+  review_product_claim: "review_claim",
   update_product_title: "title",
   rename_product_option: "rename_option",
   generate_sku: "sku",
+  update_sku: "sku",
   set_gtin: "gtin",
   set_mpn: "mpn",
   fix_variant_options: "variant_options",
   set_variant_price: "price",
   set_product_image: "image",
   set_product_image_alt: "image_alt",
+  set_guardrail_metafield: "guardrail",
 };
 
 const FIX_ACTION_LABEL = {
   update_product_handle: "Product URL",
   set_metafield: "Attributes",
-  set_product_type: "Product Type",
-  update_product_type: "Product Type",
+  set_product_type: "Product type",
+  update_product_type: "Product type",
   update_product_description: "Description",
+  review_product_claim: "Product claim",
   update_product_title: "Title",
-  rename_product_option: "Option Name",
+  rename_product_option: "Option name",
   generate_sku: "SKU",
+  update_sku: "SKU",
   set_gtin: "GTIN",
   set_mpn: "MPN",
-  fix_variant_options: "Options & Variants",
+  fix_variant_options: "Option values",
   set_variant_price: "Price",
-  set_product_image: "Product Image",
-  set_product_image_alt: "Image Alt Text",
+  set_product_image: "Product image",
+  set_product_image_alt: "Image alt text",
+  set_guardrail_metafield: "Age and warning details",
 };
+
+const VARIANT_OPTIONS_SOLVABLE = new Set([
+  "incomplete_selected_options",
+  "inconsistent_variant_options",
+  "inconsistent_option_values",
+  "generic_option_value",
+]);
 
 function getFixablePanels(issues) {
   const seen = new Set();
   const out = [];
   for (const issue of issues || []) {
+    if (issue.fix_mode === "unsupported") continue;
     const panel = FIX_ACTION_PANEL[issue.fix_action];
     if (!panel || seen.has(issue.fix_action)) continue;
+    if (panel === "variant_options" && !VARIANT_OPTIONS_SOLVABLE.has(issue.issue_type)) continue;
     seen.add(issue.fix_action);
     out.push({ ...issue, panel });
   }
@@ -131,14 +166,13 @@ function SeverityBadge({ priority }) {
   );
 }
 
-function useApplyFix({ issue, productId, onDone }) {
+
+function useApplyFix({ issue, productId }) {
   const fetcher = useFetcher();
-  const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("");
+  const [state, setState] = useState({ status: "idle", message: "", verify: false });
 
   const submit = (extraFields) => {
-    setStatus("submitting");
-    setMessage("");
+    setState({ status: "submitting", message: "", verify: false });
 
     fetcher.submit(
       {
@@ -147,6 +181,7 @@ function useApplyFix({ issue, productId, onDone }) {
         check_id: issue.check_id,
         issue_type: issue.issue_type,
         ...extraFields,
+        merchant_approved: true,
       },
       {
         method: "post",
@@ -157,21 +192,27 @@ function useApplyFix({ issue, productId, onDone }) {
   };
 
   useEffect(() => {
-    if (fetcher.state !== "idle") return;
-    if (!fetcher.data) return;
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    const data = fetcher.data;
 
-    if (fetcher.data.success) {
-      setStatus("done");
-      setMessage(fetcher.data.message || "Fix applied.");
-      onDone?.();
+    if (data.success) {
+      setState({
+        status: "done",
+        message: data.message || "Changes saved.",
+        verify: data.verification_required !== false,
+      });
     } else {
-      setStatus("error");
-      setMessage(fetcher.data.message || fetcher.data.detail || "Failed to apply fix.");
+      setState({
+        status: "error",
+        message: errorText(data, "Failed to save changes."),
+        verify: false,
+      });
     }
-  }, [fetcher.state, fetcher.data, onDone]);
+  }, [fetcher.state, fetcher.data]);
 
-  return { submit, status, message };
+  return { submit, ...state };
 }
+
 
 
 function EmptyPanel({ children }) {
@@ -182,330 +223,162 @@ function EmptyPanel({ children }) {
   );
 }
 
-function StatusMessage({ status, message, className = "mt-1" }) {
+function Notice({ children, tone = "warn" }) {
+  const cls =
+    tone === "info"
+      ? "bg-[var(--app-bg)] text-[var(--app-muted)]"
+      : "bg-orange-50 text-orange-800";
+  return <p className={`rounded-md p-2 text-[11px] leading-relaxed ${cls}`}>{children}</p>;
+}
+
+function StatusMessage({ status, message, verify, className = "mt-1" }) {
   if (!message) return null;
   return (
-    <p className={`${className} text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
-      {message}
-    </p>
+    <div className={className}>
+      <p className={`text-xs ${status === "error" ? "text-red-600" : "text-[var(--app-green)]"}`}>
+        {message}
+      </p>
+      {status === "done" && verify && (
+        <p className="mt-1 text-[11px] text-[var(--app-muted)]">
+          Re-run the audit to confirm this is resolved.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ApplyButton({ status, ready, onClick, label = "Approve and save", busy = "Saving...", done = "Saved", className = "" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={isLocked(status) || !ready}
+      className={`rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+    >
+      {status === "submitting" ? busy : status === "done" ? done : label}
+    </button>
   );
 }
 
 const INPUT_CLS =
   "rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60";
 
-/* ---------- fix panels ---------- */
+const LABEL_CLS =
+  "block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]";
+
+const PANEL_CLS = "space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3";
+
+/* -------------------------------------------------------------------------- */
+/* Fix panels                                                                 */
+/* -------------------------------------------------------------------------- */
+
+const HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function HandleFixPanel({ issue, productId }) {
   const [handle, setHandle] = useState(issue.suggested_handle || "");
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
+  const clean = handle.trim().toLowerCase();
+  const valid = HANDLE_RE.test(clean);
 
   return (
-    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
-      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-        Product handle
-      </label>
-      <input
-        type="text"
-        value={handle}
-        onChange={(e) => setHandle(e.target.value)}
-        disabled={disabled}
-        placeholder="product-handle-slug"
-        className={`mt-2 w-full font-mono ${INPUT_CLS}`}
+    <div className={PANEL_CLS}>
+      <div>
+        <label className={LABEL_CLS}>Product URL handle</label>
+        <input
+          type="text"
+          value={handle}
+          onChange={(e) => setHandle(e.target.value)}
+          disabled={disabled}
+          placeholder="product-handle-slug"
+          className={`mt-2 w-full font-mono ${INPUT_CLS}`}
+        />
+        <p className={`mt-1 text-[11px] ${handle && !valid ? "text-red-600" : "text-[var(--app-muted)]"}`}>
+          {handle && !valid
+            ? "Use lowercase letters, numbers and single hyphens only."
+            : `New URL: /products/${clean || "…"}`}
+        </p>
+      </div>
+      <Notice>
+        Changing the handle changes the product's web address. Old links, bookmarks and search results
+        may stop working unless you add a redirect in Shopify admin.
+      </Notice>
+      <ApplyButton
+        status={fix.status}
+        ready={valid}
+        onClick={() => valid && fix.submit({ handle: clean })}
       />
-      <button
-        type="button"
-        onClick={() => handle.trim() && submit({ handle: handle.trim() })}
-        disabled={disabled || !handle.trim()}
-        className="mt-2 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Approve & Apply"}
-      </button>
-      <StatusMessage status={status} message={message} />
+      <StatusMessage {...fix} />
     </div>
   );
 }
 
-const METAFIELD_TYPES = [
-  { value: "single_line_text_field", label: "Text (single line)" },
-  { value: "multi_line_text_field", label: "Text (multi-line)" },
-  { value: "number_integer", label: "Number (integer)" },
-  { value: "number_decimal", label: "Number (decimal)" },
-  { value: "dimension", label: "Dimension" },
-  { value: "list.single_line_text_field", label: "List of text" },
-];
-
-const METAFIELD_TYPE_HELP = {
-  single_line_text_field: "Enter a single line of text.",
-  multi_line_text_field: "Enter text that can contain multiple lines.",
-  number_integer: "Enter a whole number without decimal places.",
-  number_decimal: "Enter a number that may contain decimal places.",
-  dimension: "Enter a numeric measurement and select its unit.",
-  "list.single_line_text_field":
-    "Add one or more text values. Each value is stored as an item in the list.",
-};
-
-function emptyAttributeRow() {
-  return {
-    key: "",
-    type: "single_line_text_field",
-    value: "",
-    unit: "CENTIMETERS",
-    values: [""],
-  };
-}
-
 function MetafieldsFixPanel({ issue, productId }) {
-  const [rows, setRows] = useState([emptyAttributeRow()]);
+  const [rows, setRows] = useState([emptyMetaRow()]);
   const [showTypeGuide, setShowTypeGuide] = useState(false);
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
 
-  const updateRow = (index, field, value) => {
-    setRows((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
-  };
+  const updateRow = (index, patch) =>
+    setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
 
-  const addRow = () => setRows((prev) => [...prev, emptyAttributeRow()]);
-  const removeRow = (index) =>
-    setRows((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== index)));
-
-  const addListValue = (rowIndex) =>
-    setRows((prev) =>
-      prev.map((row, i) => (i === rowIndex ? { ...row, values: [...row.values, ""] } : row))
-    );
-
-  const updateListValue = (rowIndex, valueIndex, value) =>
-    setRows((prev) =>
-      prev.map((row, i) =>
-        i === rowIndex
-          ? { ...row, values: row.values.map((item, vi) => (vi === valueIndex ? value : item)) }
-          : row
-      )
-    );
-
-  const removeListValue = (rowIndex, valueIndex) =>
-    setRows((prev) =>
-      prev.map((row, i) =>
-        i === rowIndex
-          ? {
-              ...row,
-              values:
-                row.values.length === 1
-                  ? row.values
-                  : row.values.filter((_, vi) => vi !== valueIndex),
-            }
-          : row
-      )
-    );
-
-  const buildAttribute = (row) => {
-    const key = row.key.trim();
-
-    if (row.type === "dimension") {
-      return { key, type: row.type, value: JSON.stringify({ unit: row.unit, value: Number(row.value) }) };
-    }
-    if (row.type === "list.single_line_text_field") {
-      return {
-        key,
-        type: row.type,
-        value: JSON.stringify(row.values.map((v) => v.trim()).filter(Boolean)),
-      };
-    }
-    return { key, type: row.type, value: row.value.trim() };
-  };
-
-  const isRowValid = (row) => {
-    if (!row.key.trim()) return false;
-    if (row.type === "list.single_line_text_field") return row.values.some((v) => v.trim());
-    if (row.type === "dimension") return row.value.trim() !== "" && Number.isFinite(Number(row.value));
-    return row.value.trim() !== "";
-  };
-
-  const validRows = rows.filter(isRowValid);
+  const validRows = rows.filter(isMetaRowValid);
+  const duplicate = findDuplicateMetafield(rows);
+  const ready = validRows.length > 0 && !duplicate && validRows.length <= 25;
 
   return (
-    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
-      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-        Metafield attributes
-      </label>
+    <div className={PANEL_CLS}>
+      <label className={LABEL_CLS}>Product attributes</label>
+      <p className="text-[11px] text-[var(--app-muted)]">
+        Enter the real values for this product. Only rows you complete are saved.
+      </p>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {rows.map((row, index) => (
-          <div key={index} className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
-            <div className="flex flex-wrap items-start gap-2">
-              <input
-                type="text"
-                value={row.key}
-                onChange={(e) => updateRow(index, "key", e.target.value)}
-                disabled={disabled}
-                placeholder="Attribute name"
-                className="min-w-[150px] flex-1 rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-              />
-              <select
-                value={row.type}
-                onChange={(e) => updateRow(index, "type", e.target.value)}
-                disabled={disabled}
-                className="rounded-md border border-[var(--app-border)] bg-white px-2 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-              >
-                {METAFIELD_TYPES.map((type) => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ))}
-              </select>
-              {rows.length > 1 && !disabled && (
-                <button
-                  type="button"
-                  onClick={() => removeRow(index)}
-                  aria-label="Remove attribute"
-                  className="px-1 py-1.5 text-xs font-bold text-red-500 hover:text-red-700"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            {row.type === "single_line_text_field" && (
-              <input
-                type="text"
-                value={row.value}
-                onChange={(e) => updateRow(index, "value", e.target.value)}
-                disabled={disabled}
-                placeholder="Value"
-                className="mt-2 w-full rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-              />
-            )}
-
-            {row.type === "multi_line_text_field" && (
-              <textarea
-                value={row.value}
-                onChange={(e) => updateRow(index, "value", e.target.value)}
-                disabled={disabled}
-                placeholder="Enter value..."
-                rows={4}
-                className="mt-2 w-full resize-y rounded-md border border-[var(--app-border)] bg-white px-2.5 py-2 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-              />
-            )}
-
-            {row.type === "number_integer" && (
-              <input
-                type="number"
-                step="1"
-                value={row.value}
-                onChange={(e) => updateRow(index, "value", e.target.value)}
-                disabled={disabled}
-                placeholder="Enter whole number"
-                className="mt-2 w-full rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-              />
-            )}
-
-            {row.type === "number_decimal" && (
-              <input
-                type="number"
-                step="any"
-                value={row.value}
-                onChange={(e) => updateRow(index, "value", e.target.value)}
-                disabled={disabled}
-                placeholder="Enter decimal"
-                className="mt-2 w-full rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-              />
-            )}
-
-            {row.type === "dimension" && (
-              <div className="mt-2 flex gap-2">
-                <input
-                  type="number"
-                  step="any"
-                  value={row.value}
-                  onChange={(e) => updateRow(index, "value", e.target.value)}
-                  disabled={disabled}
-                  placeholder="Value"
-                  className="min-w-0 flex-1 rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-                />
-                <select
-                  value={row.unit}
-                  onChange={(e) => updateRow(index, "unit", e.target.value)}
-                  disabled={disabled}
-                  className="rounded-md border border-[var(--app-border)] bg-white px-2 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-                >
-                  <option value="MILLIMETERS">Millimeters</option>
-                  <option value="CENTIMETERS">Centimeters</option>
-                  <option value="METERS">Meters</option>
-                  <option value="INCHES">Inches</option>
-                  <option value="FEET">Feet</option>
-                  <option value="YARDS">Yards</option>
-                </select>
-              </div>
-            )}
-
-            {row.type === "list.single_line_text_field" && (
-              <div className="mt-2 space-y-2">
-                {row.values.map((value, valueIndex) => (
-                  <div key={valueIndex} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={value}
-                      onChange={(e) => updateListValue(index, valueIndex, e.target.value)}
-                      disabled={disabled}
-                      placeholder={`Value ${valueIndex + 1}`}
-                      className="min-w-0 flex-1 rounded-md border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-                    />
-                    {row.values.length > 1 && !disabled && (
-                      <button
-                        type="button"
-                        onClick={() => removeListValue(index, valueIndex)}
-                        className="text-xs font-bold text-red-500 hover:text-red-700"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                ))}
-                {!disabled && (
-                  <button
-                    type="button"
-                    onClick={() => addListValue(index)}
-                    className="text-xs font-semibold text-[var(--app-green)] hover:underline"
-                  >
-                    + Add value
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+          <MetafieldRowEditor
+            key={index}
+            row={row}
+            disabled={disabled}
+            onChange={(patch) => updateRow(index, patch)}
+            onRemove={rows.length > 1 ? () => setRows((prev) => prev.filter((_, i) => i !== index)) : null}
+          />
         ))}
       </div>
 
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-3">
-          {!disabled && (
-            <button
-              type="button"
-              onClick={addRow}
-              className="rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs font-semibold text-[var(--app-text)] hover:bg-[var(--app-bg)]"
-            >
-              + Add Attribute
-            </button>
-          )}
+      {duplicate && (
+        <p className="text-[11px] text-red-600">
+          "{duplicate.split(".").slice(1).join(".")}" appears more than once. Each attribute can be set once.
+        </p>
+      )}
+
+      <div className="flex items-center justify-between gap-3">
+        {!disabled && rows.length < 25 ? (
           <button
             type="button"
-            onClick={() => validRows.length > 0 && submit({ attributes: validRows.map(buildAttribute) })}
-            disabled={disabled || validRows.length === 0}
-            className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => setRows((prev) => [...prev, emptyMetaRow()])}
+            className="rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs font-semibold text-[var(--app-text)] hover:bg-[var(--app-bg)]"
           >
-            {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Apply Fix"}
+            + Add attribute
           </button>
-        </div>
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowTypeGuide((v) => !v)}
-            className="text-xs font-semibold text-[var(--app-muted)] underline hover:text-[var(--app-text)]"
-          >
-            {showTypeGuide ? "Hide type guide" : "What type should I pick?"}
-          </button>
-        </div>
+        ) : (
+          <span />
+        )}
+        <ApplyButton
+          status={fix.status}
+          ready={ready}
+          label={`Approve and save ${validRows.length || ""} attribute${validRows.length === 1 ? "" : "s"}`.replace("  ", " ")}
+          onClick={() => ready && fix.submit({ attributes: validRows.map(buildMetaEntry) })}
+        />
+      </div>
+
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowTypeGuide((v) => !v)}
+          className="text-xs font-semibold text-[var(--app-muted)] underline hover:text-[var(--app-text)]"
+        >
+          {showTypeGuide ? "Hide type guide" : "What type should I pick?"}
+        </button>
       </div>
 
       {showTypeGuide && (
@@ -514,7 +387,7 @@ function MetafieldsFixPanel({ issue, productId }) {
             {METAFIELD_TYPES.map((type) => (
               <li key={type.value}>
                 <span className="font-mono font-semibold text-[var(--app-text)]">{type.value}</span>
-                {" — "}
+                {" – "}
                 {METAFIELD_TYPE_HELP[type.value]}
               </li>
             ))}
@@ -522,40 +395,163 @@ function MetafieldsFixPanel({ issue, productId }) {
         </div>
       )}
 
-      <StatusMessage status={status} message={message} className="" />
+      <StatusMessage {...fix} className="" />
     </div>
   );
 }
 
-function SimpleTextFixPanel({ issue, productId, field, label, placeholder, multiline }) {
+
+function TextFixPanel({
+  issue,
+  productId,
+  field,
+  label,
+  placeholder,
+  multiline,
+  current,
+  replaceWarning,
+}) {
   const [value, setValue] = useState("");
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const [approved, setApproved] = useState(false);
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
   const Field = multiline ? "textarea" : "input";
+  const ready = value.trim() && (!replaceWarning || approved);
 
   return (
-    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
-      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-        {label}
-      </label>
-      <Field
-        {...(!multiline && { type: "text" })}
-        {...(multiline && { rows: 5 })}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        disabled={disabled}
-        placeholder={placeholder || `Enter ${label.toLowerCase()}`}
-        className={`mt-2 w-full ${INPUT_CLS} ${multiline ? "resize-y py-2" : ""}`}
+    <div className={PANEL_CLS}>
+      <div>
+        <label className={LABEL_CLS}>{label}</label>
+        {current && (
+          <p className="mt-1.5 text-[11px] text-[var(--app-muted)]">
+            Current: <span className="text-[var(--app-text)]">{current}</span>
+          </p>
+        )}
+        <Field
+          {...(!multiline && { type: "text" })}
+          {...(multiline && { rows: 6 })}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          disabled={disabled}
+          placeholder={placeholder || `Enter ${label.toLowerCase()}`}
+          className={`mt-2 w-full ${INPUT_CLS} ${multiline ? "resize-y py-2" : ""}`}
+        />
+      </div>
+      {replaceWarning && (
+        <>
+          <Notice>{replaceWarning}</Notice>
+          <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
+            I approve replacing the current {label.toLowerCase()} with this text.
+          </ApprovalCheck>
+        </>
+      )}
+      <ApplyButton
+        status={fix.status}
+        ready={ready}
+        onClick={() => ready && fix.submit({ [field]: value.trim() })}
       />
-      <button
-        type="button"
-        onClick={() => value.trim() && submit({ [field]: value.trim() })}
-        disabled={disabled || !value.trim()}
-        className="mt-2 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Apply Fix"}
-      </button>
-      <StatusMessage status={status} message={message} />
+      <StatusMessage {...fix} />
+    </div>
+  );
+}
+
+function ReviewClaimFixPanel({ issue, productId }) {
+  const [value, setValue] = useState("");
+  const [approved, setApproved] = useState(false);
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
+  const ready = value.trim() && approved;
+
+  return (
+    <div className={PANEL_CLS}>
+      <Notice>
+        Rewrite the description so every claim is one you can back up, or remove it. Saving replaces
+        the <strong>whole</strong> description. It does not certify the claim and does not remove it
+        from ads, product feeds, theme content or metafields, so check those separately.
+      </Notice>
+      <div>
+        <label className={LABEL_CLS}>Reviewed replacement description</label>
+        <textarea
+          rows={7}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          disabled={disabled}
+          placeholder="Complete description, with the claim reworded or removed..."
+          className={`mt-2 w-full resize-y py-2 ${INPUT_CLS}`}
+        />
+      </div>
+      <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
+        I have reviewed this text, can support what it says, and approve saving it as the description.
+      </ApprovalCheck>
+      <ApplyButton
+        status={fix.status}
+        ready={ready}
+        onClick={() => ready && fix.submit({ description_html: value.trim() })}
+      />
+      <StatusMessage {...fix} />
+    </div>
+  );
+}
+
+function GuardrailFixPanel({ issue, productId }) {
+  const [age, setAge] = useState("");
+  const [warning, setWarning] = useState("");
+  const [approved, setApproved] = useState(false);
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
+
+  const ageText = age.trim();
+  const ageNumber = Number(ageText);
+  const ageOk = ageText === "" || (Number.isInteger(ageNumber) && ageNumber >= 0 && ageNumber <= 120);
+  const hasInput = ageText !== "" || warning.trim() !== "";
+  const ready = approved && hasInput && ageOk;
+
+  return (
+    <div className={PANEL_CLS}>
+      <Notice>
+        This saves age and warning details on the product so AI agents can read them. It does{" "}
+        <strong>not</strong> show a warning on your storefront and does not stop anyone from buying.
+      </Notice>
+      <div>
+        <label className={LABEL_CLS}>Minimum age (optional)</label>
+        <input
+          type="number"
+          min="0"
+          max="120"
+          step="1"
+          value={age}
+          onChange={(e) => setAge(e.target.value)}
+          disabled={disabled}
+          className={`mt-2 w-32 ${INPUT_CLS}`}
+        />
+        {!ageOk && <p className="mt-1 text-[11px] text-red-600">Enter a whole number from 0 to 120.</p>}
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Product warning (optional)</label>
+        <textarea
+          rows={3}
+          value={warning}
+          onChange={(e) => setWarning(e.target.value)}
+          disabled={disabled}
+          placeholder="Update Product warning..."
+          className={`mt-2 w-full resize-y py-2 ${INPUT_CLS}`}
+        />
+      </div>
+      <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
+        I confirm these details are accurate for this product.
+      </ApprovalCheck>
+      <ApplyButton
+        status={fix.status}
+        ready={ready}
+        onClick={() =>
+          ready &&
+          fix.submit({
+            ...(ageText !== "" && { minimum_age: ageNumber }),
+            ...(warning.trim() && { warning_text: warning.trim() }),
+          })
+        }
+      />
+      <StatusMessage {...fix} />
     </div>
   );
 }
@@ -578,8 +574,9 @@ function RenameOptionFixPanel({ issue, productId }) {
 
 function RenameOneOption({ option, issue, productId }) {
   const [value, setValue] = useState("");
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
+  const ready = value.trim() && value.trim() !== (option.name || "");
 
   return (
     <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
@@ -595,18 +592,21 @@ function RenameOneOption({ option, issue, productId }) {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           disabled={disabled}
+          aria-label="New option name"
+          placeholder="What these values describe"
           className={`min-w-0 flex-1 ${INPUT_CLS}`}
         />
-        <button
-          type="button"
-          onClick={() => value.trim() && submit({ option_id: option.id, new_name: value.trim() })}
-          disabled={disabled || !value.trim()}
-          className="shrink-0 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Rename"}
-        </button>
+        <ApplyButton
+          status={fix.status}
+          ready={ready}
+          label="Approve and rename"
+          busy="Renaming..."
+          done="Renamed"
+          className="shrink-0"
+          onClick={() => ready && fix.submit({ option_id: option.id, new_name: value.trim() })}
+        />
       </div>
-      <StatusMessage status={status} message={message} />
+      <StatusMessage {...fix} />
     </div>
   );
 }
@@ -616,20 +616,24 @@ function SkuFixPanel({ issue, productId }) {
   const [values, setValues] = useState(() =>
     Object.fromEntries(variants.map((v) => [v.id, v.suggested_sku || v.sku || ""]))
   );
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
 
   if (variants.length === 0) {
     return <EmptyPanel>No specific variant identified for this issue.</EmptyPanel>;
   }
 
   const ready = variants.filter((v) => values[v.id]?.trim());
+  const lowered = ready.map((v) => values[v.id].trim().toLowerCase());
+  const hasDuplicates = new Set(lowered).size !== lowered.length;
 
   return (
-    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
-      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-        SKU
-      </label>
+    <div className={PANEL_CLS}>
+      <label className={LABEL_CLS}>SKU for each variant</label>
+      <p className="text-[11px] text-[var(--app-muted)]">
+        Edit any suggested value. Shopify doesn't enforce unique SKUs, so make sure these don't clash
+        with SKUs in your inventory or order-management system.
+      </p>
 
       {variants.map((v) => (
         <div key={v.id} className="flex items-center gap-2">
@@ -642,20 +646,27 @@ function SkuFixPanel({ issue, productId }) {
             value={values[v.id] || ""}
             onChange={(e) => setValues((prev) => ({ ...prev, [v.id]: e.target.value }))}
             disabled={disabled}
+            aria-label="SKU"
             className="w-36 shrink-0 rounded-md border border-[var(--app-border)] px-2 py-1 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
           />
         </div>
       ))}
 
-      <button
-        type="button"
-        onClick={() => submit({ variants: ready.map((v) => ({ id: v.id, sku: values[v.id].trim() })) })}
-        disabled={disabled || ready.length === 0}
-        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : `Apply to ${ready.length} variant(s)`}
-      </button>
-      <StatusMessage status={status} message={message} className="" />
+      {hasDuplicates && (
+        <p className="text-[11px] text-red-600">Two variants have the same SKU. Make each one different.</p>
+      )}
+
+      <ApplyButton
+        status={fix.status}
+        ready={ready.length > 0 && !hasDuplicates}
+        label={`Approve and save ${ready.length} SKU${ready.length === 1 ? "" : "s"}`}
+        onClick={() =>
+          ready.length > 0 &&
+          !hasDuplicates &&
+          fix.submit({ variants: ready.map((v) => ({ id: v.id, sku: values[v.id].trim() })) })
+        }
+      />
+      <StatusMessage {...fix} className="" />
     </div>
   );
 }
@@ -663,12 +674,10 @@ function SkuFixPanel({ issue, productId }) {
 function PriceFixPanel({ issue, productId }) {
   const variants = issue.affected_variants || [];
   const [values, setValues] = useState(() =>
-    Object.fromEntries(
-      variants.map((v) => [v.id, Number(v.price) > 0 ? String(v.price) : ""])
-    )
+    Object.fromEntries(variants.map((v) => [v.id, Number(v.price) > 0 ? String(v.price) : ""]))
   );
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
 
   if (variants.length === 0) {
     return <EmptyPanel>No specific variant identified for this issue.</EmptyPanel>;
@@ -682,10 +691,11 @@ function PriceFixPanel({ issue, productId }) {
   const ready = variants.filter(isValid);
 
   return (
-    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
-      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-        Variant price
-      </label>
+    <div className={PANEL_CLS}>
+      <label className={LABEL_CLS}>Price for each variant</label>
+      <p className="text-[11px] text-[var(--app-muted)]">
+        Enter the price in your store's currency. Prices must be greater than zero.
+      </p>
 
       {variants.map((v) => (
         <div key={v.id} className="flex items-center gap-2">
@@ -702,23 +712,22 @@ function PriceFixPanel({ issue, productId }) {
             onChange={(e) => setValues((prev) => ({ ...prev, [v.id]: e.target.value }))}
             disabled={disabled}
             placeholder="0.00"
+            aria-label="Price"
             className="w-28 shrink-0 rounded-md border border-[var(--app-border)] px-2 py-1 font-mono text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
           />
         </div>
       ))}
 
-      <button
-        type="button"
+      <ApplyButton
+        status={fix.status}
+        ready={ready.length > 0}
+        label={`Approve and save ${ready.length} price${ready.length === 1 ? "" : "s"}`}
         onClick={() =>
           ready.length > 0 &&
-          submit({ variants: ready.map((v) => ({ id: v.id, price: values[v.id].trim() })) })
+          fix.submit({ variants: ready.map((v) => ({ id: v.id, price: values[v.id].trim() })) })
         }
-        disabled={disabled || ready.length === 0}
-        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : `Apply to ${ready.length} variant(s)`}
-      </button>
-      <StatusMessage status={status} message={message} className="" />
+      />
+      <StatusMessage {...fix} className="" />
     </div>
   );
 }
@@ -726,56 +735,58 @@ function PriceFixPanel({ issue, productId }) {
 function ImageFixPanel({ issue, productId }) {
   const [imageUrl, setImageUrl] = useState("");
   const [altText, setAltText] = useState("");
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
 
   const urlOk = /^https:\/\/\S+$/i.test(imageUrl.trim());
   const ready = urlOk && altText.trim();
 
   return (
-    <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
-      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-        Image URL (https)
-      </label>
-      <input
-        type="url"
-        value={imageUrl}
-        onChange={(e) => setImageUrl(e.target.value)}
-        disabled={disabled}
-        placeholder="https://example.com/product.jpg"
-        className={`mt-2 w-full font-mono ${INPUT_CLS}`}
+    <div className={PANEL_CLS}>
+      <div>
+        <label className={LABEL_CLS}>Image URL (https)</label>
+        <input
+          type="url"
+          value={imageUrl}
+          onChange={(e) => setImageUrl(e.target.value)}
+          disabled={disabled}
+          placeholder="Enter a publicly reachable image URL"
+          className={`mt-2 w-full font-mono ${INPUT_CLS}`}
+        />
+        {imageUrl && !urlOk && (
+          <p className="mt-1 text-[11px] text-red-600">The link must start with https:// and be publicly reachable.</p>
+        )}
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Alt text</label>
+        <input
+          type="text"
+          value={altText}
+          onChange={(e) => setAltText(e.target.value)}
+          disabled={disabled}
+          placeholder="Describe what the image shows"
+          className={`mt-2 w-full ${INPUT_CLS}`}
+        />
+      </div>
+      <ApplyButton
+        status={fix.status}
+        ready={ready}
+        label="Approve and add image"
+        busy="Uploading..."
+        done="Submitted"
+        onClick={() => ready && fix.submit({ image_url: imageUrl.trim(), alt_text: altText.trim() })}
       />
-      <label className="mt-3 block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-        Alt text
-      </label>
-      <input
-        type="text"
-        value={altText}
-        onChange={(e) => setAltText(e.target.value)}
-        disabled={disabled}
-        placeholder="Describe what the image shows"
-        className={`mt-2 w-full ${INPUT_CLS}`}
-      />
-      <button
-        type="button"
-        onClick={() => ready && submit({ image_url: imageUrl.trim(), alt_text: altText.trim() })}
-        disabled={disabled || !ready}
-        className="mt-2 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "submitting" ? "Uploading..." : status === "done" ? "Submitted" : "Add Image"}
-      </button>
-      <StatusMessage status={status} message={message} />
+      <StatusMessage {...fix} />
     </div>
   );
 }
-
 
 function ImageAltFixPanel({ issue, productId }) {
   const images = issue.affected_images || [];
   const missing = images.filter((img) => !(img.alt || "").trim());
   const [values, setValues] = useState({});
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
 
   if (images.length === 0) {
     return <EmptyPanel>No images were returned for this issue. Re-run the audit and try again.</EmptyPanel>;
@@ -784,10 +795,12 @@ function ImageAltFixPanel({ issue, productId }) {
   const ready = missing.length > 0 && missing.every((img) => (values[img.id] || "").trim());
 
   return (
-    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
-      <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-        Image alt text
-      </label>
+    <div className={PANEL_CLS}>
+      <label className={LABEL_CLS}>Image alt text</label>
+      <p className="text-[11px] text-[var(--app-muted)]">
+        Describe what each image shows. Alt text is stored on the image file, so any other product
+        using the same image gets this text too.
+      </p>
 
       {missing.map((img) => (
         <div key={img.id} className="flex items-center gap-2">
@@ -798,33 +811,28 @@ function ImageAltFixPanel({ issue, productId }) {
             onChange={(e) => setValues((prev) => ({ ...prev, [img.id]: e.target.value }))}
             disabled={disabled}
             placeholder="Describe this image"
+            aria-label="Alt text"
             className={`min-w-0 flex-1 ${INPUT_CLS}`}
           />
         </div>
       ))}
 
-      <button
-        type="button"
+      <ApplyButton
+        status={fix.status}
+        ready={ready}
         onClick={() =>
           ready &&
-          submit({
-            product: { id: productId, images },
-            image_alts: Object.fromEntries(
-              missing.map((img) => [img.id, values[img.id].trim()])
-            ),
+          fix.submit({
+            image_alts: Object.fromEntries(missing.map((img) => [img.id, values[img.id].trim()])),
           })
         }
-        disabled={disabled || !ready}
-        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Apply Fix"}
-      </button>
-      <StatusMessage status={status} message={message} className="" />
+      />
+      <StatusMessage {...fix} className="" />
     </div>
   );
 }
 
-function VariantFieldFixPanel({ issue, productId, field, label, placeholder }) {
+function VariantFieldFixPanel({ issue, productId, field, label, placeholder, hint }) {
   const variants = issue.affected_variants || [];
 
   if (variants.length === 0) {
@@ -833,6 +841,7 @@ function VariantFieldFixPanel({ issue, productId, field, label, placeholder }) {
 
   return (
     <div className="space-y-3">
+      {hint && <p className="text-[11px] text-[var(--app-muted)]">{hint}</p>}
       {variants.map((v) => (
         <VariantFieldRow
           key={v.id}
@@ -850,8 +859,15 @@ function VariantFieldFixPanel({ issue, productId, field, label, placeholder }) {
 
 function VariantFieldRow({ variant, field, label, placeholder, issue, productId }) {
   const [value, setValue] = useState("");
-  const { submit, status, message } = useApplyFix({ issue, productId });
-  const disabled = status === "submitting" || status === "done";
+  const fix = useApplyFix({ issue, productId });
+  const disabled = isLocked(fix.status);
+
+  const trimmed = value.trim();
+  const gtinError =
+    field === "gtin" && trimmed && !isValidGtin(trimmed)
+      ? "A GTIN has 8, 12, 13 or 14 digits and a valid check digit. Re-check the number on the packaging."
+      : "";
+  const ready = trimmed && !gtinError;
 
   return (
     <div className="rounded-lg border border-[var(--app-border)] bg-white p-3">
@@ -873,236 +889,157 @@ function VariantFieldRow({ variant, field, label, placeholder, issue, productId 
           onChange={(e) => setValue(e.target.value)}
           disabled={disabled}
           placeholder={placeholder}
+          aria-label={label}
           className={`min-w-0 flex-1 font-mono ${INPUT_CLS}`}
         />
-        <button
-          type="button"
-          onClick={() => value.trim() && submit({ variant_id: variant.id, [field]: value.trim() })}
-          disabled={disabled || !value.trim()}
-          className="shrink-0 rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : `Save ${label}`}
-        </button>
+        <ApplyButton
+          status={fix.status}
+          ready={ready}
+          label={`Approve and save ${label}`}
+          className="shrink-0"
+          onClick={() => ready && fix.submit({ variant_id: variant.id, [field]: trimmed })}
+        />
       </div>
-      <StatusMessage status={status} message={message} />
+      {gtinError && <p className="mt-1 text-[11px] text-red-600">{gtinError}</p>}
+      <StatusMessage {...fix} />
     </div>
   );
 }
 
-const VARIANT_OPTIONS_SOLVABLE = new Set([
-  "incomplete_selected_options",
-  "inconsistent_variant_options",
-  "inconsistent_option_values",
-  "generic_option_value",
-]);
+/* ---------- Option values on existing variants ---------- */
+
+const currentValueMap = (variant) =>
+  Object.fromEntries((variant.selected_options || []).map((o) => [o.name, o.value]));
 
 function VariantOptionsFixPanel({ issue, productId }) {
   const stateFetcher = useFetcher();
-  const applyFetcher = useFetcher();
+  const fix = useApplyFix({ issue, productId });
 
   const [live, setLive] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("");
   const [values, setValues] = useState({});
+  const [approved, setApproved] = useState(false);
 
-  const isSolvable = VARIANT_OPTIONS_SOLVABLE.has(issue.issue_type);
   const isNormalizeMode = issue.issue_type === "inconsistent_option_values";
+  const disabled = isLocked(fix.status);
 
   useEffect(() => {
-    if (!isSolvable) {
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     setLoadError("");
     setLive(null);
     setValues({});
+    setApproved(false);
 
     stateFetcher.submit(
-      {
-        __endpoint: "/products/variant-options-state",
-        product_id: productId,
-      },
+      { __endpoint: "/products/variant-options-state", product_id: productId },
       {
         method: "post",
         action: window.location.pathname + window.location.search,
         encType: "application/json",
       }
     );
-  }, [issue.issue_type, productId, isSolvable]);
+   
+  }, [issue.issue_type, productId]);
 
   useEffect(() => {
     if (stateFetcher.state !== "idle" || !stateFetcher.data) return;
 
     if (stateFetcher.data.detail) {
-      setLoadError(stateFetcher.data.detail);
+      setLoadError(errorText(stateFetcher.data, "Unable to load the current variants."));
       setLive(null);
     } else {
       setLive(stateFetcher.data);
       setLoadError("");
     }
-
     setLoading(false);
   }, [stateFetcher.state, stateFetcher.data]);
 
+  const optionNames = live?.options || [];
+  const allVariants = live?.variants || [];
+  const flaggedIds = new Set((issue.affected_variants || []).map((v) => v.id));
+  const variants = isNormalizeMode
+    ? allVariants
+    : allVariants.filter((v) => flaggedIds.size === 0 || flaggedIds.has(v.id));
+
   useEffect(() => {
     if (!live) return;
-
-    const flaggedIds = new Set(
-      (issue.affected_variants || []).map((v) => v.id)
+    setValues(
+      Object.fromEntries(
+        variants.map((variant) => {
+          const current = currentValueMap(variant);
+          const suggested = Object.fromEntries(
+            (variant.selected_options || []).map((o) => [o.name, o.suggested_value])
+          );
+          return [
+            variant.id,
+            Object.fromEntries(
+              optionNames.map((name) => [
+                name,
+                isNormalizeMode ? suggested[name] || current[name] || "" : current[name] || "",
+              ])
+            ),
+          ];
+        })
+      )
     );
-
-    const allVariants = live.variants || [];
-    const optionNames = live.options || [];
-
-    const variants = isNormalizeMode
-      ? allVariants
-      : allVariants.filter(
-          (v) => flaggedIds.size === 0 || flaggedIds.has(v.id)
-        );
-
-    const initialValues = Object.fromEntries(
-      variants.map((variant) => [
-        variant.id,
-        Object.fromEntries(
-          optionNames.map((optionName) => {
-            const existing = (variant.selected_options || []).find(
-              (option) => option.name === optionName
-            );
-
-            if (!existing) {
-              return [optionName, ""];
-            }
-
-            return [
-              optionName,
-              isNormalizeMode
-                ? existing.suggested_value || existing.value || ""
-                : existing.value || "",
-            ];
-          })
-        ),
-      ])
-    );
-
-    setValues(initialValues);
-  }, [live, issue.affected_variants, isNormalizeMode]);
-
-  useEffect(() => {
-    if (applyFetcher.state !== "idle" || !applyFetcher.data) return;
-
-    if (applyFetcher.data.success) {
-      setStatus("done");
-      setMessage(applyFetcher.data.message || "Applied.");
-    } else {
-      setStatus("error");
-      setMessage(
-        applyFetcher.data.detail ||
-          applyFetcher.data.message ||
-          "Failed to apply fix."
-      );
-    }
-  }, [applyFetcher.state, applyFetcher.data]);
-
-
-  if (!isSolvable) {
-    return (
-      <EmptyPanel>
-        This issue needs the product's variant structure rebuilt in Shopify admin directly.
-      </EmptyPanel>
-    );
-  }
+    
+  }, [live]);
 
   if (loading) {
-    return (
-      <p className="text-xs text-[var(--app-muted)]">
-        Loading current variants…
-      </p>
-    );
+    return <p className="text-xs text-[var(--app-muted)]">Loading current variants…</p>;
   }
-
   if (loadError) {
     return <p className="text-xs text-red-600">{loadError}</p>;
   }
-
   if (!live) {
-    return (
-      <p className="text-xs text-red-600">
-        Unable to load the current variant state.
-      </p>
-    );
+    return <p className="text-xs text-red-600">Unable to load the current variant state.</p>;
   }
 
-  const flaggedIds = new Set(
-    (issue.affected_variants || []).map((v) => v.id)
-  );
-
-  const allVariants = live.variants || [];
-  const optionNames = live.options || [];
-
-  const variants = isNormalizeMode
-    ? allVariants
-    : allVariants.filter(
-        (v) => flaggedIds.size === 0 || flaggedIds.has(v.id)
-      );
-
-  const disabled = status === "submitting" || status === "done";
-
-  const setCell = (variantId, optionName, value) => {
+  const setCell = (variantId, optionName, value) =>
     setValues((previous) => ({
       ...previous,
-      [variantId]: {
-        ...previous[variantId],
-        [optionName]: value,
-      },
+      [variantId]: { ...previous[variantId], [optionName]: value },
     }));
-  };
 
-  const ready =
-    variants.length > 0 &&
-    variants.every((variant) =>
-      optionNames.every(
-        (optionName) => values[variant.id]?.[optionName]?.trim()
-      )
-    );
+  const cell = (variant, name) => (values[variant.id]?.[name] ?? "").trim();
+
+  const allFilled =
+    variants.length > 0 && variants.every((v) => optionNames.every((name) => cell(v, name)));
+
+  const changed = variants.filter((v) => {
+    const current = currentValueMap(v);
+    return optionNames.some((name) => cell(v, name) !== (current[name] || ""));
+  });
+
+  const comboOf = (v) =>
+    optionNames
+      .map((name) => (values[v.id] ? cell(v, name) : (currentValueMap(v)[name] || "").trim()).toLowerCase())
+      .join("\u0000");
+  const combos = allVariants.map(comboOf);
+  const hasCollision = new Set(combos).size !== combos.length;
+
+  const ready = approved && changed.length > 0 && allFilled && !hasCollision;
 
   const submit = () => {
     if (!ready || disabled) return;
-
-    setStatus("submitting");
-    setMessage("");
-
-    applyFetcher.submit(
-      {
-        __endpoint: "/products/fix-variant-options",
-        product_id: productId,
-        issue_id: issue.id,
-        check_id: issue.check_id,
-        issue_type: issue.issue_type,
-        variant_option_values: Object.fromEntries(
-          variants.map((variant) => [
-            variant.id,
-            values[variant.id],
-          ])
-        ),
-      },
-      {
-        method: "post",
-        action: window.location.pathname + window.location.search,
-        encType: "application/json",
-      }
-    );
+    fix.submit({
+      variant_option_values: Object.fromEntries(
+        changed.map((v) => [
+          v.id,
+          Object.fromEntries(optionNames.map((name) => [name, cell(v, name)])),
+        ])
+      ),
+    });
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
+    <div className={PANEL_CLS}>
       <p className="text-[11px] text-[var(--app-muted)]">
         {isNormalizeMode
-          ? "Suggested consistent formatting is pre-filled — edit any value, then apply."
-          : "Fill in every option value for the affected variant(s)."}
+          ? "Suggested consistent formatting is pre-filled. Edit any value, then approve."
+          : "Enter the real value for every option on the affected variants."}{" "}
+        Only the option values on existing variants change; no variants are added or removed.
       </p>
 
       {variants.length === 0 ? (
@@ -1110,169 +1047,69 @@ function VariantOptionsFixPanel({ issue, productId }) {
           No affected variants were found in the current product state.
         </p>
       ) : (
-        variants.map((variant) => (
-          <div
-            key={variant.id}
-            className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2"
-          >
-            <p className="mb-1.5 text-xs font-semibold text-[var(--app-text)]">
-              {variant.title || "Variant"}
-              {variant.sku && (
-                <span className="font-mono text-[var(--app-muted)]">
-                  {" "}
-                  · {variant.sku}
-                </span>
-              )}
-            </p>
-
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {optionNames.map((name) => (
-                <div key={name}>
-                  <label className="block text-[10px] font-semibold text-[var(--app-muted)]">
-                    {name}
-                  </label>
-
-                  <input
-                    type="text"
-                    value={values[variant.id]?.[name] || ""}
-                    onChange={(e) => setCell(variant.id, name, e.target.value)}
-                    disabled={disabled}
-                    className="mt-0.5 w-full rounded-md border border-[var(--app-border)] px-2 py-1 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        ))
-      )}
-
-      <button
-        type="button"
-        onClick={submit}
-        disabled={disabled || !ready}
-        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "submitting"
-          ? "Applying..."
-          : status === "done"
-            ? "Applied"
-            : "Apply Fix"}
-      </button>
-
-      <StatusMessage status={status} message={message} className="" />
-    </div>
-  );
-}
-
-
-function DefaultTitleFixPanel({ fixIssue, productId }) {
-  const [rows, setRows] = useState([{ name: "", values: "" }]);
-  const [defaultPrice, setDefaultPrice] = useState("");
-  const { submit, status, message } = useApplyFix({ issue: fixIssue, productId });
-  const disabled = status === "submitting" || status === "done";
-
-  const parsed = rows.map((r) => ({
-    name: r.name.trim(),
-    values: [...new Set(r.values.split(",").map((v) => v.trim()).filter(Boolean))],
-  }));
-  const valid = parsed.filter((r) => r.name && r.values.length > 0);
-  const combos = valid.reduce((n, r) => n * r.values.length, 1);
-  const tooMany = combos > 100;
-  const ready = valid.length > 0 && valid.length === rows.length && !tooMany;
-
-  const updateRow = (i, field, value) =>
-    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
-
-  return (
-    <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-white p-3">
-      <p className="text-[11px] text-[var(--app-muted)]">
-        Define the options and comma-separated values. A variant is created for every combination.
-      </p>
-
-      {rows.map((row, i) => (
-        <div key={i} className="flex flex-wrap items-center gap-2">
-          <input
-            type="text"
-            value={row.name}
-            onChange={(e) => updateRow(i, "name", e.target.value)}
-            disabled={disabled}
-            placeholder="Option name (e.g. Size)"
-            className={`w-40 ${INPUT_CLS}`}
-          />
-          <input
-            type="text"
-            value={row.values}
-            onChange={(e) => updateRow(i, "values", e.target.value)}
-            disabled={disabled}
-            placeholder="Small, Medium, Large"
-            className={`min-w-0 flex-1 ${INPUT_CLS}`}
-          />
-          {rows.length > 1 && !disabled && (
-            <button
-              type="button"
-              onClick={() => setRows((prev) => prev.filter((_, idx) => idx !== i))}
-              aria-label="Remove option"
-              className="px-1 text-xs font-bold text-red-500 hover:text-red-700"
+        variants.map((variant) => {
+          const current = currentValueMap(variant);
+          return (
+            <div
+              key={variant.id}
+              className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2"
             >
-              ✕
-            </button>
-          )}
-        </div>
-      ))}
+              <p className="mb-1.5 text-xs font-semibold text-[var(--app-text)]">
+                {variant.title || "Variant"}
+                {variant.sku && <span className="font-mono text-[var(--app-muted)]"> · {variant.sku}</span>}
+              </p>
 
-      {!disabled && rows.length < 3 && (
-        <button
-          type="button"
-          onClick={() => setRows((prev) => [...prev, { name: "", values: "" }])}
-          className="rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs font-semibold text-[var(--app-text)] hover:bg-[var(--app-bg)]"
-        >
-          + Add Option
-        </button>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {optionNames.map((name) => {
+                  const before = current[name] || "";
+                  const after = values[variant.id]?.[name] ?? "";
+                  const differs = after.trim() !== before;
+                  return (
+                    <div key={name}>
+                      <label className="block text-[10px] font-semibold text-[var(--app-muted)]">{name}</label>
+                      <input
+                        type="text"
+                        value={after}
+                        onChange={(e) => setCell(variant.id, name, e.target.value)}
+                        disabled={disabled}
+                        className="mt-0.5 w-full rounded-md border border-[var(--app-border)] px-2 py-1 text-xs outline-none focus:border-[var(--app-green)] disabled:opacity-60"
+                      />
+                      {differs && (
+                        <p className="mt-0.5 text-[10px] text-[var(--app-muted)]">
+                          was: {before || "(empty)"}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })
       )}
 
-      <div>
-        <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">
-          Default price (optional)
-        </label>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          value={defaultPrice}
-          onChange={(e) => setDefaultPrice(e.target.value)}
-          disabled={disabled}
-          placeholder="Uses current price if empty"
-          className={`mt-1 w-48 ${INPUT_CLS}`}
-        />
-      </div>
-
-      {valid.length > 0 && (
-        <p className={`text-[11px] ${tooMany ? "text-red-600" : "text-[var(--app-muted)]"}`}>
-          {tooMany ? `${combos} variants exceeds the 100-variant limit.` : `Will create ${combos} variant(s).`}
+      {hasCollision && (
+        <p className="text-[11px] text-red-600">
+          These values would give two variants identical options. Make each combination unique.
         </p>
       )}
 
-      <button
-        type="button"
-        onClick={() =>
-          ready &&
-          submit({
-            __endpoint: "/products/fix-variant-matrix",
-            options: valid,
-            ...(defaultPrice.trim() && { default_price: defaultPrice.trim() }),
-          })
-        }
-        disabled={disabled || !ready}
-        className="rounded-md bg-[var(--app-green)] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "submitting" ? "Applying..." : status === "done" ? "Applied" : "Create Variants"}
-      </button>
-      <StatusMessage status={status} message={message} className="" />
+      <ApprovalCheck checked={approved} onChange={setApproved} disabled={disabled}>
+        I approve changing the option values on {changed.length} variant{changed.length === 1 ? "" : "s"}.
+      </ApprovalCheck>
+
+      <ApplyButton
+        status={fix.status}
+        ready={ready}
+        label={`Approve and save ${changed.length} variant${changed.length === 1 ? "" : "s"}`}
+        onClick={submit}
+      />
+      <StatusMessage {...fix} className="" />
     </div>
   );
 }
 
-function FixPanel({ fixIssue, productId }) {
+function FixPanel({ fixIssue, productId, product }) {
   switch (fixIssue.panel) {
     case "handle":
       return <HandleFixPanel issue={fixIssue} productId={productId} />;
@@ -1280,26 +1117,40 @@ function FixPanel({ fixIssue, productId }) {
       return <MetafieldsFixPanel issue={fixIssue} productId={productId} />;
     case "product_type":
       return (
-        <SimpleTextFixPanel
+        <TextFixPanel
           issue={fixIssue}
           productId={productId}
           field="product_type"
           label="Product type"
+          placeholder="A specific category"
         />
       );
     case "title":
-      return <SimpleTextFixPanel issue={fixIssue} productId={productId} field="title" label="Product title" />;
+      return (
+        <TextFixPanel
+          issue={fixIssue}
+          productId={productId}
+          field="title"
+          label="Product title"
+          current={product?.title}
+        />
+      );
     case "description":
       return (
-        <SimpleTextFixPanel
+        <TextFixPanel
           issue={fixIssue}
           productId={productId}
           field="description_html"
           label="Product description"
           placeholder="Describe what this product is, who it's for, and what's included..."
           multiline
+          replaceWarning="Saving replaces the entire current description. Include everything you want to keep."
         />
       );
+    case "review_claim":
+      return <ReviewClaimFixPanel issue={fixIssue} productId={productId} />;
+    case "guardrail":
+      return <GuardrailFixPanel issue={fixIssue} productId={productId} />;
     case "rename_option":
       return <RenameOptionFixPanel issue={fixIssue} productId={productId} />;
     case "sku":
@@ -1317,7 +1168,7 @@ function FixPanel({ fixIssue, productId }) {
           productId={productId}
           field="gtin"
           label="GTIN"
-          placeholder="e.g. 0123456789012"
+          hint="Use the number assigned by the manufacturer (printed under the barcode). Keep any leading zeros."
         />
       );
     case "mpn":
@@ -1331,20 +1182,29 @@ function FixPanel({ fixIssue, productId }) {
         />
       );
     case "variant_options":
-      return fixIssue.issue_type === "default_title_with_real_variations"
-        ? <DefaultTitleFixPanel fixIssue={fixIssue} productId={productId} />
-        : <VariantOptionsFixPanel issue={fixIssue} productId={productId} />;
+      return <VariantOptionsFixPanel issue={fixIssue} productId={productId} />;
     default:
       return null;
   }
 }
 
-/* ---------- Issue row ---------- */
+/* -------------------------------------------------------------------------- */
+/* Issue row                                                                  */
+/* -------------------------------------------------------------------------- */
 
-function IssueRow({ issue, productId }) {
+function modeIntro(panels) {
+  const mode = panels.find((p) => p.fix_mode)?.fix_mode;
+  if (mode === "approval") return "Review the change below, then approve it before it's saved to your store.";
+  if (mode === "user_input") return "We need a few details from you. Fill them in, then approve the change.";
+  return null;
+}
+
+function IssueRow({ issue, productId, product }) {
   const [showFix, setShowFix] = useState(false);
   const fixablePanels = issue.fixablePanels || [];
   const fixable = fixablePanels.length > 0;
+  const intro = modeIntro(fixablePanels);
+  const fixStatuses = [...new Set(fixablePanels.map((p) => p.fix_status).filter(Boolean))];
 
   return (
     <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-4">
@@ -1352,6 +1212,9 @@ function IssueRow({ issue, productId }) {
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <SeverityBadge priority={issue.priority} />
+            {fixStatuses.map((s) => (
+              <FixStatusBadge key={s} status={s} />
+            ))}
           </div>
 
           <h3 className="text-sm font-bold text-[var(--app-text)]">
@@ -1370,8 +1233,15 @@ function IssueRow({ issue, productId }) {
             </div>
           )}
 
+          {!fixable && (
+            <p className="mt-3 text-[11px] leading-relaxed text-[var(--app-muted)]">
+              This can't be fixed automatically yet. Resolve it in your Shopify admin, then re-run the audit.
+            </p>
+          )}
+
           {showFix && fixable && (
             <div className="mt-3 space-y-3">
+              {intro && <p className="text-[11px] text-[var(--app-muted)]">{intro}</p>}
               {fixablePanels.map((fixIssue) => (
                 <div key={fixIssue.fix_action}>
                   {fixablePanels.length > 1 && (
@@ -1379,7 +1249,7 @@ function IssueRow({ issue, productId }) {
                       {FIX_ACTION_LABEL[fixIssue.fix_action] || "Fix"}
                     </p>
                   )}
-                  <FixPanel fixIssue={fixIssue} productId={productId} />
+                  <FixPanel fixIssue={fixIssue} productId={productId} product={product} />
                 </div>
               ))}
             </div>
@@ -1407,14 +1277,23 @@ function IssueRow({ issue, productId }) {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Route action + page                                                        */
+/* -------------------------------------------------------------------------- */
+
 export async function action({ request }) {
   const { session } = await authenticate.admin(request);
   if (!session?.shop || !session?.accessToken) {
     return Response.json({ detail: "Shopify session is not authenticated." }, { status: 401 });
   }
+
   const payload = await request.json();
   const endpoint = payload.__endpoint || "/products/fix";
   delete payload.__endpoint;
+
+  if (!ALLOWED_ENDPOINTS.has(endpoint)) {
+    return Response.json({ detail: "Unsupported fix endpoint." }, { status: 400 });
+  }
 
   const response = await fetch(`${API_BASE}${endpoint}`, {
     method: "POST",
@@ -1614,7 +1493,7 @@ export default function ProductDetails() {
             {rows.length > 0 ? (
               <div className="flex flex-col gap-3">
                 {rows.map((issue) => (
-                  <IssueRow key={issue.key} issue={issue} productId={product.product_id} />
+                  <IssueRow key={issue.key} issue={issue} productId={product.product_id} product={product} />
                 ))}
               </div>
             ) : (
