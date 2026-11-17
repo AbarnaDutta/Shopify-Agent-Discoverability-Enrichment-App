@@ -66,7 +66,7 @@ export const loader = async ({ request }) => {
 
     return {
       shopName: shop.name,
-      shopEmail: shop.email || "Unavailable",
+      shopEmail: shop.email || " ",
       shopDomain: shop.myshopifyDomain || session.shop,
       shopPlan: shop.plan?.publicDisplayName || "Unavailable",
       isConnected: true,
@@ -137,12 +137,25 @@ export default function Settings({ onRelaunchTour }) {
   };
 
   const saveSettings = () => {
+    const notificationEmail = settings.notificationEmail.trim();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notificationEmail)) {
+      alert("Please enter a valid notification email.");
+      return;
+    }
+
+    const nextSettings = {
+      ...settings,
+      notificationEmail,
+    };
+
     try {
       localStorage.setItem(
         settingsKey,
-        JSON.stringify(settings)
+        JSON.stringify(nextSettings)
       );
 
+      setSettings(nextSettings);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2500);
     } catch (error) {
@@ -153,24 +166,24 @@ export default function Settings({ onRelaunchTour }) {
 
   const resetSettings = () => {
     const resetValues = {
-    ...DEFAULT_SETTINGS,
-    notificationEmail: shopEmail,
+      ...DEFAULT_SETTINGS,
+      notificationEmail: shopEmail,
+    };
+
+    try {
+      localStorage.setItem(
+        settingsKey,
+        JSON.stringify(resetValues)
+      );
+
+      setSettings(resetValues);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2500);
+    } catch (error) {
+      console.error("Unable to reset settings:", error);
+      alert("Unable to reset settings.");
+    }
   };
-
-  try {
-    localStorage.setItem(
-      settingsKey,
-      JSON.stringify(resetValues)
-    );
-
-    setSettings(resetValues);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2500);
-  } catch (error) {
-    console.error("Unable to reset settings:", error);
-    alert("Unable to reset settings.");
-  }
-};
 
   const storeLabel = shopName || shopDomain || "Shopify store";
 
@@ -313,6 +326,21 @@ export default function Settings({ onRelaunchTour }) {
               />
             </div>
           </SettingRow>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={saveSettings}
+              className="relative -top-2 rounded-md bg-[var(--app-green)] px-5 py-3 text-sm font-semibold text-white"
+            >
+              Save Settings
+            </button>
+          </div>
+
+          {saved && (
+            <p role="status" className="mt-3 text-right text-sm text-green-700">
+              Settings saved successfully.
+            </p>
+          )}
         </SettingsSection>
 
         <div className="pb-8 pt-6 text-center text-xs text-[var(--app-muted)]">
@@ -363,8 +391,8 @@ function StatusBadge({ status, success = false }) {
   return (
     <span
       className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold ${success
-          ? "border-green-200 bg-green-50 text-green-700"
-          : "border-[var(--app-border)] bg-[var(--acr-panel)] text-[var(--app-muted)]"
+        ? "border-green-200 bg-green-50 text-green-700"
+        : "border-[var(--app-border)] bg-[var(--acr-panel)] text-[var(--app-muted)]"
         }`}
     >
       {success && <CheckCircle2 size={15} />}

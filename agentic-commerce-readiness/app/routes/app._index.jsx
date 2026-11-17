@@ -46,7 +46,7 @@ const ERROR_HINTS = {
     "Please try again later or contact us at propero.in",
 };
 
-// ── Server ────────────────────────────────────────────────────────────
+// ── Server ───
 // here we define that the dashboard identifies the current shopify stor dynamically
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -76,8 +76,24 @@ export const action = async ({ request }) => {
     };
   }
 
-  let email;
+  const formData = await request.formData();
 
+  const submittedEmail = formData.get("notificationEmail");
+
+// email part where if validation fails it returns an error message to the user
+
+  let email =
+    typeof submittedEmail === "string"
+      ? submittedEmail.trim()
+      : "";
+
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return {
+      ok: false,
+      error: "Please enter a valid notification email in Settings.",
+    };
+  }
+if (!email) {
   try {
     const shopResponse = await admin.graphql(`
       query StoreEmail {
@@ -102,6 +118,8 @@ export const action = async ({ request }) => {
       error: "Could not fetch the store email from Shopify.",
     };
   }
+}
+  
 
   let response;
 
@@ -153,7 +171,7 @@ export const action = async ({ request }) => {
 export const headers = (headersArgs) =>
   boundary.headers(headersArgs);
 
-// ── Helpers ──────────────────────────────────────────────────────────
+// ── Helpers ──
 
 function normalizeAuditReport(data) {
   if (!data || typeof data !== "object") {
@@ -182,8 +200,8 @@ function normalizeAuditReport(data) {
 
   const storedOverall = toScore(
     data.overall_score ??
-      data.audit?.overall_score ??
-      raw.overall
+    data.audit?.overall_score ??
+    raw.overall
   );
 
   const dimensionValues = [
@@ -195,11 +213,11 @@ function normalizeAuditReport(data) {
 
   const calculatedOverall = dimensionValues.length
     ? Math.round(
-        dimensionValues.reduce(
-          (sum, value) => sum + value,
-          0
-        ) / dimensionValues.length
-      )
+      dimensionValues.reduce(
+        (sum, value) => sum + value,
+        0
+      ) / dimensionValues.length
+    )
     : 0;
 
   return {
@@ -260,11 +278,6 @@ function getScoreTone(value) {
   };
 }
 
-/*
- * IMPORTANT:
- * Issue counts and Priority Issues use the same product-level
- * missing_enrichments data used by the Issues page.
- */
 function getIssueRows(report, products) {
   const issueRows = [];
 
@@ -272,9 +285,8 @@ function getIssueRows(report, products) {
     (product.missing_enrichments || []).forEach(
       (rec, index) => {
         issueRows.push({
-          key: `product-${
-            product.product_id || "unknown"
-          }-${index}`,
+          key: `product-${product.product_id || "unknown"
+            }-${index}`,
 
           priority: String(
             rec.priority || "medium"
@@ -329,7 +341,7 @@ function getIssueCounts(report, products) {
   );
 }
 
-// ── Error ─────────────────────────────────────────────────────────────
+// ── Error ─────
 
 function ErrorCard({
   message,
@@ -373,7 +385,7 @@ ErrorCard.propTypes = {
   onRetry: PropTypes.func.isRequired,
 };
 
-// ── Audit progress ────────────────────────────────────────────────────
+// ── Audit progress ────
 
 function StepRow({
   num,
@@ -418,11 +430,10 @@ function StepRow({
 
       <div className="pt-1">
         <div
-          className={`text-sm leading-snug ${
-            state === "pending"
-              ? "font-medium text-gray-400"
-              : "font-bold text-[var(--acr-black)]"
-          }`}
+          className={`text-sm leading-snug ${state === "pending"
+            ? "font-medium text-gray-400"
+            : "font-bold text-[var(--acr-black)]"
+            }`}
         >
           {label}
         </div>
@@ -443,7 +454,7 @@ StepRow.propTypes = {
   isLast: PropTypes.bool,
 };
 
-// ── Score cards ───────────────────────────────────────────────────────
+// ── Score cards ───────
 
 function OverviewScoreCard({
   label,
@@ -504,7 +515,7 @@ OverviewScoreCard.propTypes = {
   description: PropTypes.string.isRequired,
 };
 
-// ── Overall readiness ─────────────────────────────────────────────────
+// ── Overall readiness ───
 
 function OverallReadiness({
   report,
@@ -633,7 +644,7 @@ OverallReadiness.propTypes = {
   }).isRequired,
 };
 
-// ── Priority Issues ────────────────────────────────────────────────────
+// ── Priority Issues ──────
 
 function SeverityBadge({ priority }) {
   const styles =
@@ -864,9 +875,9 @@ function StoreHealthSummary({
 
   const resolved = Number(
     report?.issues_resolved ??
-      report?.resolved_issues ??
-      report?.health_summary?.issues_resolved ??
-      0
+    report?.resolved_issues ??
+    report?.health_summary?.issues_resolved ??
+    0
   );
 
   const cards = [
@@ -1121,8 +1132,8 @@ export default function Index({
 
           setStoreUrl(
             latestData.store_url ||
-              latestData.audit?.store_url ||
-              `https://${shopDomain}`
+            latestData.audit?.store_url ||
+            `https://${shopDomain}`
           );
         } catch (error) {
           console.warn(
@@ -1139,7 +1150,7 @@ export default function Index({
 
           setStoreUrl(
             data.store_url ||
-              `https://${shopDomain}`
+            `https://${shopDomain}`
           );
         }
 
@@ -1209,9 +1220,9 @@ export default function Index({
         if (!elapsedTimerRef.current) {
           let elapsed = auditStartedAtRef.current
             ? Math.floor(
-                (Date.now() - auditStartedAtRef.current) /
-                  1000
-              )
+              (Date.now() - auditStartedAtRef.current) /
+              1000
+            )
             : 0;
 
           elapsedTimerRef.current =
@@ -1245,7 +1256,7 @@ export default function Index({
   }
 
   pollJobRef.current = pollJob;
-// start a new audit state and also displays the audit progess interface
+  // start a new audit state and also displays the audit progess interface
   function handleRunAudit() {
     if (pollTimerRef.current) {
       clearInterval(
@@ -1269,9 +1280,27 @@ export default function Index({
       submit: "active",
     }));
 
-    fetcher.submit(null, {
-      method: "post",
-    });
+    let notificationEmail = "";
+
+    try {
+      const stored = localStorage.getItem(
+        `acr_settings:${shopDomain}`
+      );
+
+      const savedSettings = stored ? JSON.parse(stored) : null;
+
+      notificationEmail =
+        typeof savedSettings?.notificationEmail === "string"
+          ? savedSettings.notificationEmail.trim()
+          : "";
+    } catch (error) {
+      console.warn("Unable to read notification settings:", error);
+    }
+
+    fetcher.submit(
+      { notificationEmail },
+      { method: "post" }
+    );
   }
 
   useEffect(() => {
@@ -1455,8 +1484,8 @@ export default function Index({
 
         setStoreUrl(
           data.store_url ||
-            data.audit?.store_url ||
-            `https://${shopDomain}`
+          data.audit?.store_url ||
+          `https://${shopDomain}`
         );
       } catch (error) {
         if (!cancelled) {
@@ -1488,10 +1517,10 @@ export default function Index({
     );
 
   const cleanDomain = (
-  storeUrl || `https://${shopDomain}`
-)
-  .replace(/^https?:\/\/(www\.)?/i, "")
-  .split("/")[0];
+    storeUrl || `https://${shopDomain}`
+  )
+    .replace(/^https?:\/\/(www\.)?/i, "")
+    .split("/")[0];
 
   const now =
     new Date().toLocaleDateString(
