@@ -43,6 +43,7 @@ export const loader = async ({ request }) => {
       query SettingsStoreDetails {
         shop {
           name
+          email
           myshopifyDomain
           plan {
             publicDisplayName
@@ -65,6 +66,7 @@ export const loader = async ({ request }) => {
 
     return {
       shopName: shop.name,
+      shopEmail: shop.email || "Unavailable",
       shopDomain: shop.myshopifyDomain || session.shop,
       shopPlan: shop.plan?.publicDisplayName || "Unavailable",
       isConnected: true,
@@ -89,29 +91,41 @@ export default function Settings({ onRelaunchTour }) {
   const shopPlan = loaderData?.shopPlan || "Unavailable";
   const isConnected = loaderData?.isConnected === true;
 
-    const agentFilesStatus =
+  const agentFilesStatus =
     loaderData?.agentFilesStatus || "Managed by Agentic Commerce";
 
   const proxyStatus =
     loaderData?.proxyStatus || "Unavailable";
 
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const shopEmail = loaderData?.shopEmail || "";
+
+  // Keep browser settings separate for each store.
+  const settingsKey = `${SETTINGS_KEY}:${shopDomain}`;
+
+  const [settings, setSettings] = useState(() => ({
+    ...DEFAULT_SETTINGS,
+    notificationEmail: shopEmail,
+  }));
+
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(SETTINGS_KEY);
+    let storedSettings = {};
 
-      if (stored) {
-        setSettings({
-          ...DEFAULT_SETTINGS,
-          ...JSON.parse(stored),
-        });
-      }
+    try {
+      const stored = localStorage.getItem(settingsKey);
+      storedSettings = stored ? JSON.parse(stored) : {};
     } catch (error) {
       console.error("Unable to load settings:", error);
     }
-  }, []);
+
+    setSettings({
+      ...DEFAULT_SETTINGS,
+      ...storedSettings,
+      notificationEmail:
+        storedSettings?.notificationEmail?.trim() || shopEmail,
+    });
+  }, [shopEmail, settingsKey]);
 
   const updateSetting = (key, value) => {
     setSettings((previous) => ({
@@ -125,7 +139,7 @@ export default function Settings({ onRelaunchTour }) {
   const saveSettings = () => {
     try {
       localStorage.setItem(
-        SETTINGS_KEY,
+        settingsKey,
         JSON.stringify(settings)
       );
 
@@ -138,14 +152,25 @@ export default function Settings({ onRelaunchTour }) {
   };
 
   const resetSettings = () => {
-    setSettings(DEFAULT_SETTINGS);
+    const resetValues = {
+    ...DEFAULT_SETTINGS,
+    notificationEmail: shopEmail,
+  };
+
+  try {
     localStorage.setItem(
-      SETTINGS_KEY,
-      JSON.stringify(DEFAULT_SETTINGS)
+      settingsKey,
+      JSON.stringify(resetValues)
     );
+
+    setSettings(resetValues);
     setSaved(true);
     window.setTimeout(() => setSaved(false), 2500);
-  };
+  } catch (error) {
+    console.error("Unable to reset settings:", error);
+    alert("Unable to reset settings.");
+  }
+};
 
   const storeLabel = shopName || shopDomain || "Shopify store";
 
@@ -290,160 +315,6 @@ export default function Settings({ onRelaunchTour }) {
           </SettingRow>
         </SettingsSection>
 
-        {/* Agent configuration */}
-        <SettingsSection title="Agent Configuration">
-          <SettingRow
-            title="Agent files"
-            description="Distribution method for agents.md, llms.txt, and UCP schemas"
-          >
-            <div className="rounded-md border border-[var(--app-border)] bg-[var(--acr-panel)] px-4 py-2 text-sm font-medium text-[var(--app-text)]">
-              {agentFilesStatus}
-            </div>
-          </SettingRow>
-
-          <SettingRow
-            title="Root Proxy Status"
-            description="Automatically routes requests from /.well-known/agents.md to dynamic catalog specifications"
-          >
-            <StatusBadge
-              status={proxyStatus}
-              success={proxyStatus === "Active Routing"}
-            />
-          </SettingRow>
-
-          <SettingRow
-            title="Agent Discovery"
-            description="Enable machine-readable agent discovery information for this store"
-          >
-            <Toggle
-              checked={settings.agentDiscovery}
-              onChange={(value) =>
-                updateSetting("agentDiscovery", value)
-              }
-            />
-          </SettingRow>
-        </SettingsSection>
-
-        {/* Save settings */}
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={saveSettings}
-            className="inline-flex items-center gap-2 rounded-lg bg-[var(--app-green)] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--app-green-dark)]"
-          >
-            <Save size={17} />
-            Save Settings
-          </button>
-        </div>
-
-        {saved && (
-          <div className="mt-4 flex items-center justify-end gap-2 text-sm font-medium text-green-700">
-            <CheckCircle2 size={17} />
-            Settings saved successfully.
-          </div>
-        )}
-
-        {/* Onboarding guide */}
-        <SettingsSection
-          title="Merchant Onboarding & Audit Guide"
-          right={
-            <span className="rounded-md border border-green-200 bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
-              Interactive Walkthrough
-            </span>
-          }
-        >
-          <SettingRow
-            title="Relaunch Onboarding & Audit Tour"
-            description="Review the 5 foundational pillars of agentic commerce (Catalog Enrichment, MCP Knowledge, UCP Commerce Flows, Safety & Policies, and Agent Discovery) and trigger a baseline scan."
-          >
-            <button
-              type="button"
-              onClick={() => {
-                if (onRelaunchTour) {
-                  onRelaunchTour();
-                } else {
-                  window.dispatchEvent(
-                    new CustomEvent("acr:relaunch-onboarding")
-                  );
-                }
-              }}
-              className="inline-flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-2.5 text-sm font-semibold text-[var(--app-green)] hover:bg-green-100"
-            >
-              <Sparkles size={17} />
-              Relaunch Onboarding Tour
-            </button>
-          </SettingRow>
-        </SettingsSection>
-
-        {/* Catalog operations */}
-        <SettingsSection
-          title="Catalog Data & CSV Operations"
-          right={
-            <span className="text-xs text-[var(--app-muted)]">
-              Spreadsheet Import / Export
-            </span>
-          }
-        >
-          <SettingRow
-            title="Import Products from CSV"
-            description="Bulk upload products with GTINs, MPNs, specifications, and attributes for instant audit scoring."
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => alert("Connect your existing CSV template download handler here.")}
-                className="inline-flex items-center gap-2 rounded-md border border-[var(--app-border)] bg-[var(--acr-panel)] px-3 py-2 text-sm font-medium text-[var(--app-text)] hover:bg-[var(--acr-cream)]"
-              >
-                <FileSpreadsheet size={16} />
-                Download Template
-              </button>
-
-              <button
-                type="button"
-                onClick={() => alert("Connect your existing CSV import handler here.")}
-                className="inline-flex items-center gap-2 rounded-md border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--app-text)] hover:bg-[var(--acr-cream)]"
-              >
-                <Upload size={16} />
-                Import CSV
-              </button>
-            </div>
-          </SettingRow>
-
-          <SettingRow
-            title="Export Audit Results in CSV Format"
-            description="Download comprehensive spreadsheet reports including detected blockers, item readiness scores, and store summaries."
-          >
-            <button
-              type="button"
-              onClick={exportLatestReport}
-              className="inline-flex items-center gap-2 rounded-md border border-[var(--app-border)] bg-white px-4 py-2.5 text-sm font-semibold text-[var(--app-text)] hover:bg-[var(--acr-cream)]"
-            >
-              <Download size={16} />
-              Export Audit CSVs
-            </button>
-          </SettingRow>
-        </SettingsSection>
-
-        {/* Local settings reset */}
-        <div className="mt-6 flex flex-col justify-between gap-4 rounded-xl border border-[var(--app-border)] bg-white p-5 sm:flex-row sm:items-center">
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--app-text)]">
-              Reset local configuration
-            </h3>
-            <p className="mt-1 text-sm text-[var(--app-muted)]">
-              Reset saved preferences in this browser.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={resetSettings}
-            className="rounded-lg border border-[var(--app-border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--app-text)] hover:bg-[var(--acr-cream)]"
-          >
-            Reset Settings
-          </button>
-        </div>
-
         <div className="pb-8 pt-6 text-center text-xs text-[var(--app-muted)]">
           Agentic Commerce Readiness · Powered by Propero
         </div>
@@ -491,11 +362,10 @@ function SettingRow({ title, description, children }) {
 function StatusBadge({ status, success = false }) {
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold ${
-        success
+      className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold ${success
           ? "border-green-200 bg-green-50 text-green-700"
           : "border-[var(--app-border)] bg-[var(--acr-panel)] text-[var(--app-muted)]"
-      }`}
+        }`}
     >
       {success && <CheckCircle2 size={15} />}
       {status}
@@ -510,14 +380,12 @@ function Toggle({ checked, onChange }) {
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative h-6 w-11 rounded-full transition ${
-        checked ? "bg-[var(--app-green)]" : "bg-gray-300"
-      }`}
+      className={`relative h-6 w-11 rounded-full transition ${checked ? "bg-[var(--app-green)]" : "bg-gray-300"
+        }`}
     >
       <span
-        className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${
-          checked ? "left-6" : "left-1"
-        }`}
+        className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${checked ? "left-6" : "left-1"
+          }`}
       />
     </button>
   );
