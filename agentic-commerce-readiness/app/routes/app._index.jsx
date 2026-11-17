@@ -64,7 +64,7 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
 
   const shopDomain = session?.shop;
   const accessToken = session?.accessToken;
@@ -73,6 +73,33 @@ export const action = async ({ request }) => {
     return {
       ok: false,
       error: "Shopify session is missing.",
+    };
+  }
+
+  let email;
+
+  try {
+    const shopResponse = await admin.graphql(`
+      query StoreEmail {
+        shop {
+          email
+        }
+      }
+    `);
+
+    const result = await shopResponse.json();
+    email = result.data?.shop?.email;
+
+    if (result.errors?.length || !email) {
+      return {
+        ok: false,
+        error: "Unable to retrieve the store email.",
+      };
+    }
+  } catch {
+    return {
+      ok: false,
+      error: "Could not fetch the store email from Shopify.",
     };
   }
 
@@ -87,7 +114,7 @@ export const action = async ({ request }) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email: "shopify-app@propero.in",
+          email,
           shop_domain: shopDomain,
           access_token: accessToken,
           language: "English",
