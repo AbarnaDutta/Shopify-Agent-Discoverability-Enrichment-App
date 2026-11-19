@@ -85,12 +85,7 @@ migrations = [
 
     """
     ALTER TABLE audit_issues
-    ADD COLUMN IF NOT EXISTS affected_variants JSON NOT NULL DEFAULT '[]'::json;
-    """,
-
-    """
-    ALTER TABLE audit_issues
-    ADD COLUMN IF NOT EXISTS affected_options JSON NOT NULL DEFAULT '[]'::json;
+    ADD COLUMN IF NOT EXISTS affected_images JSON NOT NULL DEFAULT '[]'::json;
     """,
 
     """

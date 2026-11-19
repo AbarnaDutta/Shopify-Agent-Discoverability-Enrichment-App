@@ -38,6 +38,7 @@ def _issue_row(issue: dict[str, Any], audit_id: str, store_id: str) -> AuditIssu
         affected_option_ids=issue.get("affected_option_ids") or [],
         affected_variants=issue.get("affected_variants") or [],
         affected_options=issue.get("affected_options") or [],
+        affected_images=issue.get("affected_images") or [],
         targets=issue.get("targets") or [],
         product_title=issue.get("product_title"),
         product_image_url=issue.get("product_image_url"),
@@ -64,6 +65,7 @@ def _serialize_issue(issue: AuditIssue) -> dict[str, Any]:
         "affected_option_ids": issue.affected_option_ids or [],
         "affected_variants": issue.affected_variants or [],
         "affected_options": issue.affected_options or [],
+        "affected_images": issue.affected_images or [],
         "targets": issue.targets or [],
         "scope": issue.scope,
         "fix_mode": issue.fix_mode,
@@ -471,6 +473,7 @@ class AuditRepository:
             if audit.agent_discovery:
                 data["agent_discovery"] = {
                     "summary": audit.agent_discovery.summary,
+                    "checked_at": audit.created_at.isoformat(),
                     "templates_customized": audit.agent_discovery.templates_customized,
                     "templates_total": audit.agent_discovery.templates_total,
                     "files": audit.agent_discovery.files,

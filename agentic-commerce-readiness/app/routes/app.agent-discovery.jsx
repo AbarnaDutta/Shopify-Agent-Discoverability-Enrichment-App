@@ -36,7 +36,7 @@ const DISCOVERY_FILES = [
     title: "Agent Instructions",
     description:
       "Provides instructions and context for AI agents interacting with your store.",
-    path: "/.well-known/agents.md",
+    path: "/agents.md",
     icon: Bot,
   },
   {
@@ -101,6 +101,14 @@ function getStatus(file) {
     return {
       label: "Password protected",
       description: "The storefront password page is blocking agents from reading this file.",
+      type: "danger",
+    };
+  }
+
+  if (status === "invalid_format") {
+    return {
+      label: "Invalid format",
+      description: "The file is served but is not valid JSON.",
       type: "danger",
     };
   }
@@ -180,33 +188,29 @@ function getFileContent(file, fallbackContent) {
 }
 
 function getFileDisplayUrl(shopDomain, definition, file) {
-  if (file?.final_url) return file.final_url;
-  return getStoreUrl(shopDomain, definition.path);
+  return file?.url || getStoreUrl(shopDomain, definition.path);
 }
+
 function getMissingContentReason(file) {
   if (!file || !file.status) {
     return "This file hasn't been checked yet for this store.";
   }
-
-  if (file.status === "redirects") {
-    return file.final_url
-      ? `This URL redirected to ${file.final_url} instead of returning the file's own content.`
-      : "This URL redirected elsewhere instead of returning the file's own content.";
+  switch (file.status) {
+    case "password_protected":
+      return "The storefront password page is blocking agents from reading this file. Disable password protection in Online Store > Preferences.";
+    case "invalid_format":
+      return "The endpoint responded, but the content is not valid JSON.";
+    case "missing":
+      return `No file was found at this URL${file.http_status ? ` (HTTP ${file.http_status})` : ""}.`;
+    case "unreachable":
+      return "The storefront could not be reached to fetch this file.";
+    case "redirects":
+      return file.final_url
+        ? `This URL redirected to ${file.final_url}.`
+        : "This URL redirected elsewhere.";
+    default:
+      return "The content wasn't saved with this audit. Click Re-check now to load it live.";
   }
-
-  if (file.status === "missing") {
-    return `No file was found at this URL${file.http_status ? ` (HTTP ${file.http_status})` : ""}.`;
-  }
-
-  if (file.status === "unreachable") {
-    return "The storefront could not be reached to fetch this file.";
-  }
-
-  if (file.status === "served_custom" || file.status === "served_default") {
-    return "The response was an HTML page, not agents.md text — this usually means the storefront returned a login or password page instead of the file.";
-  }
-
-  return "No content is available for this file.";
 }
 
 function getCustomizationText(file) {
@@ -253,10 +257,10 @@ export default function AgentDiscovery() {
   const [configureOpen, setConfigureOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState(null);
+  const [liveDiscovery, setLiveDiscovery] = useState(null);
 
 
-  /* Load latest audit — the only endpoint this uses: GET /audits/latest,     */
-
+  /* Load latest audit — GET /audits/latest */
 
   const fetchLatestAudit = useCallback(async () => {
     if (!shopDomain) return null;
@@ -307,55 +311,53 @@ export default function AgentDiscovery() {
     };
   }, [fetchLatestAudit, shopDomain]);
 
-  
+  /* Live check — GET /agent-discovery/check */
+
+  const runLiveCheck = useCallback(async () => {
+    const response = await fetch(
+      `${BACKEND_URL}/agent-discovery/check?shop_domain=${encodeURIComponent(shopDomain)}`
+    );
+    if (!response.ok) throw new Error(`Live check failed: ${response.status}`);
+    return response.json();
+  }, [shopDomain]);
 
   const openConfigure = async () => {
     if (checking) return;
-
     try {
       setChecking(true);
       setCheckError(null);
-
-      const data = await fetchLatestAudit();
-      setReport(data);
+      const live = await runLiveCheck();
+      setLiveDiscovery(live);
       setConfigureOpen(true);
     } catch (err) {
-      console.error("Failed to refresh Agent Discovery:", err);
-      setCheckError("Couldn't reach the backend to load Agent Discovery data. Try again.");
+      console.error("Live Agent Discovery check failed:", err);
+      setCheckError("Couldn't run the live check. Try again.");
     } finally {
       setChecking(false);
     }
   };
 
-  // backend data for  the audit
+  const agentDiscovery = liveDiscovery || report?.agent_discovery || null;
+  const isLive = Boolean(liveDiscovery);
 
-  const agentDiscovery = report?.agent_discovery || null;
-
-  // The audit now stores the four raw discovery resources in dedicated DB columns.
-  
   const files = useMemo(() => {
-    const savedFiles = agentDiscovery?.files || {};
     if (!agentDiscovery) return {};
-
-    return {
-      ...savedFiles,
-      agents_md: {
-        ...(savedFiles.agents_md || {}),
-        content: agentDiscovery.agents_md_content || "",
-      },
-      llms_txt: {
-        ...(savedFiles.llms_txt || {}),
-        content: agentDiscovery.llms_txt_content || "",
-      },
-      llms_full_txt: {
-        ...(savedFiles.llms_full_txt || {}),
-        content: agentDiscovery.llms_full_txt_content || "",
-      },
-      ucp_manifest: {
-        ...(savedFiles.ucp_manifest || {}),
-        content: agentDiscovery.ucp_content || "",
-      },
+    const saved = agentDiscovery.files || {};
+    const legacyColumns = {
+      agents_md: agentDiscovery.agents_md_content,
+      llms_txt: agentDiscovery.llms_txt_content,
+      llms_full_txt: agentDiscovery.llms_full_txt_content,
+      ucp_manifest: agentDiscovery.ucp_content,
     };
+    const out = {};
+    for (const def of DISCOVERY_FILES) {
+      const f = saved[def.key] || {};
+      out[def.key] = {
+        ...f,
+        content: f.content || legacyColumns[def.key] || f._body || "",
+      };
+    }
+    return out;
   }, [agentDiscovery]);
 
   // search
@@ -386,7 +388,7 @@ export default function AgentDiscovery() {
     });
   }, [search, files]);
 
-  // loading part-this shows up a run page 
+  // loading state
 
   if (loading) {
     return (
@@ -417,7 +419,7 @@ export default function AgentDiscovery() {
     );
   }
 
-//  Error part-this shows up if backend data fails
+  // error state
 
   if (error) {
     return (
@@ -455,9 +457,9 @@ export default function AgentDiscovery() {
     );
   }
 
-  // no audit data yet — show a "Run Audit" page
-  
-  if (!report || !agentDiscovery) {
+  // no discovery data yet — show a "Run Audit" page
+
+  if (!agentDiscovery) {
     return (
       <div className="min-h-screen bg-[var(--app-bg)] p-8">
         <div className="mx-auto max-w-[1500px]">
@@ -526,13 +528,13 @@ export default function AgentDiscovery() {
     );
   }
 
-  // Main page                                                                
+  // Main page
 
   return (
     <>
       <div className="min-h-screen bg-[var(--app-bg)] p-8">
         <div className="mx-auto max-w-[1500px]">
-        {/* Header */}
+          {/* Header */}
           <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h1 className="text-[26px] font-bold tracking-tight text-[var(--app-text)]">
@@ -568,6 +570,7 @@ export default function AgentDiscovery() {
               {checkError}
             </div>
           )}
+
           {/* search */}
           <div className="relative mt-5 max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-muted)]" />
@@ -594,21 +597,31 @@ export default function AgentDiscovery() {
                   status={status}
                   Icon={Icon}
                   displayUrl={displayUrl}
+                  isLive={isLive}
                   checking={checking}
                   onPreview={() =>
-                    setPreviewFile({ definition, file, status, displayUrl })
+                    setPreviewFile({ definition, file, status, displayUrl, isLive })
                   }
                   onConfigure={openConfigure}
                 />
               );
             })}
           </section>
-          {/* Footer */}
 
+          {/* Footer */}
           <div className="py-8 text-center text-xs text-[var(--app-muted)]">
-            Agent Discovery is based on the latest completed audit for{" "}
-            <span className="font-semibold">{shopDomain}</span>.
-            {report?.created_at ? ` Last audited ${formatDate(report.created_at)}.` : ""}
+            {isLive ? (
+              <>
+                Live check for <span className="font-semibold">{shopDomain}</span>
+                {agentDiscovery.checked_at ? ` · ${formatDate(agentDiscovery.checked_at)}` : ""}.
+              </>
+            ) : (
+              <>
+                Based on the latest completed audit for{" "}
+                <span className="font-semibold">{shopDomain}</span>.
+                {report?.created_at ? ` Last audited ${formatDate(report.created_at)}.` : ""}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -626,12 +639,12 @@ export default function AgentDiscovery() {
       )}
 
       {/* Configure modal */}
-
       {configureOpen && (
         <ConfigureAgentDiscoveryModal
           shopDomain={shopDomain}
           files={files}
           checkedAt={agentDiscovery.checked_at}
+          isLive={isLive}
           checking={checking}
           onClose={() => setConfigureOpen(false)}
           onRecheck={openConfigure}
@@ -652,6 +665,7 @@ function DiscoveryCard({
   status,
   Icon,
   displayUrl,
+  isLive,
   checking,
   onPreview,
   onConfigure,
@@ -696,7 +710,7 @@ function DiscoveryCard({
           {displayUrl}
         </span>
         <span className="shrink-0 text-xs font-medium text-[var(--app-muted)]">
-          Live from store
+          {isLive ? "Live check" : "From latest audit"}
         </span>
       </div>
 
@@ -741,6 +755,7 @@ DiscoveryCard.propTypes = {
   }).isRequired,
   Icon: PropTypes.elementType.isRequired,
   displayUrl: PropTypes.string.isRequired,
+  isLive: PropTypes.bool,
   checking: PropTypes.bool.isRequired,
   onPreview: PropTypes.func.isRequired,
   onConfigure: PropTypes.func.isRequired,
@@ -749,9 +764,8 @@ DiscoveryCard.propTypes = {
 // Preview modal for any discovery file
 
 function DiscoveryPreviewModal({ item, onClose, onConfigure }) {
-  const { definition, file, status, displayUrl } = item;
+  const { definition, file, status, displayUrl, isLive } = item;
 
-  // Preview always uses the content saved with this audit.
   const content = getFileContent(file);
 
   const customization = getCustomizationText(file);
@@ -768,23 +782,6 @@ function DiscoveryPreviewModal({ item, onClose, onConfigure }) {
     } catch (error) {
       console.error("Failed to copy discovery content:", error);
     }
-
-    DiscoveryPreviewModal.propTypes = {
-      item: PropTypes.shape({
-        definition: PropTypes.shape({
-          name: PropTypes.string.isRequired,
-          description: PropTypes.string.isRequired,
-        }).isRequired,
-        file: PropTypes.object.isRequired,
-        status: PropTypes.shape({
-          type: PropTypes.string.isRequired,
-          label: PropTypes.string.isRequired,
-        }).isRequired,
-        displayUrl: PropTypes.string.isRequired,
-      }).isRequired,
-      onClose: PropTypes.func.isRequired,
-      onConfigure: PropTypes.func.isRequired,
-    };
   };
 
   return (
@@ -852,7 +849,9 @@ function DiscoveryPreviewModal({ item, onClose, onConfigure }) {
             <div className="mt-6 overflow-hidden rounded-xl bg-[#202223]">
               <div className="flex items-center justify-between border-b border-[#383A3C] px-4 py-3">
                 <span className="font-mono text-xs text-[#B7C0C8]">{definition.name}</span>
-                <span className="text-[10px] text-[#7F8A92]">Saved from the latest audit</span>
+                <span className="text-[10px] text-[#7F8A92]">
+                  {isLive ? "Live from store" : "Saved from the latest audit"}
+                </span>
               </div>
 
               <pre className="max-h-[430px] overflow-auto p-5 font-mono text-xs leading-5 text-[#B9E8D8]">
@@ -895,12 +894,31 @@ function DiscoveryPreviewModal({ item, onClose, onConfigure }) {
   );
 }
 
+DiscoveryPreviewModal.propTypes = {
+  item: PropTypes.shape({
+    definition: PropTypes.shape({
+      name: PropTypes.string.isRequired,
+      description: PropTypes.string.isRequired,
+    }).isRequired,
+    file: PropTypes.object.isRequired,
+    status: PropTypes.shape({
+      type: PropTypes.string.isRequired,
+      label: PropTypes.string.isRequired,
+    }).isRequired,
+    displayUrl: PropTypes.string.isRequired,
+    isLive: PropTypes.bool,
+  }).isRequired,
+  onClose: PropTypes.func.isRequired,
+  onConfigure: PropTypes.func.isRequired,
+};
+
 // Configure modal for agents.md
 function ConfigureAgentDiscoveryModal({
   shopDomain,
   files,
   checkedAt,
   checking,
+  isLive,
   onClose,
   onRecheck,
   onPreview,
@@ -925,21 +943,9 @@ function ConfigureAgentDiscoveryModal({
       await navigator.clipboard.writeText(content);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch (err) {
-      console.error("Failed to copy agents.md content:", err);
+    } catch (error) {
+      console.error("Failed to copy discovery content:", error);
     }
-
-    ConfigureAgentDiscoveryModal.propTypes = {
-      shopDomain: PropTypes.string.isRequired,
-      files: PropTypes.shape({
-        agents_md: PropTypes.object,
-      }).isRequired,
-      checkedAt: PropTypes.string,
-      checking: PropTypes.bool.isRequired,
-      onClose: PropTypes.func.isRequired,
-      onRecheck: PropTypes.func.isRequired,
-      onPreview: PropTypes.func.isRequired,
-    };
   };
 
   return (
@@ -988,7 +994,7 @@ function ConfigureAgentDiscoveryModal({
                 Agent Instructions
               </h3>
               <p className="mt-1 text-sm leading-6 text-[var(--app-muted)]">
-                Loaded from the latest completed audit for {shopDomain}
+                {isLive ? "Live check for" : "Loaded from the latest completed audit for"} {shopDomain}
                 {checkedAt ? ` · checked ${formatDate(checkedAt)}` : ""}.
               </p>
             </div>
@@ -1072,11 +1078,13 @@ function ConfigureAgentDiscoveryModal({
               <div className="flex items-center justify-between border-b border-[#383A3C] px-4 py-3">
                 <div>
                   <span className="font-mono text-xs text-[#B7C0C8]">agents.md</span>
-                  <span className="ml-2 text-[10px] text-[#7F8A92]">From the latest audit</span>
+                  <span className="ml-2 text-[10px] text-[#7F8A92]">
+                    {isLive ? "Live from store" : "From the latest audit"}
+                  </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => onPreview({ definition, file, status, displayUrl })}
+                  onClick={() => onPreview({ definition, file, status, displayUrl, isLive })}
                   className="text-xs font-semibold text-white hover:underline"
                 >
                   View full preview
@@ -1126,7 +1134,7 @@ function ConfigureAgentDiscoveryModal({
 
             <button
               type="button"
-              onClick={() => onPreview({ definition, file, status, displayUrl })}
+              onClick={() => onPreview({ definition, file, status, displayUrl, isLive })}
               className="inline-flex items-center gap-2 rounded-lg bg-[var(--app-green)] px-5 py-2.5 text-sm font-bold text-white hover:bg-[var(--app-green-dark)]"
             >
               View Full Preview
@@ -1138,3 +1146,16 @@ function ConfigureAgentDiscoveryModal({
     </div>
   );
 }
+
+ConfigureAgentDiscoveryModal.propTypes = {
+  shopDomain: PropTypes.string.isRequired,
+  files: PropTypes.shape({
+    agents_md: PropTypes.object,
+  }).isRequired,
+  checkedAt: PropTypes.string,
+  checking: PropTypes.bool.isRequired,
+  isLive: PropTypes.bool,
+  onClose: PropTypes.func.isRequired,
+  onRecheck: PropTypes.func.isRequired,
+  onPreview: PropTypes.func.isRequired,
+};

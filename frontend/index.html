@@ -577,8 +577,10 @@
     const AGENT_DISCOVERY_STATUS = {
       served_custom:  { icon: '✓', cls: 'ok',   text: 'Served and customized' },
       served_default: { icon: '⚠', cls: 'warn', text: "Served — still Shopify's default template" },
-      redirects:      { icon: '→', cls: 'warn', text: 'Redirects to agents.md (expected)' },
-      missing:        { icon: '✕', cls: 'bad',  text: 'Not reachable' },
+      redirects:      { icon: '→', cls: 'warn', text: 'Redirects to another URL' },
+      password_protected: { icon: '✕', cls: 'bad', text: 'Blocked by storefront password page' },
+      invalid_format: { icon: '✕', cls: 'bad', text: 'Served but not valid JSON' },
+      missing:        { icon: '✕', cls: 'bad',  text: 'Not found' },
       unreachable:    { icon: '✕', cls: 'bad',  text: 'Could not connect' },
     };
     const AGENT_DISCOVERY_CUSTOMIZATION = {

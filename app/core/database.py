@@ -201,6 +201,7 @@ class AuditIssue(Base):
     affected_variant_ids = Column(JSON, nullable=False, default=list)
     affected_option_ids  = Column(JSON, nullable=False, default=list)
     affected_variants    = Column(JSON, nullable=False, default=list)   # display info
+    affected_images = Column(JSON, nullable=False, default=list)
     affected_options     = Column(JSON, nullable=False, default=list)   # display info
     targets              = Column(JSON, nullable=False, default=list)   # consistency issues
     product_title        = Column(String(512), nullable=True)

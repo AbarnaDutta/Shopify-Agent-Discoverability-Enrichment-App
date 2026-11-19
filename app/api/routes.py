@@ -16,7 +16,7 @@ from app.services.issue_registry import get_issue_definition
 from app.services.jobs import job_queue
 from app.services.product_fetcher import InvalidStoreURLError, normalize_store_url
 from app.services.shopify_admin_fetcher import ShopifyAdminAPIError
-
+from app.services.report_builder import check_agent_discovery_readiness
 
 router = APIRouter()
 
@@ -447,3 +447,16 @@ def store_fix(body: StoreFixRequest):
             status_code=500,
             content={"success": False, "detail": "Store fix failed unexpectedly."},
         )
+
+_SHOP_DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\.myshopify\.com$")
+
+
+@router.get("/agent-discovery/check")
+def live_agent_discovery_check(shop_domain: str) -> dict:
+    domain = shop_domain.strip().lower()
+    if not _SHOP_DOMAIN_RE.match(domain):
+        raise HTTPException(status_code=422, detail="A valid *.myshopify.com domain is required.")
+    try:
+        return check_agent_discovery_readiness(f"https://{domain}")
+    except InvalidStoreURLError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
